@@ -1,6 +1,7 @@
 using Ppki.DocxEngine;
 using Ppki.Domain;
 using Ppki.RuleEngine;
+using Xunit;
 
 namespace Ppki.RuleEngine.Tests;
 
