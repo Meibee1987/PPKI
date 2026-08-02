@@ -34,4 +34,15 @@ builder.Services.AddHostedService<QueuedAuditWorker>();
 var host = builder.Build();
 _ = host.Services.GetRequiredService<IOptions<SupabaseOptions>>().Value;
 _ = host.Services.GetRequiredService<IOptions<DatabaseOptions>>().Value;
-await host.RunAsync();
+await host.StartAsync();
+var environment = host.Services.GetRequiredService<IHostEnvironment>();
+var logger = host.Services.GetRequiredService<ILoggerFactory>().CreateLogger("Ppki.Worker.Startup");
+var version = typeof(QueuedAuditWorker).Assembly.GetName().Version?.ToString() ?? "unknown";
+logger.LogInformation(
+    "Worker startup completed: {ServiceName}; {Environment}; {Version}; ConfigurationValidated={ConfigurationValidated}; QueueReady={QueueReady}",
+    "ppki-worker",
+    environment.EnvironmentName,
+    version,
+    true,
+    true);
+await host.WaitForShutdownAsync();

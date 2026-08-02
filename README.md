@@ -16,8 +16,8 @@ npm run verify
 npm run dev:up
 ```
 
-Setelah stack sehat, buka web di `http://localhost:3000` dan API health di
-`http://localhost:8080/health`.
+Setelah stack sehat, buka web di `http://localhost:3000` dan API liveness di
+`http://localhost:8080/health/live`.
 
 ## Required Tools
 
@@ -72,6 +72,36 @@ verifikasi sehingga tidak membutuhkan `.env`; nilai tersebut tidak dicetak.
 Validasi Compose hanya memeriksa bentuk konfigurasi dengan template contoh. Ini
 tidak sama dengan startup aplikasi dan tidak memverifikasi kredensial Supabase
 atau koneksi hosted.
+
+## Health checks and troubleshooting
+
+- `GET /health/live` proves only that the API process is running. It never
+  contacts PostgreSQL or Supabase Storage.
+- `GET /health/ready` checks database connectivity and validates the required
+  server-side Storage configuration. It returns `503` when a required
+  dependency is unavailable; healthy and degraded responses use `200`. The
+  dependency probe timeout defaults to three seconds and may be set from one to
+  ten seconds with `HEALTHCHECKS_TIMEOUT_SECONDS` in Compose.
+- `GET /health` remains as a documented compatibility alias for
+  `/health/live`.
+
+Each response contains only a status and check names/statuses. It deliberately
+omits configuration values, exception details, secrets, document data, and
+user data. Docker uses `/health/live` so an external database outage does not
+turn the container restart probe into a dependency probe.
+
+```powershell
+Invoke-WebRequest http://localhost:8080/health/live
+Invoke-WebRequest http://localhost:8080/health/ready
+```
+
+If liveness succeeds but readiness is `503`, inspect database reachability and
+the three Storage bucket settings locally without copying their values into an
+issue. If fail-fast configuration validation prevents the API from starting,
+no health endpoint will be available; correct the named local setting without
+printing it. Readiness is not a replacement for monitoring or audit logs. The
+worker intentionally has no HTTP health endpoint; it emits one safe startup
+diagnostic after configuration validation and queue startup.
 
 ## Start Development Stack
 

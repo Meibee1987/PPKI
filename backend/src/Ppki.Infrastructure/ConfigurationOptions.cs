@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Options;
 using Npgsql;
+using System.Text.RegularExpressions;
 
 namespace Ppki.Infrastructure;
 
@@ -54,9 +55,16 @@ public sealed class SupabaseOptionsValidator : IValidateOptions<SupabaseOptions>
 
     private static void ValidateBucket(string settingName, string? value, ICollection<string> failures)
     {
-        if (IsMissingOrPlaceholder(value) || value!.Any(char.IsWhiteSpace))
+        var bucket = value ?? string.Empty;
+        if (IsMissingOrPlaceholder(bucket)
+            || bucket.Any(char.IsWhiteSpace)
+            || bucket.Contains("..", StringComparison.Ordinal)
+            || bucket.Contains('/')
+            || bucket.Contains('\\')
+            || bucket.Contains("://", StringComparison.Ordinal)
+            || !Regex.IsMatch(bucket, "^[a-z0-9][a-z0-9-]{1,62}$", RegexOptions.CultureInvariant))
         {
-            failures.Add($"{settingName} is required and must not be a placeholder.");
+            failures.Add($"{settingName} is required and must use a supported bucket name.");
         }
     }
 

@@ -1,7 +1,9 @@
 using System.Security.Claims;
 using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Ppki.Application;
 using Ppki.Domain;
@@ -20,9 +22,18 @@ builder.Services.AddOptions<DatabaseOptions>()
     .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName))
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<DatabaseOptions>, DatabaseOptionsValidator>();
+builder.Services.AddOptions<ReadinessHealthCheckOptions>()
+    .Bind(builder.Configuration.GetSection(ReadinessHealthCheckOptions.SectionName))
+    .Validate(options => options.TimeoutSeconds is >= 1 and <= 10, "HealthChecks:TimeoutSeconds must be between 1 and 10.")
+    .ValidateOnStart();
 builder.Services.AddHttpClient();
 builder.Services.AddDbContext<PpkiDbContext>(o => o.UseNpgsql(connectionString));
 builder.Services.AddScoped<IFileStorage, SupabaseFileStorage>();
+builder.Services.AddScoped<IDatabaseReadinessProbe, DatabaseReadinessProbe>();
+builder.Services.AddHealthChecks()
+    .AddCheck("live", () => HealthCheckResult.Healthy(), tags: ["live"])
+    .AddCheck<DatabaseReadinessHealthCheck>("database", tags: ["ready"])
+    .AddCheck<StorageConfigurationHealthCheck>("storage-configuration", tags: ["ready"]);
 builder.Services.AddAuthentication(SupabaseAuthenticationDefaults.Scheme)
     .AddScheme<AuthenticationSchemeOptions, SupabaseAuthenticationHandler>(SupabaseAuthenticationDefaults.Scheme, _ => { });
 builder.Services.AddAuthorization();
@@ -35,13 +46,38 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy => {
 var app = builder.Build();
 _ = app.Services.GetRequiredService<IOptions<SupabaseOptions>>().Value;
 _ = app.Services.GetRequiredService<IOptions<DatabaseOptions>>().Value;
+_ = app.Services.GetRequiredService<IOptions<ReadinessHealthCheckOptions>>().Value;
 app.UseCors(); app.UseAuthentication(); app.UseAuthorization(); app.MapOpenApi();
 await using (var scope = app.Services.CreateAsyncScope()) {
     var db = scope.ServiceProvider.GetRequiredService<PpkiDbContext>();
     await DatabaseInitializer.VerifyAndSeedRulesAsync(db, ruleCatalogPath);
 }
 
-app.MapGet("/health", () => Results.Ok(new { status = "ok", service = "ppki-api", storage = "supabase" }));
+var liveHealthOptions = new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("live"),
+    ResponseWriter = SafeHealthResponseWriter.WriteAsync,
+    ResultStatusCodes =
+    {
+        [HealthStatus.Healthy] = StatusCodes.Status200OK,
+        [HealthStatus.Degraded] = StatusCodes.Status200OK,
+        [HealthStatus.Unhealthy] = StatusCodes.Status503ServiceUnavailable
+    }
+};
+var readyHealthOptions = new HealthCheckOptions
+{
+    Predicate = registration => registration.Tags.Contains("ready"),
+    ResponseWriter = SafeHealthResponseWriter.WriteAsync,
+    ResultStatusCodes =
+    {
+        [HealthStatus.Healthy] = StatusCodes.Status200OK,
+        [HealthStatus.Degraded] = StatusCodes.Status200OK,
+        [HealthStatus.Unhealthy] = StatusCodes.Status503ServiceUnavailable
+    }
+};
+app.MapHealthChecks("/health/live", liveHealthOptions);
+app.MapHealthChecks("/health/ready", readyHealthOptions);
+app.MapHealthChecks("/health", liveHealthOptions);
 var api = app.MapGroup("/api").RequireAuthorization();
 
 api.MapGet("/me", async (ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) => {
