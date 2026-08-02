@@ -16,9 +16,10 @@ canonical replacements. Run canonical commands from the repository root.
 
 `npm run verify` is implemented in `scripts/developer.mjs` with no external
 task-runner dependency. The script owns the stage order and output, which avoids
-duplicating Windows and Linux shell logic. CI now calls this same entry point;
-it no longer differs by using Release-only backend commands or by skipping the
-web configuration test.
+duplicating Windows and Linux shell logic. CI splits those same backend and web
+commands into readable jobs, while its offline hygiene gates use `npm run
+check:secrets` and `npm run check:migrations`. CI does not use a local `.env` or
+connect to hosted Supabase.
 
 Dockerfiles remain build-image definitions rather than developer entry points:
 the API and worker restore then publish with .NET 10, and the web image runs

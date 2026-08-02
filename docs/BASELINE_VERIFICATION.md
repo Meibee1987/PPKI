@@ -71,10 +71,19 @@ value.
 
 ## CI alignment
 
-CI installs .NET 10 and Node 24, then runs `npm run test:developer` followed
-by the same `npm run verify` entry point. The verification build injects only
+CI separates `backend`, `frontend`, `repository-hygiene`, and `database` jobs
+so a failed gate is immediately identifiable. The backend and frontend jobs use
+the same individual commands listed above; the frontend build injects only the
 non-secret public example values needed for static web compilation. CI does not
-connect to hosted Supabase and does not require a local `.env`.
+connect to hosted Supabase and does not require or read a local `.env`.
+
+The repository-hygiene job runs the developer runner tests, `git diff --check`,
+the tracked-file secret scan, and Compose validation with `.env.example`. The
+database job runs the offline migration checker. Run the new checks locally
+with `npm run check:secrets` and `npm run check:migrations`; their companion
+test commands are `npm run test:secret-hygiene` and `npm run test:migrations`.
+The migration checker deliberately uses only local filesystem checks and no
+Supabase CLI, so it neither needs a CLI version nor contacts a hosted project.
 
 ## Verified baseline
 

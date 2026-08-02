@@ -1,7 +1,15 @@
 import { spawn } from "node:child_process";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const npmExecutable = process.platform === "win32" ? "npm.cmd" : "npm";
+const npmCliPath = path.join(path.dirname(process.execPath), "node_modules", "npm", "bin", "npm-cli.js");
+
+function npmStage(args) {
+  return process.platform === "win32"
+    ? { command: process.execPath, args: [npmCliPath, ...args] }
+    : { command: "npm", args };
+}
+
 const verificationPublicEnvironment = Object.freeze({
   NEXT_PUBLIC_API_BASE_URL: "http://localhost:8080",
   NEXT_PUBLIC_SUPABASE_URL: "https://verification.supabase.co",
@@ -12,10 +20,10 @@ export const verificationStages = Object.freeze([
   { label: "Restoring backend", command: "dotnet", args: ["restore", "backend/PpkiSmartFormatter.slnx"] },
   { label: "Building backend", command: "dotnet", args: ["build", "backend/PpkiSmartFormatter.slnx", "--no-restore"] },
   { label: "Testing backend", command: "dotnet", args: ["test", "backend/PpkiSmartFormatter.slnx", "--no-build"] },
-  { label: "Installing web dependencies", command: npmExecutable, args: ["--prefix", "apps/web", "ci"] },
-  { label: "Testing web configuration", command: npmExecutable, args: ["--prefix", "apps/web", "run", "test:config"] },
-  { label: "Type-checking web", command: npmExecutable, args: ["--prefix", "apps/web", "run", "typecheck"] },
-  { label: "Building web", command: npmExecutable, args: ["--prefix", "apps/web", "run", "build"], environment: verificationPublicEnvironment },
+  { label: "Installing web dependencies", ...npmStage(["--prefix", "apps/web", "ci"]) },
+  { label: "Testing web configuration", ...npmStage(["--prefix", "apps/web", "run", "test:config"]) },
+  { label: "Type-checking web", ...npmStage(["--prefix", "apps/web", "run", "typecheck"]) },
+  { label: "Building web", ...npmStage(["--prefix", "apps/web", "run", "build"]), environment: verificationPublicEnvironment },
   { label: "Validating Compose configuration", command: "docker", args: ["compose", "--env-file", ".env.example", "config", "--quiet"] },
 ]);
 

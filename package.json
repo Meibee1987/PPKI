@@ -4,6 +4,10 @@
   "scripts": {
     "verify": "node scripts/developer.mjs verify",
     "test:developer": "node --test scripts/developer.test.mjs",
+    "test:secret-hygiene": "node --test scripts/secret-scan.test.mjs",
+    "test:migrations": "node --test scripts/migration-check.test.mjs",
+    "check:secrets": "node scripts/secret-scan.mjs",
+    "check:migrations": "node scripts/migration-check.mjs",
     "dev:prerequisites": "node scripts/developer.mjs prerequisites",
     "dev:up": "docker compose up --build",
     "dev:rebuild": "docker compose up --build --force-recreate",
