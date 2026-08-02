@@ -42,6 +42,27 @@ public sealed class ConfigurationOptionsValidatorTests
         Assert.Contains(result.Failures!, failure => failure.Contains("Supabase:Url", StringComparison.Ordinal));
     }
 
+    [Theory]
+    [InlineData("http://127.0.0.1:54321")]
+    [InlineData("http://localhost:54321")]
+    [InlineData("http://[::1]:54321")]
+    public void Accepts_http_only_for_local_supabase_loopback(string url)
+    {
+        var result = new SupabaseOptionsValidator().Validate(null, CreateSupabaseOptions(url: url));
+
+        Assert.True(result.Succeeded);
+    }
+
+    [Theory]
+    [InlineData("http://supabase.internal:54321")]
+    [InlineData("https://example.invalid")]
+    public void Rejects_non_loopback_or_non_supabase_hosts(string url)
+    {
+        var result = new SupabaseOptionsValidator().Validate(null, CreateSupabaseOptions(url: url));
+
+        Assert.False(result.Succeeded);
+    }
+
     [Fact]
     public void Rejects_missing_database_connection_string()
     {

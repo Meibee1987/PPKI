@@ -11,7 +11,9 @@
 - Enforce ownership on every document endpoint.
 - Validate DOCX ZIP signature/MIME/size.
 - Add signed-download endpoint and immutable version paths.
-- Add integration tests using a dedicated test Supabase project.
+- Run the local-only API/worker security integration suite documented in
+  `SECURITY_INTEGRATION_TESTS.md`; hosted deployment verification remains a
+  separate deployment concern.
 
 ## Sprint 2 — Parser hardening
 - Section/page setup, effective styles, headings/numbering, tables/images/captions.

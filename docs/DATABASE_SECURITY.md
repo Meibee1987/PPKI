@@ -86,3 +86,10 @@ an offline maintenance boundary, not a Data API or JWT bypass. Event metadata
 uses a scalar allowlist and never includes document content, credentials,
 Storage paths, signed URLs, or raw failures. See
 [AUDIT_TRAIL.md](AUDIT_TRAIL.md).
+
+S1-T06 adds the local process-to-process regression suite documented in
+[SECURITY_INTEGRATION_TESTS.md](SECURITY_INTEGRATION_TESTS.md). It proves that
+API ownership filters remain effective while the API database principal is the
+table owner and can bypass RLS. It also runs the RLS, Storage, immutability, and
+audit-trail component smoke tests. The suite does not broaden grants or add a
+policy.

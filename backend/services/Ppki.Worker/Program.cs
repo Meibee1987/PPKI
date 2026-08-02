@@ -7,6 +7,7 @@ using Ppki.RuleEngine;
 using Ppki.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
+builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
 var connectionString = builder.Configuration.GetConnectionString("Database") ?? string.Empty;
 builder.Services.AddOptions<SupabaseOptions>()
     .Bind(builder.Configuration.GetSection(SupabaseOptions.SectionName))

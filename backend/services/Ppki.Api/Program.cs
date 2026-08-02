@@ -11,6 +11,7 @@ using Ppki.Infrastructure;
 using Ppki.Api;
 
 var builder = WebApplication.CreateBuilder(args);
+builder.Logging.AddFilter("System.Net.Http.HttpClient", LogLevel.Warning);
 var connectionString = builder.Configuration.GetConnectionString("Database") ?? string.Empty;
 var ruleCatalogPath = builder.Configuration["RuleCatalog:Path"] ?? throw new InvalidOperationException("RuleCatalog:Path is required.");
 
@@ -107,7 +108,8 @@ api.MapPost("/documents", async (ClaimsPrincipal user, HttpRequest request, Ppki
     if (file.Length is <=0 or >50*1024*1024) return Results.BadRequest(new {error="File must be between 1 byte and 50 MB."});
     var type=await db.DocumentTypes.SingleOrDefaultAsync(x=>x.Code==code,ct); if(type is null) return Results.BadRequest(new{error="Unknown document type."});
     var uid=UserId(user); await EnsureProfileAsync(user,db,ct);
-    var document=new DocumentRecord{OwnerUserId=uid,DocumentTypeId=type.Id,Title=title,CurrentVersionNo=1};
+    var createdAt=DateTimeOffset.UtcNow;
+    var document=new DocumentRecord{OwnerUserId=uid,DocumentTypeId=type.Id,Title=title,CurrentVersionNo=1,CreatedAt=createdAt,UpdatedAt=createdAt};
     var versionId=Guid.NewGuid();
     var bucket=supabase.Value.Storage.OriginalBucket;
     var key=pathBuilder.BuildOriginalPath(uid,document.Id,versionId);
@@ -126,7 +128,7 @@ api.MapPost("/documents", async (ClaimsPrincipal user, HttpRequest request, Ppki
             var cleaned=false; try { await storage.DeleteAsync(stored.StorageBucket, stored.StorageKey, CancellationToken.None); cleaned=true; } catch { }
             if(cleaned) await TryWriteOrphanCleanupAsync(dbFactory,auditTrail,eventContext,versionId,uid,CancellationToken.None);
         }
-        throw;
+        return Results.Problem(statusCode:StatusCodes.Status500InternalServerError,title:"Document upload failed.");
     }
     return Results.Created($"/api/documents/{document.Id}",new{document.Id,versionId,document.Title,document.CurrentVersionNo,sha256=stored!.Sha256});
 }).DisableAntiforgery();
@@ -164,7 +166,9 @@ api.MapGet("/audits/{id:guid}/findings", async (Guid id, ClaimsPrincipal user, P
 api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IAuditTrailWriter auditTrail, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {
     var uid=UserId(user); var version=await db.DocumentVersions.AsNoTracking().SingleOrDefaultAsync(v=>v.Id==id&&v.Document!.OwnerUserId==uid,ct); if(version is null)return Results.NotFound();
     var expected=pathBuilder.BuildOriginalPath(uid,version.DocumentId,version.Id); if(version.StorageBucket!=supabase.Value.Storage.OriginalBucket||version.StorageKey!=expected)return Results.NotFound();
-    var lifetime=TimeSpan.FromSeconds(supabase.Value.Storage.SignedUrlLifetimeSeconds); var url=await storage.CreateSignedDownloadUrlAsync(version.StorageBucket,version.StorageKey,lifetime,ct);
+    var lifetime=TimeSpan.FromSeconds(supabase.Value.Storage.SignedUrlLifetimeSeconds); string url;
+    try { url=await storage.CreateSignedDownloadUrlAsync(version.StorageBucket,version.StorageKey,lifetime,ct); }
+    catch { return Results.Problem(statusCode:StatusCodes.Status502BadGateway,title:"Document download authorization failed."); }
     var eventContext=AuditEventContext.User(uid,Guid.NewGuid()); await using var transaction=await db.Database.BeginTransactionAsync(ct); await auditTrail.SetTransactionContextAsync(db,eventContext,ct);
     auditTrail.Add(db,eventContext,new AuditEventData(AuditActions.DocumentDownloadAuthorized,AuditResourceTypes.DocumentVersion,version.Id,uid,AuditEventMetadata.Create(("download_kind","original")))); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
     return Results.Ok(new{url,expiresInSeconds=(int)lifetime.TotalSeconds});

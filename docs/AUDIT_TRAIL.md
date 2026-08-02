@@ -108,6 +108,7 @@ a terminal event.
 
 The migration starts recording events when it is applied. Earlier activity is
 not backfilled with guessed actors or timestamps. Runtime retention/purge and
-an audit-history UI are not implemented. A full security integration suite is
-reserved for S1-T06. S1-T05 does not change Auth flow, existing RLS migrations,
-or Storage policies.
+an audit-history UI are not implemented. S1-T06 now exercises this contract in
+the local process-to-process suite documented in
+[SECURITY_INTEGRATION_TESTS.md](SECURITY_INTEGRATION_TESTS.md). S1-T05 does not
+change Auth flow, existing RLS migrations, or Storage policies.

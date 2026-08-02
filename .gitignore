@@ -11,3 +11,4 @@
 *.user
 *.suo
 supabase/.temp/
+artifacts/security-integration-summary.json

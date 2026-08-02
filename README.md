@@ -73,6 +73,12 @@ Validasi Compose hanya memeriksa bentuk konfigurasi dengan template contoh. Ini
 tidak sama dengan startup aplikasi dan tidak memverifikasi kredensial Supabase
 atau koneksi hosted.
 
+Untuk gate keamanan Sprint 01 yang menjalankan API dan dua worker nyata pada
+Supabase lokal yang sudah aktif, gunakan `npm run
+test:security-integration-local`. Command ini tidak membaca `.env`, tidak
+menjalankan reset, dan tidak mengakses hosted Supabase. Lihat
+[docs/SECURITY_INTEGRATION_TESTS.md](docs/SECURITY_INTEGRATION_TESTS.md).
+
 ## Health checks and troubleshooting
 
 - `GET /health/live` proves only that the API process is running. It never

@@ -50,10 +50,11 @@ public sealed class SupabaseOptionsValidator : IValidateOptions<SupabaseOptions>
         }
 
         if (!Uri.TryCreate(value, UriKind.Absolute, out var uri)
-            || uri.Scheme != Uri.UriSchemeHttps
-            || !uri.Host.EndsWith(".supabase.co", StringComparison.OrdinalIgnoreCase))
+            || !((uri.Scheme == Uri.UriSchemeHttps
+                    && uri.Host.EndsWith(".supabase.co", StringComparison.OrdinalIgnoreCase))
+                || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback)))
         {
-            failures.Add("Supabase:Url must be an HTTPS Supabase hosted URL.");
+            failures.Add("Supabase:Url must be an HTTPS Supabase hosted URL or an HTTP loopback URL.");
         }
     }
 
