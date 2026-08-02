@@ -1,0 +1,48 @@
+{
+  "schemaVersion": 1,
+  "generatorVersion": "1.0.0",
+  "fixtures": [
+    {
+      "fixtureId": "minimal-compliant-layout",
+      "filename": "minimal-compliant-layout.docx",
+      "description": "Synthetic minimum body paragraph with the baseline PPKI layout properties.",
+      "synthetic": true,
+      "intendedProperties": ["a4", "margins-4-3-3-3-cm", "times-new-roman-12", "single-spacing", "first-line-indent-1-cm", "justified"],
+      "expectedDocumentProperties": {
+        "pageSizeCm": { "width": 21.0, "height": 29.7 },
+        "marginsCm": { "top": 3.0, "right": 3.0, "bottom": 3.0, "left": 4.0 },
+        "body": { "font": "Times New Roman", "fontSizePt": 12.0, "lineSpacing": 1.0, "firstLineIndentCm": 1.0, "alignment": "Both" }
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "1.0.0"
+    },
+    {
+      "fixtureId": "minimal-invalid-layout",
+      "filename": "minimal-invalid-layout.docx",
+      "description": "Synthetic minimum body paragraph with deliberately non-PPKI layout properties.",
+      "synthetic": true,
+      "intendedProperties": ["letter", "margins-2.54-cm", "calibri-11", "spacing-1.15", "no-first-line-indent", "left-aligned"],
+      "expectedDocumentProperties": {
+        "pageSizeCm": { "width": 21.59, "height": 27.94 },
+        "marginsCm": { "top": 2.54, "right": 2.54, "bottom": 2.54, "left": 2.54 },
+        "body": { "font": "Calibri", "fontSizePt": 11.0, "lineSpacing": 1.15, "firstLineIndentCm": null, "alignment": "Left" }
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "1.0.0"
+    },
+    {
+      "fixtureId": "minimal-heading-layout",
+      "filename": "minimal-heading-layout.docx",
+      "description": "Synthetic document with a chapter heading, one subheading, and one body paragraph.",
+      "synthetic": true,
+      "intendedProperties": ["heading1", "heading2", "normal-paragraph", "a4"],
+      "expectedDocumentProperties": {
+        "pageSizeCm": { "width": 21.0, "height": 29.7 },
+        "headingStyleIds": ["Heading1", "Heading2"],
+        "normalParagraphAlignment": "Both"
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "1.0.0"
+    }
+  ]
+}

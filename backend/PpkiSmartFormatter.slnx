@@ -14,4 +14,7 @@
   <Folder Name="/tests/">
     <Project Path="tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj" />
   </Folder>
+  <Folder Name="/tools/">
+    <Project Path="tools/Ppki.FixtureGenerator/Ppki.FixtureGenerator.csproj" />
+  </Folder>
 </Solution>

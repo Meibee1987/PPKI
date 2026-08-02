@@ -8,6 +8,7 @@ canonical replacements. Run canonical commands from the repository root.
 | Restore, build, test backend | Baseline docs and Dockerfiles use `dotnet`; CI previously used Release configuration | `npm run verify` (or the documented individual commands in `BASELINE_VERIFICATION.md`) |
 | Install, config test, typecheck, build web | Baseline uses `npm --prefix apps/web`; CI previously changed directory and omitted config test | `npm run verify` |
 | Validate Compose | Baseline uses example environment explicitly | `npm run verify` |
+| Generate/check synthetic DOCX fixtures | `backend/tests/fixtures/docx/README.md` | `npm run fixtures:generate`, then `npm run fixtures:check` |
 | Start stack | README, Supabase setup, bootstrap scripts used `docker compose up --build` | `npm run dev:up` |
 | Rebuild stack | Not previously standardized | `npm run dev:rebuild` |
 | Status and logs | Not previously documented as root scripts | `npm run dev:status`, `npm run dev:logs[:api|:worker|:web]` |

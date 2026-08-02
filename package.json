@@ -8,6 +8,8 @@
     "test:migrations": "node --test scripts/migration-check.test.mjs",
     "check:secrets": "node scripts/secret-scan.mjs",
     "check:migrations": "node scripts/migration-check.mjs",
+    "fixtures:generate": "dotnet run --project backend/tools/Ppki.FixtureGenerator/Ppki.FixtureGenerator.csproj -- --output backend/tests/fixtures/docx/generated",
+    "fixtures:check": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter FullyQualifiedName~DocxFixture",
     "dev:prerequisites": "node scripts/developer.mjs prerequisites",
     "dev:up": "docker compose up --build",
     "dev:rebuild": "docker compose up --build --force-recreate",

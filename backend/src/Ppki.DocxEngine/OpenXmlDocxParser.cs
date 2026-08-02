@@ -73,8 +73,8 @@ public sealed class OpenXmlDocxParser : IDocxParser
                 style?.StyleRunProperties?.FontSize?.Val?.Value,
                 defaults.FontSizeHalfPoints));
 
-            var alignment = paragraph.ParagraphProperties?.Justification?.Val?.Value.ToString()
-                ?? style?.StyleParagraphProperties?.Justification?.Val?.Value.ToString()
+            var alignment = paragraph.ParagraphProperties?.Justification?.Val?.InnerText
+                ?? style?.StyleParagraphProperties?.Justification?.Val?.InnerText
                 ?? "Left";
 
             var spacing = paragraph.ParagraphProperties?.SpacingBetweenLines
