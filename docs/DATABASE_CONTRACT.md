@@ -28,7 +28,8 @@ derives these IDs from the authenticated principal rather than request input.
 Findings have no separate owner. Their ownership is derived through audit job,
 document version, and document. S1-T02 enables RLS for all application tables:
 authenticated users can only read their ownership chain and cannot write
-business data directly. Storage policies remain deferred to S1-T03.
+business data directly. S1-T03 defines private canonical Storage keys and
+server-only object access; see [STORAGE_SECURITY.md](STORAGE_SECURITY.md).
 
 ## Tables and relationships
 

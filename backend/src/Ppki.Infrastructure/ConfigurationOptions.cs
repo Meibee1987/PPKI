@@ -27,9 +27,13 @@ public sealed class SupabaseOptionsValidator : IValidateOptions<SupabaseOptions>
         }
         else
         {
-            ValidateBucket("Supabase:Storage:OriginalBucket", storage.OriginalBucket, failures);
-            ValidateBucket("Supabase:Storage:VersionBucket", storage.VersionBucket, failures);
-            ValidateBucket("Supabase:Storage:ReportBucket", storage.ReportBucket, failures);
+            ValidateBucket("Supabase:Storage:OriginalBucket", storage.OriginalBucket, StorageObjectPathBuilder.OriginalBucket, failures);
+            ValidateBucket("Supabase:Storage:VersionBucket", storage.VersionBucket, StorageObjectPathBuilder.VersionBucket, failures);
+            ValidateBucket("Supabase:Storage:ReportBucket", storage.ReportBucket, StorageObjectPathBuilder.ReportBucket, failures);
+            if (storage.SignedUrlLifetimeSeconds is < 120 or > 300)
+            {
+                failures.Add("Supabase:Storage:SignedUrlLifetimeSeconds must be between 120 and 300.");
+            }
         }
 
         return failures.Count == 0
@@ -53,7 +57,7 @@ public sealed class SupabaseOptionsValidator : IValidateOptions<SupabaseOptions>
         }
     }
 
-    private static void ValidateBucket(string settingName, string? value, ICollection<string> failures)
+    private static void ValidateBucket(string settingName, string? value, string expectedValue, ICollection<string> failures)
     {
         var bucket = value ?? string.Empty;
         if (IsMissingOrPlaceholder(bucket)
@@ -62,7 +66,8 @@ public sealed class SupabaseOptionsValidator : IValidateOptions<SupabaseOptions>
             || bucket.Contains('/')
             || bucket.Contains('\\')
             || bucket.Contains("://", StringComparison.Ordinal)
-            || !Regex.IsMatch(bucket, "^[a-z0-9][a-z0-9-]{1,62}$", RegexOptions.CultureInvariant))
+            || !Regex.IsMatch(bucket, "^[a-z0-9][a-z0-9-]{1,62}$", RegexOptions.CultureInvariant)
+            || !string.Equals(bucket, expectedValue, StringComparison.Ordinal))
         {
             failures.Add($"{settingName} is required and must use a supported bucket name.");
         }

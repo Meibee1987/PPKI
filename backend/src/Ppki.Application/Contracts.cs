@@ -20,6 +20,19 @@ public interface IFileStorage
         string objectPath,
         TimeSpan lifetime,
         CancellationToken cancellationToken);
+
+    Task DeleteAsync(
+        string bucket,
+        string objectPath,
+        CancellationToken cancellationToken);
+}
+
+public interface IStorageObjectPathBuilder
+{
+    string BuildOriginalPath(Guid ownerUserId, Guid documentId, Guid documentVersionId);
+    string BuildVersionPath(Guid ownerUserId, Guid documentId, Guid documentVersionId);
+    string BuildAuditReportPath(Guid ownerUserId, Guid documentId, Guid auditJobId, string extension);
+    void ValidateStoredPath(string bucket, string objectPath);
 }
 
 public sealed record StoredFile(

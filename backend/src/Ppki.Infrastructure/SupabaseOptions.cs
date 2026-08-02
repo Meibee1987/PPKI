@@ -13,5 +13,6 @@ public sealed class SupabaseOptions
         public string OriginalBucket { get; init; } = "documents-original";
         public string VersionBucket { get; init; } = "documents-versions";
         public string ReportBucket { get; init; } = "audit-reports";
+        public int SignedUrlLifetimeSeconds { get; init; } = 300;
     }
 }

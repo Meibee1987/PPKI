@@ -29,6 +29,7 @@ builder.Services.AddOptions<ReadinessHealthCheckOptions>()
 builder.Services.AddHttpClient();
 builder.Services.AddDbContext<PpkiDbContext>(o => o.UseNpgsql(connectionString));
 builder.Services.AddScoped<IFileStorage, SupabaseFileStorage>();
+builder.Services.AddSingleton<IStorageObjectPathBuilder, StorageObjectPathBuilder>();
 builder.Services.AddScoped<IDatabaseReadinessProbe, DatabaseReadinessProbe>();
 builder.Services.AddHealthChecks()
     .AddCheck("live", () => HealthCheckResult.Healthy(), tags: ["live"])
@@ -96,19 +97,27 @@ api.MapGet("/documents", async (ClaimsPrincipal user, PpkiDbContext db, Cancella
         LatestAudit=x.Versions.SelectMany(v=>v.Audits).OrderByDescending(a=>a.CreatedAt).Select(a=>new {a.Id,Status=a.Status.ToString(),a.Score,a.ErrorCount,a.WarningCount,a.InfoCount}).FirstOrDefault() }));
 });
 
-api.MapPost("/documents", async (ClaimsPrincipal user, HttpRequest request, PpkiDbContext db, IFileStorage storage, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {
+api.MapPost("/documents", async (ClaimsPrincipal user, HttpRequest request, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {
     if (!request.HasFormContentType) return Results.BadRequest(new { error="multipart/form-data is required." });
     var form = await request.ReadFormAsync(ct); var title=form["title"].ToString().Trim(); var code=form["documentTypeCode"].ToString().Trim().ToUpperInvariant(); var file=form.Files.GetFile("file");
     if (string.IsNullOrWhiteSpace(title)||string.IsNullOrWhiteSpace(code)||file is null) return Results.BadRequest(new {error="title, documentTypeCode, and file are required."});
     if (!Path.GetExtension(file.FileName).Equals(".docx",StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new {error="Only .docx files are supported."});
+    if (!string.Equals(file.ContentType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new {error="DOCX MIME type is required."});
     if (file.Length is <=0 or >50*1024*1024) return Results.BadRequest(new {error="File must be between 1 byte and 50 MB."});
     var type=await db.DocumentTypes.SingleOrDefaultAsync(x=>x.Code==code,ct); if(type is null) return Results.BadRequest(new{error="Unknown document type."});
     var uid=UserId(user); await EnsureProfileAsync(user,db,ct);
     var document=new DocumentRecord{OwnerUserId=uid,DocumentTypeId=type.Id,Title=title,CurrentVersionNo=1};
-    var bucket=supabase.Value.Storage.OriginalBucket; var key=$"{uid:N}/{document.Id:N}/v1/{Guid.NewGuid():N}-{Path.GetFileName(file.FileName)}";
-    await using var stream=file.OpenReadStream(); var stored=await storage.SaveAsync(stream,file.FileName,file.ContentType,bucket,key,ct);
-    var version=new DocumentVersion{Document=document,VersionNo=1,StorageBucket=stored.StorageBucket,StorageKey=stored.StorageKey,OriginalFilename=stored.OriginalFilename,MimeType=stored.ContentType,SizeBytes=stored.SizeBytes,Sha256=stored.Sha256,CreatedByUserId=uid};
-    db.Documents.Add(document); db.DocumentVersions.Add(version); await db.SaveChangesAsync(ct);
+    var version=new DocumentVersion{Document=document,VersionNo=1,StorageBucket=supabase.Value.Storage.OriginalBucket,StorageKey=string.Empty,OriginalFilename=Path.GetFileName(file.FileName),MimeType=file.ContentType,SizeBytes=file.Length,Sha256=string.Empty,CreatedByUserId=uid};
+    var key=pathBuilder.BuildOriginalPath(uid,document.Id,version.Id); version.StorageKey=key;
+    StoredFile? stored=null;
+    try {
+        await using var stream=file.OpenReadStream(); stored=await storage.SaveAsync(stream,file.FileName,file.ContentType,version.StorageBucket,key,ct);
+        version.StorageBucket=stored.StorageBucket; version.OriginalFilename=stored.OriginalFilename; version.MimeType=stored.ContentType; version.SizeBytes=stored.SizeBytes; version.Sha256=stored.Sha256;
+        db.Documents.Add(document); db.DocumentVersions.Add(version); await db.SaveChangesAsync(ct);
+    } catch {
+        if (stored is not null) { try { await storage.DeleteAsync(stored.StorageBucket, stored.StorageKey, ct); } catch { } }
+        throw;
+    }
     return Results.Created($"/api/documents/{document.Id}",new{document.Id,versionId=version.Id,document.Title,document.CurrentVersionNo,version.Sha256});
 }).DisableAntiforgery();
 
@@ -137,9 +146,10 @@ api.MapGet("/audits/{id:guid}/findings", async (Guid id, ClaimsPrincipal user, P
     return Results.Ok(rows.Select(x=>new{x.Id,RuleCode=x.Rule!.RuleCode,x.Rule.Element,x.Rule.Domain,Severity=x.Severity.ToString(),FixMode=x.Rule.FixMode.ToString(),x.Message,Actual=JsonSerializer.Deserialize<JsonElement>(x.ActualValueJson),Expected=JsonSerializer.Deserialize<JsonElement>(x.ExpectedValueJson),Location=JsonSerializer.Deserialize<JsonElement>(x.LocationJson),x.Confidence,Source=new{x.Rule.SourceSection,x.Rule.PdfPage,x.Rule.PrintedPage}}));
 });
 
-api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, CancellationToken ct) => {
+api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {
     var uid=UserId(user); var version=await db.DocumentVersions.AsNoTracking().SingleOrDefaultAsync(v=>v.Id==id&&v.Document!.OwnerUserId==uid,ct); if(version is null)return Results.NotFound();
-    var url=await storage.CreateSignedDownloadUrlAsync(version.StorageBucket,version.StorageKey,TimeSpan.FromMinutes(5),ct); return Results.Ok(new{url,expiresInSeconds=300});
+    var expected=pathBuilder.BuildOriginalPath(uid,version.DocumentId,version.Id); if(version.StorageBucket!=supabase.Value.Storage.OriginalBucket||version.StorageKey!=expected)return Results.NotFound();
+    var lifetime=TimeSpan.FromSeconds(supabase.Value.Storage.SignedUrlLifetimeSeconds); var url=await storage.CreateSignedDownloadUrlAsync(version.StorageBucket,version.StorageKey,lifetime,ct); return Results.Ok(new{url,expiresInSeconds=(int)lifetime.TotalSeconds});
 });
 
 app.Run();

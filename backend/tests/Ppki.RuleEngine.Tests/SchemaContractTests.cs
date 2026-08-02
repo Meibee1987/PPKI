@@ -9,6 +9,7 @@ public sealed class SchemaContractTests
 {
     private const string MigrationName = "202608020001_ownership_integrity.sql";
     private const string RlsMigrationName = "202608020002_row_level_security.sql";
+    private const string StorageMigrationName = "202608020003_storage_security.sql";
 
     [Fact]
     public void Ownership_migration_is_present_and_contains_no_hosted_credentials()
@@ -117,11 +118,35 @@ public sealed class SchemaContractTests
         Assert.Equal(policyNames.Length, policyNames.Distinct(StringComparer.OrdinalIgnoreCase).Count());
     }
 
+    [Fact]
+    public void Storage_migration_keeps_exact_buckets_private_and_browser_roles_denied()
+    {
+        var sql = File.ReadAllText(StorageMigrationPath());
+
+        Assert.NotEmpty(sql.Trim());
+        Assert.Contains("'documents-original'", sql, StringComparison.Ordinal);
+        Assert.Contains("'documents-versions'", sql, StringComparison.Ordinal);
+        Assert.Contains("'audit-reports'", sql, StringComparison.Ordinal);
+        Assert.Contains("public = false", sql, StringComparison.Ordinal);
+        Assert.Contains("52428800", sql, StringComparison.Ordinal);
+        Assert.Contains("application/vnd.openxmlformats-officedocument.wordprocessingml.document", sql, StringComparison.Ordinal);
+        Assert.Contains("application/pdf", sql, StringComparison.Ordinal);
+        Assert.Contains("application/json", sql, StringComparison.Ordinal);
+        Assert.Contains("revoke all on table storage.objects from anon, authenticated", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("create policy", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("supabase.co", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sb_secret_", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("http://", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("https://", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string MigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", MigrationName);
 
     private static string InitialMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", "202608010001_initial_schema.sql");
 
     private static string RlsMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", RlsMigrationName);
+
+    private static string StorageMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", StorageMigrationName);
 
     private static string RepositoryRoot()
     {

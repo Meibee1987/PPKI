@@ -19,6 +19,7 @@ builder.Services.AddSingleton<IValidateOptions<DatabaseOptions>, DatabaseOptions
 builder.Services.AddHttpClient();
 builder.Services.AddPooledDbContextFactory<PpkiDbContext>(o=>o.UseNpgsql(connectionString));
 builder.Services.AddSingleton<IFileStorage, SupabaseFileStorage>();
+builder.Services.AddSingleton<IStorageObjectPathBuilder, StorageObjectPathBuilder>();
 builder.Services.AddSingleton<IDocxParser, OpenXmlDocxParser>();
 builder.Services.AddSingleton<IRuleValidator, PageSizeA4Validator>();
 builder.Services.AddSingleton<IRuleValidator, MarginLeftValidator>();

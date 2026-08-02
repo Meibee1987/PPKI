@@ -60,3 +60,8 @@ printed.
 S1-T03 covers Storage policies. S1-T04 adds immutable records, S1-T05 adds the
 append-only audit trail, and S1-T06 may add a full local Supabase integration
 suite. No Storage policy is created by S1-T02.
+
+Storage access is now separately deny-by-default under S1-T03. See
+[STORAGE_SECURITY.md](STORAGE_SECURITY.md): authenticated users receive no
+direct `storage.objects` read or write access, and API-issued signed URLs are
+the only browser download path.
