@@ -12,8 +12,8 @@ public sealed class OpenXmlDocxParser : IDocxParser
         using var document = WordprocessingDocument.Open(filePath, false);
         var mainPart = document.MainDocumentPart
             ?? throw new InvalidDataException("DOCX does not contain a MainDocumentPart.");
-        var body = mainPart.Document.Body
-            ?? throw new InvalidDataException("DOCX does not contain a document body.");
+        var body = mainPart.Document?.Body
+            ?? throw new InvalidDataException("The DOCX file does not contain a document body.");
 
         var styles = mainPart.StyleDefinitionsPart?.Styles;
         var defaults = ResolveDefaults(styles);
@@ -116,7 +116,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
         }
 
         var rule = spacing?.LineRule?.Value;
-        return rule is null or LineSpacingRuleValues.Auto
+        return rule is null || rule == LineSpacingRuleValues.Auto
             ? Math.Round(value / 240m, 2)
             : null;
     }
