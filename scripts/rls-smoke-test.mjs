@@ -146,6 +146,7 @@ insert into public.audit_findings (id, audit_job_id, rule_id, severity, rule_cod
 }
 
 const cleanupSql = `
+delete from public.audit_trail_events where resource_id in ('${fixture.documentAId}', '${fixture.versionAId}', '${fixture.auditAId}', '${fixture.documentBId}', '${fixture.versionBId}', '${fixture.auditBId}');
 delete from public.audit_findings where id in ('${fixture.findingAId}', '${fixture.findingBId}');
 delete from public.audit_jobs where id in ('${fixture.auditAId}', '${fixture.auditBId}');
 delete from public.document_versions where id in ('${fixture.versionAId}', '${fixture.versionBId}');

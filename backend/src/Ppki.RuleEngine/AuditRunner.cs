@@ -13,7 +13,8 @@ public sealed class AuditRunner(
     IDocxParser docxParser,
     IEnumerable<IRuleValidator> validators,
     IResolvedRuleSetSnapshotBuilder snapshotBuilder,
-    IResolvedRuleSetHasher snapshotHasher)
+    IResolvedRuleSetHasher snapshotHasher,
+    IAuditTrailWriter auditTrail)
 {
     private readonly IReadOnlyDictionary<string, IRuleValidator> _validators =
         validators.ToDictionary(x => x.ValidationKey, StringComparer.OrdinalIgnoreCase);
@@ -31,6 +32,7 @@ public sealed class AuditRunner(
                 audit = await db.AuditJobs
                     .AsNoTracking()
                     .Include(x => x.DocumentVersion)
+                    .ThenInclude(x => x!.Document)
                     .SingleAsync(x => x.Id == auditJobId && x.Status == AuditJobStatus.Processing, cancellationToken);
 
                 var assignedRules = await db.ProfileRules
@@ -55,7 +57,8 @@ public sealed class AuditRunner(
             }
 
             var proposedSnapshots = snapshotBuilder.Build(auditJobId, resolvedRules, resolutionLayer, precedence: 0);
-            var snapshots = await EnsureRuleSnapshotsAsync(auditJobId, proposedSnapshots, cancellationToken);
+            var ownerUserId = audit.DocumentVersion!.Document!.OwnerUserId;
+            var snapshots = await EnsureRuleSnapshotsAsync(auditJobId, ownerUserId, proposedSnapshots, cancellationToken);
 
             var filePath = await fileStorage.MaterializeToTempFileAsync(
                 audit.DocumentVersion!.StorageBucket,
@@ -109,11 +112,14 @@ public sealed class AuditRunner(
 
     private async Task<IReadOnlyList<AuditRuleSnapshot>> EnsureRuleSnapshotsAsync(
         Guid auditJobId,
+        Guid ownerUserId,
         IReadOnlyList<AuditRuleSnapshot> proposedSnapshots,
         CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var eventContext = AuditEventContext.Service("worker", auditJobId);
+        await auditTrail.SetTransactionContextAsync(db, eventContext, cancellationToken);
 
         var audit = await db.AuditJobs
             .FromSqlInterpolated($"select * from public.audit_jobs where id = {auditJobId} for update")
@@ -141,6 +147,12 @@ public sealed class AuditRunner(
         {
             audit.ResolvedRuleSetHash = hash;
             audit.ApplicableRuleCount = snapshots.Count;
+            auditTrail.Add(db, eventContext, new AuditEventData(
+                AuditActions.AuditRuleSnapshotCreated,
+                AuditResourceTypes.AuditJob,
+                auditJobId,
+                ownerUserId,
+                AuditEventMetadata.Create(("applicable_rule_count", snapshots.Count))));
             await db.SaveChangesAsync(cancellationToken);
         }
         else if (!string.Equals(audit.ResolvedRuleSetHash, hash, StringComparison.Ordinal)
@@ -160,6 +172,10 @@ public sealed class AuditRunner(
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        await auditTrail.SetTransactionContextAsync(
+            db,
+            AuditEventContext.Service("worker", auditJobId),
+            cancellationToken);
         var audit = await db.AuditJobs.SingleAsync(
             item => item.Id == auditJobId && item.Status == AuditJobStatus.Processing,
             cancellationToken);
@@ -183,12 +199,18 @@ public sealed class AuditRunner(
         try
         {
             await using var db = await dbFactory.CreateDbContextAsync(CancellationToken.None);
+            await using var transaction = await db.Database.BeginTransactionAsync(CancellationToken.None);
+            await auditTrail.SetTransactionContextAsync(
+                db,
+                AuditEventContext.Service("worker", auditJobId),
+                CancellationToken.None);
             await db.AuditJobs
                 .Where(item => item.Id == auditJobId && item.Status == AuditJobStatus.Processing)
                 .ExecuteUpdateAsync(setters => setters
                     .SetProperty(item => item.Status, AuditJobStatus.Failed)
                     .SetProperty(item => item.ErrorMessage, "Audit processing failed.")
                     .SetProperty(item => item.CompletedAt, DateTimeOffset.UtcNow), CancellationToken.None);
+            await transaction.CommitAsync(CancellationToken.None);
         }
         catch
         {

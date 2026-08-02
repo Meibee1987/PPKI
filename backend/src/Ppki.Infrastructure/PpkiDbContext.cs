@@ -16,6 +16,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
     public DbSet<AuditJob> AuditJobs => Set<AuditJob>();
     public DbSet<AuditRuleSnapshot> AuditRuleSnapshots => Set<AuditRuleSnapshot>();
     public DbSet<AuditFinding> AuditFindings => Set<AuditFinding>();
+    public DbSet<AuditTrailEvent> AuditTrailEvents => Set<AuditTrailEvent>();
 
     protected override void OnModelCreating(ModelBuilder builder)
     {
@@ -199,6 +200,40 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.HasOne(x => x.AuditJob).WithMany(x => x.Findings).HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.Rule).WithMany().HasForeignKey(x => x.RuleId).OnDelete(DeleteBehavior.Restrict);
         });
+
+        builder.Entity<AuditTrailEvent>(entity =>
+        {
+            entity.ToTable("audit_trail_events");
+            entity.HasKey(x => x.Id);
+            entity.Property(x => x.Id).HasColumnName("id");
+            entity.Property(x => x.OccurredAt).HasColumnName("occurred_at").HasDefaultValueSql("now()").ValueGeneratedOnAdd();
+            entity.Property(x => x.ActorType).HasColumnName("actor_type")
+                .HasConversion(value => value.ToString().ToLowerInvariant(), value => Enum.Parse<AuditActorType>(value, true));
+            entity.Property(x => x.ActorUserId).HasColumnName("actor_user_id");
+            entity.Property(x => x.ActorService).HasColumnName("actor_service");
+            entity.Property(x => x.Action).HasColumnName("action").HasMaxLength(128).IsRequired();
+            entity.Property(x => x.ResourceType).HasColumnName("resource_type").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.ResourceId).HasColumnName("resource_id");
+            entity.Property(x => x.OwnerUserId).HasColumnName("owner_user_id");
+            entity.Property(x => x.CorrelationId).HasColumnName("correlation_id");
+            entity.Property(x => x.CausationId).HasColumnName("causation_id");
+            entity.Property(x => x.RequestId).HasColumnName("request_id").HasMaxLength(128);
+            entity.Property(x => x.MetadataJson).HasColumnName("metadata").HasColumnType("jsonb").IsRequired();
+            entity.Property(x => x.EventSchemaVersion).HasColumnName("event_schema_version");
+            entity.Property(x => x.EventSource).HasColumnName("event_source")
+                .HasConversion(
+                    value => value == AuditEventSource.DatabaseTrigger ? "database_trigger" : "application",
+                    value => value == "database_trigger" ? AuditEventSource.DatabaseTrigger : AuditEventSource.Application);
+            entity.HasIndex(x => x.OccurredAt).HasDatabaseName("ix_audit_trail_occurred_at");
+            entity.HasIndex(x => x.CorrelationId).HasDatabaseName("ix_audit_trail_correlation_id");
+            entity.HasIndex(x => new { x.ResourceType, x.ResourceId }).HasDatabaseName("ix_audit_trail_resource");
+            entity.HasIndex(x => new { x.OwnerUserId, x.OccurredAt }).HasDatabaseName("ix_audit_trail_owner_occurred");
+            entity.HasIndex(x => new { x.ActorUserId, x.OccurredAt }).HasDatabaseName("ix_audit_trail_actor_occurred");
+            entity.HasIndex(x => new { x.Action, x.ResourceType, x.ResourceId, x.CorrelationId })
+                .HasDatabaseName("uq_audit_trail_semantic_event")
+                .IsUnique()
+                .HasFilter("resource_id is not null");
+        });
     }
 
     private static void Common<T>(Microsoft.EntityFrameworkCore.Metadata.Builders.EntityTypeBuilder<T> entity) where T : Entity
@@ -230,6 +265,11 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
         if (ChangeTracker.Entries<AuditRuleSnapshot>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
         {
             throw new InvalidOperationException("Audit rule snapshots are insert-only.");
+        }
+
+        if (ChangeTracker.Entries<AuditTrailEvent>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Audit trail events are append-only.");
         }
     }
 }

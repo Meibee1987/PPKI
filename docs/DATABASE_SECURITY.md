@@ -18,6 +18,7 @@ direct INSERT, UPDATE, or DELETE grant on any application table.
 | `profile_versions` | none | SELECT active/effective rows only | API/seed writes only |
 | `rules` | none | none | API/seed reads and writes only |
 | `profile_rules` | none | none | API/seed writes only |
+| `audit_trail_events` | none | none | INSERT only at database-role level; no runtime update/delete; server-authorized reads only |
 
 Policy names use `<table>_select_<scope>`. Every authenticated policy includes
 `(select auth.uid()) is not null`; ownership policies compare it against the
@@ -76,3 +77,12 @@ terminal audit mutation, and terminal finding mutation. The only maintenance
 exception is the actual table owner over a private direct database session; no
 JWT claim or Data API RPC can activate it. See
 [IMMUTABILITY.md](IMMUTABILITY.md).
+
+S1-T05 keeps `audit_trail_events` server-only. RLS is enabled without a
+permissive policy; `anon` and `authenticated` receive no direct privileges,
+and `service_role` receives INSERT only. PostgreSQL append-only triggers reject
+runtime UPDATE and DELETE independently of RLS. The actual table owner remains
+an offline maintenance boundary, not a Data API or JWT bypass. Event metadata
+uses a scalar allowlist and never includes document content, credentials,
+Storage paths, signed URLs, or raw failures. See
+[AUDIT_TRAIL.md](AUDIT_TRAIL.md).

@@ -152,6 +152,7 @@ function ruleSetHash(snapshot) {
 }
 
 const cleanupSql = `
+delete from public.audit_trail_events where resource_id in ('${ids.document}', '${ids.version}', '${ids.audit}', '${ids.invalidAudit}');
 delete from public.audit_findings where id = '${ids.finding}';
 delete from public.audit_rule_snapshots where id = '${ids.snapshot}';
 delete from public.audit_jobs where id in ('${ids.audit}', '${ids.invalidAudit}');

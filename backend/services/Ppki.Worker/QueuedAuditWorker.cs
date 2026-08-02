@@ -9,6 +9,7 @@ public sealed class QueuedAuditWorker(
     ILogger<QueuedAuditWorker> logger,
     IConfiguration configuration,
     IDbContextFactory<PpkiDbContext> dbFactory,
+    IAuditTrailWriter auditTrail,
     AuditRunner auditRunner) : BackgroundService
 {
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
@@ -34,11 +35,17 @@ public sealed class QueuedAuditWorker(
 
                 if (queuedId is not null)
                 {
+                    await using var transaction = await db.Database.BeginTransactionAsync(stoppingToken);
+                    await auditTrail.SetTransactionContextAsync(
+                        db,
+                        AuditEventContext.Service("worker", queuedId.Value),
+                        stoppingToken);
                     var claimed = await db.AuditJobs
                         .Where(x => x.Id == queuedId.Value && x.Status == AuditJobStatus.Queued)
                         .ExecuteUpdateAsync(setters => setters
                             .SetProperty(x => x.Status, AuditJobStatus.Processing)
                             .SetProperty(x => x.StartedAt, DateTimeOffset.UtcNow), stoppingToken);
+                    await transaction.CommitAsync(stoppingToken);
                     if (claimed == 1) auditId = queuedId.Value;
                 }
 

@@ -11,6 +11,7 @@ public sealed class SchemaContractTests
     private const string RlsMigrationName = "202608020002_row_level_security.sql";
     private const string StorageMigrationName = "202608020003_storage_security.sql";
     private const string ImmutabilityMigrationName = "202608020004_audit_immutability.sql";
+    private const string AuditTrailMigrationName = "202608030001_append_only_audit_trail.sql";
 
     [Fact]
     public void Ownership_migration_is_present_and_contains_no_hosted_credentials()
@@ -207,6 +208,66 @@ public sealed class SchemaContractTests
         Assert.Contains("existing non-queued audits require offline remediation", sql, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Audit_trail_migration_defines_server_only_append_only_table()
+    {
+        var sql = File.ReadAllText(AuditTrailMigrationPath());
+
+        Assert.Contains("create table public.audit_trail_events", sql, StringComparison.Ordinal);
+        Assert.Contains("occurred_at timestamptz not null default now()", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("updated_at", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("deleted_at", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("is_deleted", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("trg_audit_trail_events_reject_update", sql, StringComparison.Ordinal);
+        Assert.Contains("trg_audit_trail_events_reject_delete", sql, StringComparison.Ordinal);
+        Assert.Contains("Audit trail events are append-only.", sql, StringComparison.Ordinal);
+        Assert.Contains("current_user = relation_owner", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("current_user = 'service_role'", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("request.jwt", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("using (true)", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("create policy", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Audit_trail_migration_enforces_actor_metadata_rls_and_indexes()
+    {
+        var sql = File.ReadAllText(AuditTrailMigrationPath());
+
+        Assert.Contains("ck_audit_trail_actor_identity", sql, StringComparison.Ordinal);
+        Assert.Contains("ck_audit_trail_metadata_object", sql, StringComparison.Ordinal);
+        Assert.Contains("ck_audit_trail_metadata_allowlist", sql, StringComparison.Ordinal);
+        Assert.Contains("event_schema_version > 0", sql, StringComparison.Ordinal);
+        Assert.Contains("on delete restrict", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("ix_audit_trail_occurred_at", sql, StringComparison.Ordinal);
+        Assert.Contains("ix_audit_trail_correlation_id", sql, StringComparison.Ordinal);
+        Assert.Contains("ix_audit_trail_resource", sql, StringComparison.Ordinal);
+        Assert.Contains("ix_audit_trail_owner_occurred", sql, StringComparison.Ordinal);
+        Assert.Contains("alter table public.audit_trail_events enable row level security", sql, StringComparison.Ordinal);
+        Assert.Contains("revoke all on table public.audit_trail_events from anon, authenticated, service_role", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("grant select on table public.audit_trail_events to authenticated", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("grant insert on table public.audit_trail_events to authenticated", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Audit_trail_migration_has_aggregate_business_events_without_storage_or_sensitive_schema()
+    {
+        var sql = File.ReadAllText(AuditTrailMigrationPath());
+
+        Assert.Contains("document.created", sql, StringComparison.Ordinal);
+        Assert.Contains("document.version_created", sql, StringComparison.Ordinal);
+        Assert.Contains("audit.processing_started", sql, StringComparison.Ordinal);
+        Assert.Contains("audit.completed", sql, StringComparison.Ordinal);
+        Assert.Contains("audit.failed", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("storage.objects", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("storage.buckets", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("signed_url", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("document_text", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("stack_trace", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("supabase.co", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("http://", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("https://", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string MigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", MigrationName);
 
     private static string InitialMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", "202608010001_initial_schema.sql");
@@ -216,6 +277,8 @@ public sealed class SchemaContractTests
     private static string StorageMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", StorageMigrationName);
 
     private static string ImmutabilityMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", ImmutabilityMigrationName);
+
+    private static string AuditTrailMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", AuditTrailMigrationName);
 
     private static string RepositoryRoot()
     {

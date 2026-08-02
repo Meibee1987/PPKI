@@ -105,6 +105,8 @@ attempts and a direct local table-owner session only for deterministic setup and
 cleanup. Output is assertion name plus `PASS`/`FAIL`; it never prints keys,
 tokens, connection strings, object paths, or document content.
 
-S1-T04 does not implement the S1-T05 append-only audit trail, an end-user
-retention workflow, FixPlan, reviewer workflow, export, or the S1-T06 security
-integration suite. No Storage policy or old migration is changed.
+S1-T05 now adds the separate append-only operational audit trail documented in
+[AUDIT_TRAIL.md](AUDIT_TRAIL.md). Its events describe immutable operations;
+they do not replace audit jobs, rule snapshots, or findings. Runtime retention,
+FixPlan, reviewer workflow, export, and the S1-T06 security integration suite
+remain out of scope. No Storage policy or old migration is changed.

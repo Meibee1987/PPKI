@@ -46,6 +46,7 @@ server-only object access; see [STORAGE_SECURITY.md](STORAGE_SECURITY.md).
 | `audit_jobs` | One requested audit of one document version against one profile version | document/profile versions are restricted; requester auth user is restricted |
 | `audit_rule_snapshots` | Insert-only resolved rule semantics for one audit | audit job and source rule are restricted |
 | `audit_findings` | Historical result rows belonging to one audit | audit job and rule are restricted |
+| `audit_trail_events` | Append-only operational facts for critical document, Storage, and audit mutations | Auth actor/owner references are restricted; resource IDs are historical snapshots without cascading FKs |
 | `profile_rules` | Rule assignment for one profile version | profile version cascade; rule restrict |
 
 `formatting_profiles -> profile_versions` is restricted and version numbers are
@@ -91,7 +92,10 @@ rows may remain incomplete until an auditable remediation migration is chosen.
 Document versions, resolved rule snapshots, terminal audit jobs, and their
 findings are protected by S1-T04 PostgreSQL triggers, including against
 `service_role`. See [IMMUTABILITY.md](IMMUTABILITY.md) for the state machine,
-canonical hash, maintenance boundary, and atomic worker flow. The separate
-append-only audit trail remains S1-T05 scope. RLS policy and least-privilege
-grants are defined by S1-T02/S1-T04; see
+canonical hash, maintenance boundary, and atomic worker flow. S1-T05 adds a
+separate append-only operational trail; an event is neither a job nor a
+finding. Its resource reference is retained as a UUID snapshot and cannot
+cascade with operational data. See [AUDIT_TRAIL.md](AUDIT_TRAIL.md) for its
+event, actor, correlation, metadata, and source contracts. RLS policy and
+least-privilege grants are defined by S1-T02/S1-T04/S1-T05; see
 [DATABASE_SECURITY.md](DATABASE_SECURITY.md) for the access matrix.
