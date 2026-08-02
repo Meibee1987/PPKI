@@ -6,6 +6,7 @@
     "test:developer": "node --test scripts/developer.test.mjs",
     "test:secret-hygiene": "node --test scripts/secret-scan.test.mjs",
     "test:migrations": "node --test scripts/migration-check.test.mjs",
+    "test:rls-local": "node scripts/rls-smoke-test.mjs",
     "check:secrets": "node scripts/secret-scan.mjs",
     "check:migrations": "node scripts/migration-check.mjs",
     "fixtures:generate": "dotnet run --project backend/tools/Ppki.FixtureGenerator/Ppki.FixtureGenerator.csproj -- --output backend/tests/fixtures/docx/generated",

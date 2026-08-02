@@ -26,8 +26,9 @@ is an executor, never the requester. No email is a foreign key and the API
 derives these IDs from the authenticated principal rather than request input.
 
 Findings have no separate owner. Their ownership is derived through audit job,
-document version, and document. Documents and storage objects are private by
-default; final RLS policy is intentionally deferred to S1-T02.
+document version, and document. S1-T02 enables RLS for all application tables:
+authenticated users can only read their ownership chain and cannot write
+business data directly. Storage policies remain deferred to S1-T03.
 
 ## Tables and relationships
 
@@ -81,5 +82,6 @@ rows may remain incomplete until an auditable remediation migration is chosen.
 ## Immutability and future work
 
 Document versions and audit results are immutable by product contract. Full
-append-only/immutability triggers are deferred to S1-T04/S1-T05. S1-T02 will
-add final RLS policy; no final RLS policy is introduced by this migration.
+append-only/immutability triggers are deferred to S1-T04/S1-T05. RLS policy and
+least-privilege grants are defined by S1-T02; see
+[DATABASE_SECURITY.md](DATABASE_SECURITY.md) for the access matrix.

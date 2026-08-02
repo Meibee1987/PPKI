@@ -8,6 +8,7 @@ namespace Ppki.RuleEngine.Tests;
 public sealed class SchemaContractTests
 {
     private const string MigrationName = "202608020001_ownership_integrity.sql";
+    private const string RlsMigrationName = "202608020002_row_level_security.sql";
 
     [Fact]
     public void Ownership_migration_is_present_and_contains_no_hosted_credentials()
@@ -74,9 +75,53 @@ public sealed class SchemaContractTests
         Assert.Contains(profileRule.GetIndexes(), index => index.IsUnique && index.Properties.Select(x => x.Name).SequenceEqual([nameof(ProfileRule.ProfileVersionId), nameof(ProfileRule.RuleId)]));
     }
 
+    [Fact]
+    public void Rls_migration_declares_least_privilege_policies_without_storage_or_hosted_access()
+    {
+        var sql = File.ReadAllText(RlsMigrationPath());
+        var applicationTables = new[]
+        {
+            "user_profiles", "document_types", "formatting_profiles", "profile_versions", "profile_rules",
+            "rules", "documents", "document_versions", "audit_jobs", "audit_findings"
+        };
+
+        Assert.NotEmpty(sql.Trim());
+        Assert.DoesNotMatch(new System.Text.RegularExpressions.Regex(@"create\s+policy\s+\w*storage", System.Text.RegularExpressions.RegexOptions.IgnoreCase), sql);
+        Assert.DoesNotContain("supabase.co", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("service_role", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("sb_secret_", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("force row level security", sql, StringComparison.OrdinalIgnoreCase);
+
+        foreach (var table in applicationTables)
+        {
+            Assert.Contains($"alter table public.{table} enable row level security", sql, StringComparison.Ordinal);
+            Assert.Contains($"revoke all on table public.{table} from anon, authenticated", sql, StringComparison.Ordinal);
+        }
+
+        Assert.DoesNotContain("to anon", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("using (true)", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("documents_select_own", sql, StringComparison.Ordinal);
+        Assert.Contains("owner_user_id = (select auth.uid())", sql, StringComparison.Ordinal);
+        Assert.Contains("document_versions_select_owned_document", sql, StringComparison.Ordinal);
+        Assert.Contains("audit_jobs_select_owned_document", sql, StringComparison.Ordinal);
+        Assert.Contains("audit_findings_select_owned_document", sql, StringComparison.Ordinal);
+        Assert.Contains("grant select on table public.document_types to authenticated", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("grant select on table public.rules to authenticated", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("grant insert", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("grant update", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("grant delete", sql, StringComparison.OrdinalIgnoreCase);
+
+        var policyNames = System.Text.RegularExpressions.Regex.Matches(sql, @"create policy\s+(\w+)", System.Text.RegularExpressions.RegexOptions.IgnoreCase)
+            .Select(match => match.Groups[1].Value)
+            .ToArray();
+        Assert.Equal(policyNames.Length, policyNames.Distinct(StringComparer.OrdinalIgnoreCase).Count());
+    }
+
     private static string MigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", MigrationName);
 
     private static string InitialMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", "202608010001_initial_schema.sql");
+
+    private static string RlsMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", RlsMigrationName);
 
     private static string RepositoryRoot()
     {
