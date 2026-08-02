@@ -8,17 +8,17 @@
 6. Apply the schema:
 
 ```powershell
-npm install
-npx supabase login
-npx supabase link --project-ref YOUR_PROJECT_REF
-npx supabase db push
+npm ci
+npm run supabase:login
+npm run supabase:link -- --project-ref YOUR_PROJECT_REF
+npm run supabase:push
 ```
 
 7. Confirm these private buckets exist: `documents-original`, `documents-versions`, `audit-reports`.
 8. Run the application:
 
 ```powershell
-docker compose up --build
+npm run dev:up
 ```
 
 9. Open `http://localhost:3000`, sign up, upload a DOCX, and run an audit.

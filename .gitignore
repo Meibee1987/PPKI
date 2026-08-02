@@ -4,6 +4,7 @@
 **/node_modules/
 **/bin/
 **/obj/
+**/*.tsbuildinfo
 .vs/
 .idea/
 .DS_Store

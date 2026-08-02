@@ -1,7 +1,15 @@
 # Baseline verification
 
-This repository has a .NET 10 backend and a Node.js 24 web application. Run the
-commands below from the repository root.
+This repository has a .NET 10 backend and a Node.js 24 web application. The
+canonical verification command, run from the repository root, is:
+
+```powershell
+npm run verify
+```
+
+It stops at the first failed stage and returns that failure as a non-zero exit
+code. The individual commands below document the fixed sequence used by the
+entry point; do not substitute `npm install` for `npm ci`.
 
 ## Backend
 
@@ -60,6 +68,13 @@ API and worker validate configuration before opening a database or storage
 connection. They reject missing, blank, placeholder, malformed, and non-HTTPS
 hosted Supabase URL values. Error messages name a setting but never echo its
 value.
+
+## CI alignment
+
+CI installs .NET 10 and Node 24, then runs `npm run test:developer` followed
+by the same `npm run verify` entry point. The verification build injects only
+non-secret public example values needed for static web compilation. CI does not
+connect to hosted Supabase and does not require a local `.env`.
 
 ## Verified baseline
 

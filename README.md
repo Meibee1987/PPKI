@@ -1,106 +1,141 @@
-# PPKI IPB Smart Formatter — Supabase Starter
+# PPKI IPB Smart Formatter — Supabase edition
 
-Starter ini adalah baseline baru dari nol untuk arsitektur:
+PPKI IPB Smart Formatter memeriksa format DOCX secara asynchronous. Next.js
+menyediakan UI dan Supabase Auth SSR; ASP.NET Core API dan worker menangani
+ownership, storage private, serta audit DOCX.
 
-- **Next.js 16 + TypeScript** — UI dan Supabase Auth SSR.
-- **ASP.NET Core 10** — API, ownership, orchestration.
-- **Supabase PostgreSQL** — metadata, rules, audit jobs, findings.
-- **Supabase Storage** — DOCX original/versions dan laporan, semuanya private.
-- **.NET Worker + Open XML SDK** — parse DOCX dan audit asynchronous.
+## Quick Start
 
-## Vertical slice yang sudah disiapkan
-
-```text
-Sign up / login
-→ upload DOCX ke private Supabase Storage
-→ metadata Document + Version 1 masuk Postgres
-→ queue AuditJob
-→ worker download sementara
-→ Open XML parser + 9 validator PPKI
-→ findings tersimpan
-→ audit log tampil di web
-```
-
-## 1. Buat project Supabase
-
-Buat project hosted, lalu atur:
-
-- Site URL: `http://localhost:3000`
-- Redirect URL: `http://localhost:3000/auth/callback`
-
-Salin Project URL, publishable key, secret key, serta **Session pooler** database connection.
-
-## 2. Konfigurasi
-
-Windows PowerShell:
+Jalankan seluruh perintah dari root repository.
 
 ```powershell
 Copy-Item .env.example .env
+# Ganti seluruh placeholder di .env dengan konfigurasi Supabase Anda.
+npm run dev:prerequisites
+npm run verify
+npm run dev:up
 ```
 
-macOS/Linux:
+Setelah stack sehat, buka web di `http://localhost:3000` dan API health di
+`http://localhost:8080/health`.
 
-```bash
-cp .env.example .env
-```
+## Required Tools
 
-Isi seluruh placeholder pada `.env`. Secret key dan connection string tidak boleh masuk Git atau frontend.
+- Git
+- Docker Desktop (daemon aktif) dan Docker Compose v2
+- Node.js 24 untuk menjalankan frontend atau command repository langsung
+- .NET SDK 10 untuk menjalankan backend atau verifikasi langsung
 
-## 3. Terapkan schema Supabase
+`npm run dev:prerequisites` memeriksa tool tersebut, termasuk major version
+Node.js dan .NET. Script ini tidak memasang atau mengunduh tool apa pun.
+
+Jika SDK Node.js atau .NET tidak tersedia di host, tahap backend dan frontend
+dapat diverifikasi dengan image SDK resmi di container. Mount hanya direktori
+yang diperlukan sebagai read-only, lalu salin ke filesystem sementara container
+sebelum menjalankan command. Contoh PowerShell berikut tidak memakai `.env`:
 
 ```powershell
-npm install
-npx supabase login
-npx supabase link --project-ref YOUR_PROJECT_REF
-npx supabase db push
+docker run --rm -v "${PWD}/backend:/source:ro" mcr.microsoft.com/dotnet/sdk:10.0 sh -c "cp -a /source /tmp/backend && cd /tmp/backend && dotnet restore PpkiSmartFormatter.slnx && dotnet build PpkiSmartFormatter.slnx --no-restore && dotnet test PpkiSmartFormatter.slnx --no-build"
+docker run --rm -v "${PWD}/apps/web:/source:ro" node:24-bookworm sh -c "cp -a /source /tmp/web && cd /tmp/web && npm ci && npm run test:config && npm run typecheck && NEXT_PUBLIC_API_BASE_URL=http://localhost:8080 NEXT_PUBLIC_SUPABASE_URL=https://verification.supabase.co NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_verification npm run build"
 ```
 
-Migration akan membuat tabel, RLS, trigger profil user, baseline profile PPKI, dan tiga private Storage buckets.
+Docker Compose validation tetap memerlukan Docker Compose di host. Image
+container di atas tidak mengubah source checkout atau memasang tool di host.
 
-## 4. Jalankan aplikasi
+## Configure .env
+
+`.env.example` adalah template, bukan konfigurasi siap pakai. Salin menjadi
+`.env`, lalu ganti semua placeholder sebelum memulai aplikasi. Jangan commit,
+membaca ke log, atau membagikan `.env`; ia berisi connection string dan secret
+Supabase. `.env` tetap dipakai Docker Compose secara lokal dan tidak dibaca
+oleh script verifikasi.
+
+Untuk membuat schema Supabase, gunakan `npm ci` lalu command `npm run
+supabase:login`, `npm run supabase:link -- --project-ref YOUR_PROJECT_REF`, dan
+`npm run supabase:push`. Lihat [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)
+untuk urutan lengkapnya.
+
+## Verify Repository
+
+Command verifikasi canonical adalah:
 
 ```powershell
-docker compose up --build
+npm run verify
 ```
 
-Buka:
+Ia berhenti pada kegagalan pertama dan mengembalikan exit code non-zero. Delapan
+tahap dijalankan berurutan: restore, build, dan test .NET; `npm ci`, test
+konfigurasi, typecheck, dan build web; lalu `docker compose --env-file
+.env.example config --quiet`. Build web memakai nilai publik non-secret khusus
+verifikasi sehingga tidak membutuhkan `.env`; nilai tersebut tidak dicetak.
 
-- Web: `http://localhost:3000`
-- API health: `http://localhost:8080/health`
-- OpenAPI: `http://localhost:8080/openapi/v1.json`
+Validasi Compose hanya memeriksa bentuk konfigurasi dengan template contoh. Ini
+tidak sama dengan startup aplikasi dan tidak memverifikasi kredensial Supabase
+atau koneksi hosted.
 
-## 5. Uji
+## Start Development Stack
 
-1. Daftar akun dan konfirmasi email bila fitur tersebut aktif.
-2. Login.
-3. Unggah DOCX yang sengaja memakai Letter, Calibri 11, margin 2,54 cm, spasi 1,15, left alignment.
-4. Jalankan audit.
-5. Pastikan file muncul di bucket `documents-original`, metadata ada di `document_versions`, job selesai, dan findings tampil.
+```powershell
+npm run dev:up
+```
 
-## Rule aktif pada starter
+Command ini menjalankan `docker compose up --build` dan menggunakan `.env`
+lokal yang sudah dikonfigurasi. Untuk membangun ulang dan mengganti container,
+gunakan `npm run dev:rebuild`.
 
-- PPKI-LAY-003 A4
-- PPKI-LAY-005 Times New Roman 12
-- PPKI-LAY-008 margin kiri 4 cm
-- PPKI-LAY-009 margin kanan 3 cm
-- PPKI-LAY-010 margin atas 3 cm
-- PPKI-LAY-011 margin bawah 3 cm
-- PPKI-LAY-017 spasi tunggal
-- PPKI-LAY-018 indentasi awal 1 cm
-- PPKI-LAY-019 justified
+## View Logs
 
-Katalog 317 rule tetap berada di `rules/ppki-ipb-2019/rules.json`; API mengimpornya pada start pertama.
+```powershell
+npm run dev:status
+npm run dev:logs
+npm run dev:logs:api
+npm run dev:logs:worker
+npm run dev:logs:web
+```
 
-## Dokumen penting
+Gunakan `Ctrl+C` untuk berhenti mengikuti log; container tetap berjalan.
 
-- `docs/SUPABASE_SETUP.md`
-- `docs/architecture.md`
-- `docs/SPRINTS_SUPABASE_MVP.md`
-- `supabase/migrations/202608010001_initial_schema.sql`
+## Stop Stack
 
-## Catatan keamanan
+```powershell
+npm run dev:down
+```
 
-- `NEXT_PUBLIC_*` hanya memuat Project URL dan publishable key.
-- `SUPABASE_SECRET_KEY` hanya ada pada API/worker.
-- Storage bucket tidak mempunyai policy browser; semua akses file melalui API/worker.
-- API memverifikasi token ke Supabase Auth dan memfilter seluruh data berdasarkan user `sub`.
+Command ini menjalankan `docker compose down` tanpa menghapus volume.
+
+## Destructive Reset Warning
+
+Jangan gunakan reset volume untuk masalah biasa. Jika Anda benar-benar ingin
+menghapus volume Docker stack dan memahami bahwa data development akan hilang,
+jalankan sendiri `docker compose down -v` setelah meninjau targetnya. Command
+tersebut sengaja tidak mempunyai npm script dan tidak pernah dijalankan oleh
+verifikasi atau command default.
+
+## Common Windows Issues
+
+- **Port sudah dipakai:** hentikan proses/container pemakai port 3000 atau 8080,
+  atau ubah `WEB_PORT` / `API_PORT` di `.env`, lalu jalankan `npm run dev:up`.
+- **Docker daemon tidak aktif:** buka Docker Desktop dan tunggu status engine
+  berjalan, lalu ulangi `npm run dev:prerequisites`.
+- **`npm` gagal dengan `EPERM`:** tutup proses Node/Next yang masih memakai
+  `node_modules`, jalankan PowerShell biasa dari folder repository, lalu ulangi
+  `npm --prefix apps/web ci`. Jangan menghapus `.env` dan jangan menjalankan
+  `npm audit fix` untuk masalah ini.
+- **PowerShell memblokir `npm.ps1`:** gunakan `npm.cmd` untuk command yang
+  sama, misalnya `npm.cmd run verify`, atau jalankan melalui Command Prompt.
+- **API atau worker menolak konfigurasi Supabase:** periksa nama setting dan
+  placeholder di `.env` tanpa membagikan nilainya. API/worker berhenti lebih
+  awal untuk URL, key, atau connection string Supabase yang invalid; gunakan
+  dashboard Supabase untuk mengambil nilai yang benar.
+
+## Active PPKI rules
+
+Starter saat ini mencakup A4, Times New Roman 12, margin PPKI, spasi tunggal,
+indentasi awal 1 cm, dan justified. Katalog 317 rule tetap di
+`rules/ppki-ipb-2019/rules.json`.
+
+## Security notes
+
+- `NEXT_PUBLIC_*` hanya boleh memuat Project URL dan publishable key.
+- Secret key dan connection string hanya dipakai API/worker.
+- Bucket Supabase Storage bersifat private; akses file melewati API/worker.
