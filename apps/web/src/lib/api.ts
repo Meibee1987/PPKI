@@ -1,8 +1,8 @@
 import { createClient } from "./supabase/client";
-
-const baseUrl = process.env.NEXT_PUBLIC_API_BASE_URL ?? "http://localhost:8080";
+import { getPublicSupabaseEnvironment } from "./supabase/environment";
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
+  const { apiBaseUrl } = getPublicSupabaseEnvironment();
   const supabase = createClient();
   const { data: { session } } = await supabase.auth.getSession();
   if (!session?.access_token) throw new Error("Sesi login tidak tersedia.");
@@ -13,7 +13,7 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     headers.set("Content-Type", "application/json");
   }
 
-  const response = await fetch(`${baseUrl}${path}`, {
+  const response = await fetch(`${apiBaseUrl}${path}`, {
     ...init,
     headers,
     cache: "no-store",

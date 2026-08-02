@@ -1,4 +1,5 @@
 using Microsoft.EntityFrameworkCore;
+using Microsoft.Extensions.Options;
 using Ppki.Application;
 using Ppki.DocxEngine;
 using Ppki.Infrastructure;
@@ -6,13 +7,15 @@ using Ppki.RuleEngine;
 using Ppki.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
-var connectionString = builder.Configuration.GetConnectionString("Database") ?? throw new InvalidOperationException("ConnectionStrings:Database is required.");
+var connectionString = builder.Configuration.GetConnectionString("Database") ?? string.Empty;
 builder.Services.AddOptions<SupabaseOptions>()
     .Bind(builder.Configuration.GetSection(SupabaseOptions.SectionName))
-    .Validate(x => Uri.TryCreate(x.Url, UriKind.Absolute, out _), "Supabase:Url must be an absolute URL.")
-    .Validate(x => !string.IsNullOrWhiteSpace(x.PublishableKey), "Supabase:PublishableKey is required.")
-    .Validate(x => !string.IsNullOrWhiteSpace(x.SecretKey), "Supabase:SecretKey is required.")
     .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<SupabaseOptions>, SupabaseOptionsValidator>();
+builder.Services.AddOptions<DatabaseOptions>()
+    .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<DatabaseOptions>, DatabaseOptionsValidator>();
 builder.Services.AddHttpClient();
 builder.Services.AddPooledDbContextFactory<PpkiDbContext>(o=>o.UseNpgsql(connectionString));
 builder.Services.AddSingleton<IFileStorage, SupabaseFileStorage>();
@@ -28,4 +31,7 @@ builder.Services.AddSingleton<IRuleValidator, FirstLineIndentValidator>();
 builder.Services.AddSingleton<IRuleValidator, JustifiedValidator>();
 builder.Services.AddSingleton<AuditRunner>();
 builder.Services.AddHostedService<QueuedAuditWorker>();
-await builder.Build().RunAsync();
+var host = builder.Build();
+_ = host.Services.GetRequiredService<IOptions<SupabaseOptions>>().Value;
+_ = host.Services.GetRequiredService<IOptions<DatabaseOptions>>().Value;
+await host.RunAsync();

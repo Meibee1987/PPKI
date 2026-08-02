@@ -6,7 +6,8 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test:config": "node --test --experimental-strip-types src/lib/supabase/environment.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",

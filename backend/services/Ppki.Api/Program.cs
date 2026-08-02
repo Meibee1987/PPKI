@@ -9,15 +9,17 @@ using Ppki.Infrastructure;
 using Ppki.Api;
 
 var builder = WebApplication.CreateBuilder(args);
-var connectionString = builder.Configuration.GetConnectionString("Database") ?? throw new InvalidOperationException("ConnectionStrings:Database is required.");
+var connectionString = builder.Configuration.GetConnectionString("Database") ?? string.Empty;
 var ruleCatalogPath = builder.Configuration["RuleCatalog:Path"] ?? throw new InvalidOperationException("RuleCatalog:Path is required.");
 
 builder.Services.AddOptions<SupabaseOptions>()
     .Bind(builder.Configuration.GetSection(SupabaseOptions.SectionName))
-    .Validate(x => Uri.TryCreate(x.Url, UriKind.Absolute, out _), "Supabase:Url must be an absolute URL.")
-    .Validate(x => !string.IsNullOrWhiteSpace(x.PublishableKey), "Supabase:PublishableKey is required.")
-    .Validate(x => !string.IsNullOrWhiteSpace(x.SecretKey), "Supabase:SecretKey is required.")
     .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<SupabaseOptions>, SupabaseOptionsValidator>();
+builder.Services.AddOptions<DatabaseOptions>()
+    .Bind(builder.Configuration.GetSection(DatabaseOptions.SectionName))
+    .ValidateOnStart();
+builder.Services.AddSingleton<IValidateOptions<DatabaseOptions>, DatabaseOptionsValidator>();
 builder.Services.AddHttpClient();
 builder.Services.AddDbContext<PpkiDbContext>(o => o.UseNpgsql(connectionString));
 builder.Services.AddScoped<IFileStorage, SupabaseFileStorage>();
@@ -31,6 +33,8 @@ builder.Services.AddCors(options => options.AddDefaultPolicy(policy => {
 }));
 
 var app = builder.Build();
+_ = app.Services.GetRequiredService<IOptions<SupabaseOptions>>().Value;
+_ = app.Services.GetRequiredService<IOptions<DatabaseOptions>>().Value;
 app.UseCors(); app.UseAuthentication(); app.UseAuthorization(); app.MapOpenApi();
 await using (var scope = app.Services.CreateAsyncScope()) {
     var db = scope.ServiceProvider.GetRequiredService<PpkiDbContext>();
