@@ -12,6 +12,7 @@ auth.users
   -> documents
   -> document_versions
   -> audit_jobs
+  -> audit_rule_snapshots
   -> audit_findings
 ```
 
@@ -41,9 +42,10 @@ server-only object access; see [STORAGE_SECURITY.md](STORAGE_SECURITY.md).
 | `profile_versions` | Versioned configuration status | profile no action; assignments cascade |
 | `rules` | Stable, source-data rule definition | referenced by assignments/findings with no action/restrict |
 | `documents` | One user-owned thesis document and its type | document type is no action; auth owner is no action |
-| `document_versions` | Immutable-in-concept uploaded version metadata | deleting a document cascades to its versions; a parent version is restricted |
+| `document_versions` | Insert-only uploaded version metadata | document and parent relationships are restricted |
 | `audit_jobs` | One requested audit of one document version against one profile version | document/profile versions are restricted; requester auth user is restricted |
-| `audit_findings` | Result rows belonging to one audit | deleting an audit job cascades to its findings; rule is restricted |
+| `audit_rule_snapshots` | Insert-only resolved rule semantics for one audit | audit job and source rule are restricted |
+| `audit_findings` | Historical result rows belonging to one audit | audit job and rule are restricted |
 | `profile_rules` | Rule assignment for one profile version | profile version cascade; rule restrict |
 
 `formatting_profiles -> profile_versions` is restricted and version numbers are
@@ -66,6 +68,10 @@ duplicate rule assignment. Rule codes remain unique and stable.
   start; completed jobs require a lowercase 64-character resolved rule-set
   hash. Counts cannot be negative. Persisted failure text is generic, while
   detailed diagnostics remain worker-only.
+- Audit completion requires `applicable_rule_count` to equal the immutable
+  resolved rule snapshot rows. The worker persists the full snapshot and its
+  canonical SHA-256 before validation; terminal jobs cannot change or be
+  deleted.
 - Findings retain rule-code, severity, fix-mode, and supported source-reference
   snapshots (source section, PDF page, and printed page) alongside JSON
   actual/expected/location values. JSON is an object,
@@ -82,7 +88,10 @@ rows may remain incomplete until an auditable remediation migration is chosen.
 
 ## Immutability and future work
 
-Document versions and audit results are immutable by product contract. Full
-append-only/immutability triggers are deferred to S1-T04/S1-T05. RLS policy and
-least-privilege grants are defined by S1-T02; see
+Document versions, resolved rule snapshots, terminal audit jobs, and their
+findings are protected by S1-T04 PostgreSQL triggers, including against
+`service_role`. See [IMMUTABILITY.md](IMMUTABILITY.md) for the state machine,
+canonical hash, maintenance boundary, and atomic worker flow. The separate
+append-only audit trail remains S1-T05 scope. RLS policy and least-privilege
+grants are defined by S1-T02/S1-T04; see
 [DATABASE_SECURITY.md](DATABASE_SECURITY.md) for the access matrix.

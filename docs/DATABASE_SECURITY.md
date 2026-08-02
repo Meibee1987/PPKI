@@ -11,6 +11,7 @@ direct INSERT, UPDATE, or DELETE grant on any application table.
 | `documents` | none | SELECT owned rows | trusted server-side business writes |
 | `document_versions` | none | SELECT through owned document | trusted server-side business writes |
 | `audit_jobs` | none | SELECT through owned document | trusted server-side business writes |
+| `audit_rule_snapshots` | none | SELECT through owned document | server insert while processing; no runtime update/delete |
 | `audit_findings` | none | SELECT through owned document | trusted server-side business writes |
 | `document_types` | none | SELECT | API writes only |
 | `formatting_profiles` | none | SELECT only when an active/effective version exists | API/seed writes only |
@@ -65,3 +66,13 @@ Storage access is now separately deny-by-default under S1-T03. See
 [STORAGE_SECURITY.md](STORAGE_SECURITY.md): authenticated users receive no
 direct `storage.objects` read or write access, and API-issued signed URLs are
 the only browser download path.
+
+S1-T04 adds ownership-chain SELECT RLS only for `audit_rule_snapshots` and does
+not change prior table policies. Ownership follows snapshot -> audit job ->
+document version -> document. Authenticated receives no snapshot write grant;
+`service_role` receives only snapshot SELECT/INSERT. PostgreSQL triggers also
+reject document-version mutation, snapshot mutation, invalid audit transitions,
+terminal audit mutation, and terminal finding mutation. The only maintenance
+exception is the actual table owner over a private direct database session; no
+JWT claim or Data API RPC can activate it. See
+[IMMUTABILITY.md](IMMUTABILITY.md).

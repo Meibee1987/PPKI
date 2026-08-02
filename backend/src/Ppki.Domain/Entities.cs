@@ -103,6 +103,9 @@ public sealed class AuditJob : Entity
     public Guid? RequestedByUserId { get; set; }
     public AuditJobStatus Status { get; set; } = AuditJobStatus.Queued;
     public string? ResolvedRuleSetHash { get; set; }
+    public int ApplicableRuleCount { get; set; }
+    // Legacy API/storage column retained for endpoint compatibility. New audits
+    // use ApplicableRuleCount as the resolved snapshot count.
     public int TotalRules { get; set; }
     public int ErrorCount { get; set; }
     public int WarningCount { get; set; }
@@ -111,7 +114,31 @@ public sealed class AuditJob : Entity
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
     public string? ErrorMessage { get; set; }
+    public List<AuditRuleSnapshot> RuleSnapshots { get; set; } = [];
     public List<AuditFinding> Findings { get; set; } = [];
+}
+
+public sealed class AuditRuleSnapshot : Entity
+{
+    public Guid AuditJobId { get; set; }
+    public AuditJob? AuditJob { get; set; }
+    public Guid RuleId { get; set; }
+    public RuleDefinition? Rule { get; set; }
+    public required string RuleCode { get; set; }
+    public required string Domain { get; set; }
+    public string? Subdomain { get; set; }
+    public required string AppliesTo { get; set; }
+    public required string Element { get; set; }
+    public required string RequirementJson { get; set; }
+    public required string ValidationKey { get; set; }
+    public required string ValidationJson { get; set; }
+    public RuleSeverity Severity { get; set; }
+    public FixMode FixMode { get; set; }
+    public required string SourceReferenceJson { get; set; }
+    public required string Layer { get; set; }
+    public int Precedence { get; set; }
+    public int Ordinal { get; set; }
+    public int SnapshotSchemaVersion { get; set; } = 1;
 }
 
 public sealed class AuditFinding : Entity

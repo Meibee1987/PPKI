@@ -14,6 +14,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
     public DbSet<DocumentVersion> DocumentVersions => Set<DocumentVersion>();
     public DbSet<RuleDefinition> Rules => Set<RuleDefinition>();
     public DbSet<AuditJob> AuditJobs => Set<AuditJob>();
+    public DbSet<AuditRuleSnapshot> AuditRuleSnapshots => Set<AuditRuleSnapshot>();
     public DbSet<AuditFinding> AuditFindings => Set<AuditFinding>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -89,7 +90,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.Property(x => x.ParentVersionId).HasColumnName("parent_version_id");
             entity.HasIndex(x => new { x.DocumentId, x.VersionNo }).IsUnique();
             entity.HasIndex(x => x.DocumentId).HasDatabaseName("ix_document_versions_document");
-            entity.HasOne(x => x.Document).WithMany(x => x.Versions).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.Document).WithMany(x => x.Versions).HasForeignKey(x => x.DocumentId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<DocumentVersion>().WithMany().HasForeignKey(x => x.ParentVersionId).OnDelete(DeleteBehavior.Restrict);
         });
 
@@ -134,6 +135,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.Property(x => x.RequestedByUserId).HasColumnName("requested_by_user_id");
             entity.Property(x => x.Status).HasColumnName("status").HasConversion<string>();
             entity.Property(x => x.ResolvedRuleSetHash).HasColumnName("resolved_rule_set_hash").HasMaxLength(64);
+            entity.Property(x => x.ApplicableRuleCount).HasColumnName("applicable_rule_count");
             entity.Property(x => x.TotalRules).HasColumnName("total_rules");
             entity.Property(x => x.ErrorCount).HasColumnName("error_count");
             entity.Property(x => x.WarningCount).HasColumnName("warning_count");
@@ -145,6 +147,34 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.HasIndex(x => x.DocumentVersionId).HasDatabaseName("ix_audit_jobs_document_version");
             entity.HasOne(x => x.DocumentVersion).WithMany(x => x.Audits).HasForeignKey(x => x.DocumentVersionId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.ProfileVersion).WithMany().HasForeignKey(x => x.ProfileVersionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<AuditRuleSnapshot>(entity =>
+        {
+            entity.ToTable("audit_rule_snapshots");
+            Common(entity);
+            entity.Property(x => x.AuditJobId).HasColumnName("audit_job_id");
+            entity.Property(x => x.RuleId).HasColumnName("rule_id");
+            entity.Property(x => x.RuleCode).HasColumnName("rule_code").IsRequired();
+            entity.Property(x => x.Domain).HasColumnName("domain").IsRequired();
+            entity.Property(x => x.Subdomain).HasColumnName("subdomain");
+            entity.Property(x => x.AppliesTo).HasColumnName("applies_to").IsRequired();
+            entity.Property(x => x.Element).HasColumnName("element").IsRequired();
+            entity.Property(x => x.RequirementJson).HasColumnName("requirement_json").HasColumnType("jsonb").IsRequired();
+            entity.Property(x => x.ValidationKey).HasColumnName("validation_key").IsRequired();
+            entity.Property(x => x.ValidationJson).HasColumnName("validation_json").HasColumnType("jsonb").IsRequired();
+            entity.Property(x => x.Severity).HasColumnName("severity").HasConversion<string>();
+            entity.Property(x => x.FixMode).HasColumnName("fix_mode").HasConversion<string>();
+            entity.Property(x => x.SourceReferenceJson).HasColumnName("source_reference_json").HasColumnType("jsonb").IsRequired();
+            entity.Property(x => x.Layer).HasColumnName("layer").IsRequired();
+            entity.Property(x => x.Precedence).HasColumnName("precedence");
+            entity.Property(x => x.Ordinal).HasColumnName("ordinal");
+            entity.Property(x => x.SnapshotSchemaVersion).HasColumnName("snapshot_schema_version");
+            entity.HasIndex(x => x.AuditJobId).HasDatabaseName("ix_audit_rule_snapshots_audit_job");
+            entity.HasIndex(x => new { x.AuditJobId, x.RuleCode }).IsUnique();
+            entity.HasIndex(x => new { x.AuditJobId, x.Ordinal }).IsUnique();
+            entity.HasOne(x => x.AuditJob).WithMany(x => x.RuleSnapshots).HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.Rule).WithMany().HasForeignKey(x => x.RuleId).OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<AuditFinding>(entity =>
@@ -166,7 +196,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.Property(x => x.Confidence).HasColumnName("confidence");
             entity.Property(x => x.Status).HasColumnName("status").HasConversion<string>();
             entity.HasIndex(x => x.AuditJobId).HasDatabaseName("ix_audit_findings_audit_job");
-            entity.HasOne(x => x.AuditJob).WithMany(x => x.Findings).HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Cascade);
+            entity.HasOne(x => x.AuditJob).WithMany(x => x.Findings).HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.Rule).WithMany().HasForeignKey(x => x.RuleId).OnDelete(DeleteBehavior.Restrict);
         });
     }
@@ -176,5 +206,30 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
         entity.HasKey(x => x.Id);
         entity.Property(x => x.Id).HasColumnName("id");
         entity.Property(x => x.CreatedAt).HasColumnName("created_at");
+    }
+
+    public override int SaveChanges(bool acceptAllChangesOnSuccess)
+    {
+        RejectImmutableEntityMutations();
+        return base.SaveChanges(acceptAllChangesOnSuccess);
+    }
+
+    public override Task<int> SaveChangesAsync(bool acceptAllChangesOnSuccess, CancellationToken cancellationToken = default)
+    {
+        RejectImmutableEntityMutations();
+        return base.SaveChangesAsync(acceptAllChangesOnSuccess, cancellationToken);
+    }
+
+    private void RejectImmutableEntityMutations()
+    {
+        if (ChangeTracker.Entries<DocumentVersion>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Document versions are insert-only.");
+        }
+
+        if (ChangeTracker.Entries<AuditRuleSnapshot>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+        {
+            throw new InvalidOperationException("Audit rule snapshots are insert-only.");
+        }
     }
 }

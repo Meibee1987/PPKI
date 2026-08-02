@@ -107,18 +107,19 @@ api.MapPost("/documents", async (ClaimsPrincipal user, HttpRequest request, Ppki
     var type=await db.DocumentTypes.SingleOrDefaultAsync(x=>x.Code==code,ct); if(type is null) return Results.BadRequest(new{error="Unknown document type."});
     var uid=UserId(user); await EnsureProfileAsync(user,db,ct);
     var document=new DocumentRecord{OwnerUserId=uid,DocumentTypeId=type.Id,Title=title,CurrentVersionNo=1};
-    var version=new DocumentVersion{Document=document,VersionNo=1,StorageBucket=supabase.Value.Storage.OriginalBucket,StorageKey=string.Empty,OriginalFilename=Path.GetFileName(file.FileName),MimeType=file.ContentType,SizeBytes=file.Length,Sha256=string.Empty,CreatedByUserId=uid};
-    var key=pathBuilder.BuildOriginalPath(uid,document.Id,version.Id); version.StorageKey=key;
+    var versionId=Guid.NewGuid();
+    var bucket=supabase.Value.Storage.OriginalBucket;
+    var key=pathBuilder.BuildOriginalPath(uid,document.Id,versionId);
     StoredFile? stored=null;
     try {
-        await using var stream=file.OpenReadStream(); stored=await storage.SaveAsync(stream,file.FileName,file.ContentType,version.StorageBucket,key,ct);
-        version.StorageBucket=stored.StorageBucket; version.OriginalFilename=stored.OriginalFilename; version.MimeType=stored.ContentType; version.SizeBytes=stored.SizeBytes; version.Sha256=stored.Sha256;
+        await using var stream=file.OpenReadStream(); stored=await storage.SaveAsync(stream,file.FileName,file.ContentType,bucket,key,ct);
+        var version=new DocumentVersion{Id=versionId,Document=document,VersionNo=1,StorageBucket=stored.StorageBucket,StorageKey=stored.StorageKey,OriginalFilename=stored.OriginalFilename,MimeType=stored.ContentType,SizeBytes=stored.SizeBytes,Sha256=stored.Sha256,CreatedByUserId=uid};
         db.Documents.Add(document); db.DocumentVersions.Add(version); await db.SaveChangesAsync(ct);
     } catch {
         if (stored is not null) { try { await storage.DeleteAsync(stored.StorageBucket, stored.StorageKey, ct); } catch { } }
         throw;
     }
-    return Results.Created($"/api/documents/{document.Id}",new{document.Id,versionId=version.Id,document.Title,document.CurrentVersionNo,version.Sha256});
+    return Results.Created($"/api/documents/{document.Id}",new{document.Id,versionId,document.Title,document.CurrentVersionNo,sha256=stored!.Sha256});
 }).DisableAntiforgery();
 
 api.MapGet("/documents/{id:guid}", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) => {
@@ -137,13 +138,14 @@ api.MapPost("/document-versions/{versionId:guid}/audits", async (Guid versionId,
 
 api.MapGet("/audits/{id:guid}", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) => {
     var uid=UserId(user); var a=await db.AuditJobs.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==id&&x.DocumentVersion!.Document!.OwnerUserId==uid,ct); if(a is null)return Results.NotFound();
-    return Results.Ok(new{a.Id,Status=a.Status.ToString(),a.TotalRules,a.ErrorCount,a.WarningCount,a.InfoCount,a.Score,a.ResolvedRuleSetHash,a.StartedAt,a.CompletedAt,a.ErrorMessage});
+    return Results.Ok(new{a.Id,Status=a.Status.ToString(),TotalRules=a.ApplicableRuleCount,a.ErrorCount,a.WarningCount,a.InfoCount,a.Score,a.ResolvedRuleSetHash,a.StartedAt,a.CompletedAt,a.ErrorMessage});
 });
 
 api.MapGet("/audits/{id:guid}/findings", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) => {
     var uid=UserId(user); var owned=await db.AuditJobs.AnyAsync(x=>x.Id==id&&x.DocumentVersion!.Document!.OwnerUserId==uid,ct); if(!owned)return Results.NotFound();
-    var rows=await db.AuditFindings.AsNoTracking().Include(x=>x.Rule).Where(x=>x.AuditJobId==id).OrderBy(x=>x.Severity).ThenBy(x=>x.Rule!.RuleCode).ToListAsync(ct);
-    return Results.Ok(rows.Select(x=>new{x.Id,RuleCode=x.Rule!.RuleCode,x.Rule.Element,x.Rule.Domain,Severity=x.Severity.ToString(),FixMode=x.Rule.FixMode.ToString(),x.Message,Actual=JsonSerializer.Deserialize<JsonElement>(x.ActualValueJson),Expected=JsonSerializer.Deserialize<JsonElement>(x.ExpectedValueJson),Location=JsonSerializer.Deserialize<JsonElement>(x.LocationJson),x.Confidence,Source=new{x.Rule.SourceSection,x.Rule.PdfPage,x.Rule.PrintedPage}}));
+    var rows=await db.AuditFindings.AsNoTracking().Where(x=>x.AuditJobId==id).OrderBy(x=>x.Severity).ThenBy(x=>x.RuleCodeSnapshot).ToListAsync(ct);
+    var snapshots=await db.AuditRuleSnapshots.AsNoTracking().Where(x=>x.AuditJobId==id).ToDictionaryAsync(x=>x.RuleCode,ct);
+    return Results.Ok(rows.Select(x=>{snapshots.TryGetValue(x.RuleCodeSnapshot,out var snapshot);return new{x.Id,RuleCode=x.RuleCodeSnapshot,Element=snapshot?.Element??string.Empty,Domain=snapshot?.Domain??string.Empty,Severity=x.Severity.ToString(),FixMode=x.FixModeSnapshot.ToString(),x.Message,Actual=JsonSerializer.Deserialize<JsonElement>(x.ActualValueJson),Expected=JsonSerializer.Deserialize<JsonElement>(x.ExpectedValueJson),Location=JsonSerializer.Deserialize<JsonElement>(x.LocationJson),x.Confidence,Source=new{SourceSection=x.SourceSectionSnapshot,PdfPage=x.PdfPageSnapshot,PrintedPage=x.PrintedPageSnapshot}};}));
 });
 
 api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {

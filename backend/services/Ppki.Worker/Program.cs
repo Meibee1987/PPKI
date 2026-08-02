@@ -30,6 +30,8 @@ builder.Services.AddSingleton<IRuleValidator, BodyFontValidator>();
 builder.Services.AddSingleton<IRuleValidator, LineSpacingValidator>();
 builder.Services.AddSingleton<IRuleValidator, FirstLineIndentValidator>();
 builder.Services.AddSingleton<IRuleValidator, JustifiedValidator>();
+builder.Services.AddSingleton<IResolvedRuleSetSnapshotBuilder, ResolvedRuleSetSnapshotBuilder>();
+builder.Services.AddSingleton<IResolvedRuleSetHasher, ResolvedRuleSetHasher>();
 builder.Services.AddSingleton<AuditRunner>();
 builder.Services.AddHostedService<QueuedAuditWorker>();
 var host = builder.Build();

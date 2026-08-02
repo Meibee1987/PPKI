@@ -10,6 +10,7 @@ public sealed class SchemaContractTests
     private const string MigrationName = "202608020001_ownership_integrity.sql";
     private const string RlsMigrationName = "202608020002_row_level_security.sql";
     private const string StorageMigrationName = "202608020003_storage_security.sql";
+    private const string ImmutabilityMigrationName = "202608020004_audit_immutability.sql";
 
     [Fact]
     public void Ownership_migration_is_present_and_contains_no_hosted_credentials()
@@ -60,6 +61,7 @@ public sealed class SchemaContractTests
         var version = db.Model.FindEntityType(typeof(DocumentVersion))!;
         Assert.Contains(version.GetIndexes(), index => index.IsUnique && index.Properties.Select(x => x.Name).SequenceEqual([nameof(DocumentVersion.DocumentId), nameof(DocumentVersion.VersionNo)]));
         Assert.Contains(version.GetForeignKeys(), key => key.Properties.Select(x => x.Name).SequenceEqual([nameof(DocumentVersion.DocumentId)]) && key.IsRequired);
+        Assert.Contains(version.GetForeignKeys(), key => key.Properties.Select(x => x.Name).SequenceEqual([nameof(DocumentVersion.DocumentId)]) && key.DeleteBehavior == DeleteBehavior.Restrict);
 
         var audit = db.Model.FindEntityType(typeof(AuditJob))!;
         Assert.False(audit.FindProperty(nameof(AuditJob.DocumentVersionId))!.IsNullable);
@@ -74,6 +76,11 @@ public sealed class SchemaContractTests
 
         var profileRule = db.Model.FindEntityType(typeof(ProfileRule))!;
         Assert.Contains(profileRule.GetIndexes(), index => index.IsUnique && index.Properties.Select(x => x.Name).SequenceEqual([nameof(ProfileRule.ProfileVersionId), nameof(ProfileRule.RuleId)]));
+
+        var snapshot = db.Model.FindEntityType(typeof(AuditRuleSnapshot))!;
+        Assert.Contains(snapshot.GetIndexes(), index => index.IsUnique && index.Properties.Select(x => x.Name).SequenceEqual([nameof(AuditRuleSnapshot.AuditJobId), nameof(AuditRuleSnapshot.RuleCode)]));
+        Assert.Contains(snapshot.GetForeignKeys(), key => key.Properties.Select(x => x.Name).SequenceEqual([nameof(AuditRuleSnapshot.AuditJobId)]) && key.DeleteBehavior == DeleteBehavior.Restrict);
+        Assert.Contains(finding.GetForeignKeys(), key => key.Properties.Select(x => x.Name).SequenceEqual([nameof(AuditFinding.AuditJobId)]) && key.DeleteBehavior == DeleteBehavior.Restrict);
     }
 
     [Fact]
@@ -140,6 +147,66 @@ public sealed class SchemaContractTests
         Assert.DoesNotContain("https://", sql, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Immutability_migration_enforces_history_and_state_without_runtime_bypass()
+    {
+        var sql = File.ReadAllText(ImmutabilityMigrationPath());
+
+        Assert.Contains("trg_document_versions_reject_update", sql, StringComparison.Ordinal);
+        Assert.Contains("trg_document_versions_reject_delete", sql, StringComparison.Ordinal);
+        Assert.Contains("reject_document_version_mutation", sql, StringComparison.Ordinal);
+        Assert.Contains("current_user = relation_owner", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("current_setting", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("request.jwt", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("Terminal audit job is immutable", sql, StringComparison.Ordinal);
+        Assert.Contains("Invalid audit job state transition", sql, StringComparison.Ordinal);
+        Assert.Contains("old.status = 'Queued' and new.status in ('Processing', 'Cancelled')", sql, StringComparison.Ordinal);
+        Assert.Contains("old.status = 'Processing' and new.status in ('Completed', 'Failed', 'Cancelled')", sql, StringComparison.Ordinal);
+        Assert.Contains("trg_audit_jobs_reject_delete", sql, StringComparison.Ordinal);
+        Assert.Contains("trg_audit_findings_enforce_insert", sql, StringComparison.Ordinal);
+        Assert.Contains("terminal audit finding", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("on delete restrict", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Immutability_migration_defines_insert_only_owned_rule_snapshots()
+    {
+        var sql = File.ReadAllText(ImmutabilityMigrationPath());
+
+        Assert.Contains("create table public.audit_rule_snapshots", sql, StringComparison.Ordinal);
+        Assert.Contains("unique (audit_job_id, rule_code)", sql, StringComparison.Ordinal);
+        Assert.Contains("unique (audit_job_id, ordinal)", sql, StringComparison.Ordinal);
+        Assert.Contains("ix_audit_rule_snapshots_audit_job", sql, StringComparison.Ordinal);
+        Assert.Contains("snapshot_schema_version", sql, StringComparison.Ordinal);
+        Assert.Contains("requirement_json jsonb not null", sql, StringComparison.Ordinal);
+        Assert.Contains("validation_json jsonb not null", sql, StringComparison.Ordinal);
+        Assert.Contains("source_reference_json jsonb not null", sql, StringComparison.Ordinal);
+        Assert.Contains("trg_audit_rule_snapshots_reject_update", sql, StringComparison.Ordinal);
+        Assert.Contains("trg_audit_rule_snapshots_reject_delete", sql, StringComparison.Ordinal);
+        Assert.Contains("alter table public.audit_rule_snapshots enable row level security", sql, StringComparison.Ordinal);
+        Assert.Contains("audit_rule_snapshots_select_owned_document", sql, StringComparison.Ordinal);
+        Assert.Contains("document.owner_user_id = (select auth.uid())", sql, StringComparison.Ordinal);
+        Assert.Contains("grant select on table public.audit_rule_snapshots to authenticated", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("grant insert on table public.audit_rule_snapshots to authenticated", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("storage.objects", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("storage.buckets", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("supabase.co", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("http://", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("https://", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Immutability_migration_requires_snapshot_count_and_lowercase_sha256_hash()
+    {
+        var sql = File.ReadAllText(ImmutabilityMigrationPath());
+
+        Assert.Contains("applicable_rule_count", sql, StringComparison.Ordinal);
+        Assert.Contains("^[0-9a-f]{64}$", sql, StringComparison.Ordinal);
+        Assert.Contains("snapshot_count <> new.applicable_rule_count", sql, StringComparison.Ordinal);
+        Assert.Contains("Completed audit job requires a rule snapshot hash", sql, StringComparison.Ordinal);
+        Assert.Contains("existing non-queued audits require offline remediation", sql, StringComparison.Ordinal);
+    }
+
     private static string MigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", MigrationName);
 
     private static string InitialMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", "202608010001_initial_schema.sql");
@@ -147,6 +214,8 @@ public sealed class SchemaContractTests
     private static string RlsMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", RlsMigrationName);
 
     private static string StorageMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", StorageMigrationName);
+
+    private static string ImmutabilityMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", ImmutabilityMigrationName);
 
     private static string RepositoryRoot()
     {

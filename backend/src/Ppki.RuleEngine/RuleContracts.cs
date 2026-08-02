@@ -15,3 +15,17 @@ public interface IRuleValidator
     string ValidationKey { get; }
     IReadOnlyList<RuleFinding> Validate(ParsedDocument document, RuleDefinition rule);
 }
+
+public interface IResolvedRuleSetSnapshotBuilder
+{
+    IReadOnlyList<AuditRuleSnapshot> Build(
+        Guid auditJobId,
+        IEnumerable<RuleDefinition> resolvedRules,
+        string layer,
+        int precedence);
+}
+
+public interface IResolvedRuleSetHasher
+{
+    string Hash(IEnumerable<AuditRuleSnapshot> snapshots);
+}

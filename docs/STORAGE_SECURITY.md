@@ -27,8 +27,10 @@ because MIME values can be spoofed.
 Workers validate the persisted bucket/key before materializing a unique
 temporary file and delete that file after parsing. They use server credentials,
 not signed URLs, and never overwrite the original object. Full immutable
-storage/version enforcement is deferred to S1-T04; append-only audit history is
-deferred to S1-T05.
+version enforcement is provided by S1-T04: upload computes storage metadata
+before one complete `document_versions` insert, and PostgreSQL rejects later
+version updates/deletes. Storage policies are unchanged. See
+[IMMUTABILITY.md](IMMUTABILITY.md). Append-only audit history remains S1-T05.
 
 Run `npm run test:storage-local` after `npx supabase db reset` to execute the
 local Storage smoke test. It uses only synthetic users and an object, checks

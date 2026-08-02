@@ -25,17 +25,21 @@ public sealed class QueuedAuditWorker(
             try
             {
                 await using var db = await dbFactory.CreateDbContextAsync(stoppingToken);
-                var queued = await db.AuditJobs
+                var queuedId = await db.AuditJobs
+                    .AsNoTracking()
                     .Where(x => x.Status == AuditJobStatus.Queued)
                     .OrderBy(x => x.CreatedAt)
+                    .Select(x => (Guid?)x.Id)
                     .FirstOrDefaultAsync(stoppingToken);
 
-                if (queued is not null)
+                if (queuedId is not null)
                 {
-                    queued.Status = AuditJobStatus.Processing;
-                    queued.StartedAt = DateTimeOffset.UtcNow;
-                    await db.SaveChangesAsync(stoppingToken);
-                    auditId = queued.Id;
+                    var claimed = await db.AuditJobs
+                        .Where(x => x.Id == queuedId.Value && x.Status == AuditJobStatus.Queued)
+                        .ExecuteUpdateAsync(setters => setters
+                            .SetProperty(x => x.Status, AuditJobStatus.Processing)
+                            .SetProperty(x => x.StartedAt, DateTimeOffset.UtcNow), stoppingToken);
+                    if (claimed == 1) auditId = queuedId.Value;
                 }
 
                 if (auditId is not null)

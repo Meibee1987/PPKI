@@ -137,6 +137,9 @@ insert into public.document_versions (id, document_id, version_no, storage_bucke
 insert into public.audit_jobs (id, document_version_id, profile_version_id, requested_by_user_id, status) values
   ('${fixture.auditAId}', '${fixture.versionAId}', '${fixture.profileVersionId}', '${userAId}', 'Queued'),
   ('${fixture.auditBId}', '${fixture.versionBId}', '${fixture.profileVersionId}', '${userBId}', 'Queued');
+update public.audit_jobs
+set status = 'Processing', started_at = now()
+where id in ('${fixture.auditAId}', '${fixture.auditBId}');
 insert into public.audit_findings (id, audit_job_id, rule_id, severity, rule_code_snapshot, fix_mode_snapshot, message, actual_value, expected_value, location) values
   ('${fixture.findingAId}', '${fixture.auditAId}', '${fixture.ruleId}', 'Info', 'TEST-RLS-001', 'Manual', 'Synthetic finding A', '{}', '{}', '{}'),
   ('${fixture.findingBId}', '${fixture.auditBId}', '${fixture.ruleId}', 'Info', 'TEST-RLS-001', 'Manual', 'Synthetic finding B', '{}', '{}', '{}');`;
