@@ -1,0 +1,12 @@
+.env
+.env.local
+**/.next/
+**/node_modules/
+**/bin/
+**/obj/
+.vs/
+.idea/
+.DS_Store
+*.user
+*.suo
+supabase/.temp/

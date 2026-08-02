@@ -1,0 +1,11 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Ppki.Application/Ppki.Application.csproj" />
+    <ProjectReference Include="../Ppki.DocxEngine/Ppki.DocxEngine.csproj" />
+    <ProjectReference Include="../Ppki.Domain/Ppki.Domain.csproj" />
+    <ProjectReference Include="../Ppki.Infrastructure/Ppki.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.EntityFrameworkCore" />
+  </ItemGroup>
+</Project>

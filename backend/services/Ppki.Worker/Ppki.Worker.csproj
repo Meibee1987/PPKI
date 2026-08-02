@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk.Worker">
+  <ItemGroup>
+    <ProjectReference Include="../../src/Ppki.Application/Ppki.Application.csproj" />
+    <ProjectReference Include="../../src/Ppki.DocxEngine/Ppki.DocxEngine.csproj" />
+    <ProjectReference Include="../../src/Ppki.Domain/Ppki.Domain.csproj" />
+    <ProjectReference Include="../../src/Ppki.Infrastructure/Ppki.Infrastructure.csproj" />
+    <ProjectReference Include="../../src/Ppki.RuleEngine/Ppki.RuleEngine.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,1 @@
+-- Static baseline rows are inserted by the initial migration. The API imports the 317-rule JSON catalog on first start.

@@ -1,0 +1,11 @@
+{
+  "name": "ppki-smart-formatter-supabase-tools",
+  "private": true,
+  "scripts": {
+    "supabase:login": "supabase login",
+    "supabase:link": "supabase link",
+    "supabase:push": "supabase db push",
+    "supabase:status": "supabase status"
+  },
+  "devDependencies": { "supabase": "latest" }
+}

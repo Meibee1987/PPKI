@@ -1,0 +1,62 @@
+name: ppki-smart-formatter-supabase
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: backend/services/Ppki.Api/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Database: ${SUPABASE_DB_CONNECTION}
+      Supabase__Url: ${SUPABASE_URL}
+      Supabase__PublishableKey: ${SUPABASE_PUBLISHABLE_KEY}
+      Supabase__SecretKey: ${SUPABASE_SECRET_KEY}
+      Supabase__Storage__OriginalBucket: ${SUPABASE_STORAGE_ORIGINAL_BUCKET:-documents-original}
+      Supabase__Storage__VersionBucket: ${SUPABASE_STORAGE_VERSION_BUCKET:-documents-versions}
+      Supabase__Storage__ReportBucket: ${SUPABASE_STORAGE_REPORT_BUCKET:-audit-reports}
+      RuleCatalog__Path: /app/rules/ppki-ipb-2019/rules.json
+      Cors__AllowedOrigins__0: ${WEB_ORIGIN:-http://localhost:3000}
+    ports:
+      - "${API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health >/dev/null || exit 1"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+
+  worker:
+    build:
+      context: .
+      dockerfile: backend/services/Ppki.Worker/Dockerfile
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ConnectionStrings__Database: ${SUPABASE_DB_CONNECTION}
+      Supabase__Url: ${SUPABASE_URL}
+      Supabase__PublishableKey: ${SUPABASE_PUBLISHABLE_KEY}
+      Supabase__SecretKey: ${SUPABASE_SECRET_KEY}
+      Supabase__Storage__OriginalBucket: ${SUPABASE_STORAGE_ORIGINAL_BUCKET:-documents-original}
+      Supabase__Storage__VersionBucket: ${SUPABASE_STORAGE_VERSION_BUCKET:-documents-versions}
+      Supabase__Storage__ReportBucket: ${SUPABASE_STORAGE_REPORT_BUCKET:-audit-reports}
+      Worker__PollSeconds: ${WORKER_POLL_SECONDS:-2}
+    depends_on:
+      api:
+        condition: service_healthy
+
+  web:
+    build:
+      context: .
+      dockerfile: apps/web/Dockerfile
+      args:
+        NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
+        NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+        NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
+    environment:
+      NEXT_PUBLIC_API_BASE_URL: ${NEXT_PUBLIC_API_BASE_URL:-http://localhost:8080}
+      NEXT_PUBLIC_SUPABASE_URL: ${NEXT_PUBLIC_SUPABASE_URL}
+      NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: ${NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY}
+    ports:
+      - "${WEB_PORT:-3000}:3000"
+    depends_on:
+      api:
+        condition: service_healthy

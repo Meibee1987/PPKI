@@ -1,0 +1,5 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Ppki.Domain/Ppki.Domain.csproj" />
+  </ItemGroup>
+</Project>
