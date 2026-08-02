@@ -57,6 +57,11 @@ public sealed class AuditRunner(
                         AuditJobId = audit.Id,
                         RuleId = rule.Id,
                         Severity = rule.Severity,
+                        RuleCodeSnapshot = rule.RuleCode,
+                        FixModeSnapshot = rule.FixMode,
+                        SourceSectionSnapshot = rule.SourceSection,
+                        PdfPageSnapshot = rule.PdfPage,
+                        PrintedPageSnapshot = rule.PrintedPage,
                         Message = result.Message,
                         ActualValueJson = JsonSerializer.Serialize(result.Actual),
                         ExpectedValueJson = JsonSerializer.Serialize(result.Expected),
@@ -80,12 +85,13 @@ public sealed class AuditRunner(
             trackedAudit.CompletedAt = DateTimeOffset.UtcNow;
             await completeDb.SaveChangesAsync(cancellationToken);
         }
-        catch (Exception exception)
+        catch
         {
             await using var failDb = await dbFactory.CreateDbContextAsync(cancellationToken);
             var failedAudit = await failDb.AuditJobs.SingleAsync(x => x.Id == auditJobId, cancellationToken);
             failedAudit.Status = AuditJobStatus.Failed;
-            failedAudit.ErrorMessage = exception.Message;
+            // Diagnostics remain in worker logging; user-facing persisted state must not expose exception details.
+            failedAudit.ErrorMessage = "Audit processing failed.";
             failedAudit.CompletedAt = DateTimeOffset.UtcNow;
             await failDb.SaveChangesAsync(cancellationToken);
             throw;

@@ -122,7 +122,7 @@ api.MapGet("/documents/{id:guid}", async (Guid id, ClaimsPrincipal user, PpkiDbC
 api.MapPost("/document-versions/{versionId:guid}/audits", async (Guid versionId, ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) => {
     var uid=UserId(user); var owned=await db.DocumentVersions.AnyAsync(v=>v.Id==versionId&&v.Document!.OwnerUserId==uid,ct); if(!owned)return Results.NotFound();
     var active=await db.ProfileVersions.OrderByDescending(x=>x.VersionNo).FirstAsync(x=>x.Status=="Active",ct);
-    var audit=new AuditJob{DocumentVersionId=versionId,ProfileVersionId=active.Id,Status=AuditJobStatus.Queued}; db.AuditJobs.Add(audit); await db.SaveChangesAsync(ct);
+    var audit=new AuditJob{DocumentVersionId=versionId,ProfileVersionId=active.Id,RequestedByUserId=uid,Status=AuditJobStatus.Queued}; db.AuditJobs.Add(audit); await db.SaveChangesAsync(ct);
     return Results.Accepted($"/api/audits/{audit.Id}",new{audit.Id,status=audit.Status.ToString()});
 });
 

@@ -8,6 +8,12 @@ public enum DocumentKind
     Disertasi
 }
 
+public enum DocumentStatus
+{
+    Active,
+    Archived
+}
+
 public enum AuditJobStatus
 {
     Queued,

@@ -35,6 +35,7 @@ public sealed class ProfileVersion : Entity
     public int VersionNo { get; set; }
     public required string Status { get; set; }
     public DateTimeOffset? EffectiveAt { get; set; }
+    public List<ProfileRule> RuleAssignments { get; set; } = [];
 }
 
 public sealed class DocumentRecord : Entity
@@ -43,6 +44,7 @@ public sealed class DocumentRecord : Entity
     public Guid DocumentTypeId { get; set; }
     public DocumentType? DocumentType { get; set; }
     public required string Title { get; set; }
+    public DocumentStatus Status { get; set; } = DocumentStatus.Active;
     public int CurrentVersionNo { get; set; } = 1;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
     public List<DocumentVersion> Versions { get; set; } = [];
@@ -80,6 +82,15 @@ public sealed class RuleDefinition : Entity
     public int? PdfPage { get; set; }
     public string? PrintedPage { get; set; }
     public string? SourceSection { get; set; }
+    public List<ProfileRule> ProfileAssignments { get; set; } = [];
+}
+
+public sealed class ProfileRule : Entity
+{
+    public Guid ProfileVersionId { get; set; }
+    public ProfileVersion? ProfileVersion { get; set; }
+    public Guid RuleId { get; set; }
+    public RuleDefinition? Rule { get; set; }
 }
 
 public sealed class AuditJob : Entity
@@ -88,6 +99,8 @@ public sealed class AuditJob : Entity
     public DocumentVersion? DocumentVersion { get; set; }
     public Guid ProfileVersionId { get; set; }
     public ProfileVersion? ProfileVersion { get; set; }
+    // Nullable only for legacy rows created before S1-T01. New jobs always set this from the authenticated caller.
+    public Guid? RequestedByUserId { get; set; }
     public AuditJobStatus Status { get; set; } = AuditJobStatus.Queued;
     public string? ResolvedRuleSetHash { get; set; }
     public int TotalRules { get; set; }
@@ -108,6 +121,11 @@ public sealed class AuditFinding : Entity
     public Guid RuleId { get; set; }
     public RuleDefinition? Rule { get; set; }
     public RuleSeverity Severity { get; set; }
+    public required string RuleCodeSnapshot { get; set; }
+    public FixMode FixModeSnapshot { get; set; }
+    public string? SourceSectionSnapshot { get; set; }
+    public int? PdfPageSnapshot { get; set; }
+    public string? PrintedPageSnapshot { get; set; }
     public required string Message { get; set; }
     public required string ActualValueJson { get; set; }
     public required string ExpectedValueJson { get; set; }
