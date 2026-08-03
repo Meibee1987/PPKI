@@ -41,3 +41,26 @@ test("accepts valid public configuration without making a network connection", (
     supabasePublishableKey: "sb_publishable_valid",
   });
 });
+
+test("reads the default public configuration through statically analyzable environment access", () => {
+  const previous = {
+    NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  };
+
+  try {
+    Object.assign(process.env, validEnvironment);
+    assert.deepEqual(getPublicSupabaseEnvironment(), {
+      apiBaseUrl: "http://localhost:8080",
+      supabaseUrl: "https://valid-project.supabase.co",
+      supabasePublishableKey: "sb_publishable_valid",
+    });
+  } finally {
+    for (const [name, value] of Object.entries(previous)) {
+      if (value === undefined) delete process.env[name];
+      else process.env[name] = value;
+    }
+  }
+});

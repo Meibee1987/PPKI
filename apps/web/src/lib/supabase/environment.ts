@@ -7,7 +7,12 @@ export type PublicSupabaseEnvironment = {
 type PublicEnvironment = Record<string, string | undefined>;
 
 export function getPublicSupabaseEnvironment(
-  environment: PublicEnvironment = process.env,
+  environment: PublicEnvironment = {
+    NEXT_PUBLIC_API_BASE_URL: process.env.NEXT_PUBLIC_API_BASE_URL,
+    NEXT_PUBLIC_SUPABASE_URL: process.env.NEXT_PUBLIC_SUPABASE_URL,
+    NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY:
+      process.env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY,
+  },
 ): PublicSupabaseEnvironment {
   const apiBaseUrl = requireValue(
     "NEXT_PUBLIC_API_BASE_URL",
