@@ -1,144 +1,180 @@
 # Deterministic DOCX parser contract
 
-S2-T01 defines the read-only Open XML intermediate model. S2-T02 adds
-deterministic effective formatting with property-level provenance. Neither task
-implements PPKI validation, heading semantics, findings, rendered-page
-estimation, or auto-fix.
+S2-T01 defines the read-only Open XML model, S2-T02 adds effective formatting
+and provenance, and S2-T03 adds numbering semantics, structural heading
+evidence, and a document outline. These parser tasks do not implement PPKI
+validation, semantic PPKI sections, findings, rendered layout, or auto-fix.
 
-## Scope and package safety
+## Package safety and compatibility
 
-`OpenXmlDocxParser` opens a local materialized DOCX with
+`OpenXmlDocxParser` opens a materialized DOCX with
 `WordprocessingDocument.Open(path, false)` and `AutoSave=false`. It never writes
-the package, resolves an external relationship, downloads a hyperlink, loads
-image bytes into the model, searches installed fonts, or requires database,
-Storage, Supabase, or network access. Missing/corrupt/unsupported packages raise
-`DocxParserException` with a stable code and generic message.
+the package, resolves external relationships, executes fields, loads image
+bytes into the model, searches installed fonts, or uses database, Supabase,
+Storage, HTTP, Word, or LibreOffice.
 
 The worker contract remains `IDocxParser.ParseAsync(path, cancellationToken)`.
-`AuditRunner` removes its unique temporary file in `finally` and maps parser
-failure to `Document parsing failed.` No parsed model or document text is
-written to the database or audit trail.
+`AuditRunner` removes its temporary file in `finally` and exposes only the
+generic `Document parsing failed.` category. Parsed content, numbering labels,
+headings, and outlines are not persisted or written to the audit trail.
 
-## Intermediate model and versions
+Legacy constructors and paragraph properties retain their existing meaning.
+In particular, raw/direct formatting, effective formatting, provenance,
+effective numbering, and heading classification remain separate models.
 
-`ParsedDocument` uses parser schema `2.0` and canonical projection schema
-`2.0`. It contains package type, sections, ordered body elements, safe counts,
-paragraphs/runs, structural inventories, document defaults, style and numbering
-catalogs, theme-font slots, effective formatting, and bounded diagnostics.
-Schema `2.0` is required because effective values and provenance materially
-change the canonical projection.
+## Schema and intermediate model
 
-The model contains no timestamp, random ID, absolute path, user/owner/audit ID,
-database entity, credential, Storage path, or signed URL. Collections preserve
-package/declaration order or use an explicitly documented ordinal sort.
+Parser and canonical projection schema are `3.0`. Version `3.0` is required
+because the canonical semantics now include the full numbering catalog,
+effective numbering and labels, heading evidence, and the outline tree.
+
+`ParsedDocument` contains ordered body structure, sections, paragraphs/runs,
+structural inventories, document defaults, style/theme catalogs, numbering
+definitions, flat headings, the outline tree, safe counts, and bounded
+diagnostics. It contains no timestamp, random ID, absolute path, user/storage/
+database/audit identifier, credential, or signed URL.
 
 ## Location contract
 
 `DocumentElementLocation` uses zero-based section, body, paragraph, run, table,
-row, and cell indexes. Header/footer locations carry their controlled type.
-`PartUri` is a normalized internal OPC URI; external targets are never stored.
-`ToCompactString()` returns a stable representation such as:
+row, and cell indexes. Part URIs are normalized internal OPC URIs. Compact
+locations are stable, text-free values such as:
 
 ```text
 maindocument/s:0/b:0/p:0/r:0/kind:run
 ```
 
-Locations contain no paragraph text, XPath, memory address, time, GUID, or
-claimed rendered page number.
+Locations never claim a rendered page number.
 
-## Raw Open XML units and normalization
+## Raw units and formatting layers
 
-- Page, margin, indentation, and spacing values remain integer twips.
-- Font sizes remain integer half-points; drawing dimensions remain EMUs.
-- Line spacing retains its integer value and rule.
-- Alignment and orientation use controlled enums.
-- Boolean values remain nullable, so explicit `false` differs from missing.
-- Numeric zero remains distinct from missing.
+- Page, margin, indentation, and spacing values use integer twips.
+- Font sizes use integer half-points; drawing dimensions use EMUs.
+- Numeric zero differs from missing.
+- Boolean `false` differs from unspecified.
+- Alignment/orientation use controlled enums.
+- Invalid raw numbers produce safe diagnostics.
 
-Legacy cm/pt/string properties retain their S2-T01 behavior for existing
-validators; they are not redefined as effective values. Display conversion uses
-invariant decimal arithmetic and `MidpointRounding.AwayFromZero`. Canonical
-equality uses raw integers. Invalid numeric attributes produce safe diagnostics.
+Direct formatting, style references, document defaults, and effective
+formatting are resolved per property. `ResolvedFormattingValue<T>` records
+state, source kind/property, source style ID, inherited/explicit status, and an
+optional diagnostic code. Legacy cm/pt properties are not redefined as these
+effective values.
 
-## Formatting layers and provenance
+Paragraph precedence is direct, referenced/default paragraph style, nearest
+then ancestor `basedOn`, document defaults, then unspecified. Run precedence is
+direct, character-style chain, paragraph-style run chain, document defaults,
+theme, then unspecified. Style-layer toggle `true` reverses inherited state;
+direct `true`/`false` is absolute. Theme resolution uses only package major/
+minor Latin, East Asia, and complex-script slots.
 
-Raw values, direct formatting, style references, document defaults, and
-effective formatting are separate contracts. Direct/catalog values use
-`ParagraphFormattingProperties` and `RunFormattingProperties`. Effective
-paragraph, run, and section models contain `ResolvedFormattingValue<T>` for
-each property.
+## Numbering catalog
 
-Each value records `Resolved`, `Unspecified`, `Unresolved`, or `Invalid` state,
-source kind/property, normalized source style ID when relevant, inherited versus
-explicit status, and an optional safe diagnostic code. Provenance excludes
-document text, raw XML, paths, filenames, infrastructure IDs, current time, and
-random values.
+`ParsedNumberingCatalog` retains declaration-ordered abstract definitions and
+instances. Abstract definitions include multi-level type, style links, and
+level definitions. Instances include abstract references, level overrides,
+start overrides, and stable declaration order.
 
-## Document defaults and style catalog
+Each level retains raw level index/start/format/text, suffix, justification,
+restart value, legal-numbering flag, linked paragraph style, paragraph
+indentation, and required run formatting. Raw XML is never retained. Duplicate
+abstract IDs or instance IDs use the first declaration and emit
+`numbering-definition-duplicate`.
 
-Paragraph/run defaults are read from `w:docDefaults`. The first declaration of
-each style records ID, controlled type, name, default/custom flags, `basedOn`,
-`next`, `link`, direct paragraph/run properties, and stable declaration order.
-Paragraph and character styles participate in resolution. Table/numbering
-styles may be inventoried but do not receive a full cascade.
+Missing numbering parts are safe. Missing instances, abstract definitions, or
+levels produce unresolved effective numbering and bounded diagnostics rather
+than inferred values.
 
-Duplicate IDs use the first declaration and emit `style-id-duplicate`. Missing
-targets, direct/indirect cycles, type mismatches, and excessive chain depth emit
-bounded safe diagnostics. A valid partial chain may resolve a property, with the
-chain diagnostic retained in its provenance.
+## Effective numbering precedence
 
-## Paragraph cascade
+`EffectiveParagraphNumbering` is separate from S2-T02 effective formatting.
+Its source comes from the effective per-property cascade:
 
-Each paragraph property independently uses:
+1. direct paragraph `numId`/`ilvl`;
+2. referenced paragraph style;
+3. nearest/ancestor `basedOn` style;
+4. unspecified.
 
-1. direct paragraph property;
-2. referenced paragraph style (or declared default paragraph style);
-3. nearest then ancestor `basedOn` styles;
-4. document paragraph defaults;
-5. unspecified.
+Direct values win independently. Zero remains valid. `numId=0` explicitly
+disables numbering. A missing `numId` means no numbering; a present `numId`
+without `ilvl` remains unresolved instead of inventing a level. Provenance
+records direct/style source, style ID, inheritance, IDs, and a safe diagnostic.
 
-The contract covers alignment, indentation, spacing/line rule, keep flags,
-page-break-before, widow/contextual spacing, outline level, and numbering
-ID/level references. It does not render numbering labels or infer compliance.
+## Counter and label semantics
 
-## Run cascade, toggle semantics, and theme fonts
+Label state is new for every parse and keyed by numbering instance. Paragraphs
+advance counters in deterministic main-document paragraph order. The current
+level starts from `startOverride`, then level `start`, then the documented
+parser fallback `1`. Repeated paragraphs increment the current level; advancing
+a higher level resets deeper counters by default. Explicit restart `0` prevents
+restart; a positive restart level resets only when its referenced higher level
+advances. Other unsupported restart semantics are not guessed.
 
-Non-toggle properties use direct run formatting, character-style chain,
-paragraph-style run properties, document run defaults, then package theme
-resolution. ASCII, High ANSI, East Asia, and complex-script font slots remain
-separate.
+Level text supports `%1` through `%9`. Each placeholder uses its referenced
+level format; legal-numbering levels render numeric placeholders as decimal.
+Supported formats are:
 
-For Open XML toggle properties, style-layer `true` toggles the inherited state;
-style-layer `false` leaves it unchanged. Direct `true` or `false` is an absolute
-override. This avoids incorrect logical-OR inheritance. Theme mappings include
-major/minor Latin, East Asia, and complex script. Missing theme parts/slots
-produce `theme-font-unresolved`; the resolver never queries OS fonts.
+- `decimal`;
+- `upperRoman` and `lowerRoman` for positive values through 3999;
+- `upperLetter` and `lowerLetter` using invariant alphabetic sequences;
+- `bullet`, preserving the package glyph in-memory;
+- `none`.
 
-## Section semantics and effective page contract
+Suffixes `tab`, `space`, and `nothing` are represented separately and in the
+in-memory value-with-suffix. Unsupported formats or invalid placeholders emit
+diagnostics and do not receive guessed labels. Labels are never logged.
 
-Paragraph `w:sectPr` terminates a section and body-level `w:sectPr` defines the
-final section. Every present raw section property resolves with provenance
-`SectionProperties`; every missing value stays `Unspecified`. The parser does
-not assume A4, margins, orientation, prior-section values, printer/locale
-defaults, page count, or rendered position.
+## Heading evidence and classification
 
-## Paragraph, run, structural, and privacy contract
+`ParsedHeading` references a paragraph index/location rather than duplicating
+its text. Confirmed headings require structural evidence:
 
-Paragraph/run order follows XML order. Semantic whitespace, tabs, line/page
-breaks, hidden/deleted/inserted state, field references, and drawing references
-remain distinct. Text may exist in memory for later validation but is never put
-in diagnostics, logs, audit metadata, or canonical projections.
+1. valid direct outline level;
+2. paragraph-style outline level;
+3. inherited heading outline/style;
+4. exact allowlisted built-in style IDs `Heading1` through `Heading9`;
+5. a numbering level explicitly linked to a heading style.
 
-Tables retain row/cell structure and width/grid metadata. Drawings retain only
-relationship/content-type/dimension metadata. Fields retain normalized kinds
-and begin/separate/end structure and are never executed. Header/footer parts and
-footnote/endnote/comment references are inventoried without validation.
+Open XML outline levels `0..8` map explicitly to public heading levels `1..9`.
+Direct outline wins. Conflicting lower-priority evidence produces
+`heading-evidence-conflict`. Bold, uppercase, center alignment, font size, page
+break, or text such as `BAB` never confirms a heading by itself. Formatting-only
+paragraphs remain non-confirmed. Empty structural headings produce
+`heading-empty`; fully hidden/deleted paragraphs are not silently promoted.
 
-## Diagnostics and resource limits
+Built-in matching is case-normalized and limited to the fixed nine-style
+allowlist. It does not depend on OS language. Custom styles require outline,
+valid inheritance, or numbering-link evidence.
 
-Diagnostics contain controlled code/severity/message key, optional location,
-and sorted allowlisted metadata. They exclude document text, XML, filenames,
-paths, external targets, stack traces, and dependency messages.
+## Document outline tree
+
+The document exposes a flat ordered heading list and a tree whose root is not a
+paragraph. Level 1 headings are root children. A heading at level N becomes a
+child of the nearest preceding heading with a smaller level; otherwise it is a
+root child. Repeated levels become siblings. A skipped level emits
+`heading-level-skipped` but still receives the deterministic nearest-smaller
+parent.
+
+Only confirmed main-document headings enter the tree. Header/footer headings
+are never considered, and table paragraphs are excluded from the main outline.
+Nodes retain deterministic locations, heading references, level, parent index,
+and child order. No rendered page range or semantic PPKI section name is
+inferred.
+
+## Privacy and diagnostics
+
+Diagnostics contain only controlled code/severity/message key, deterministic
+location, and allowlisted numeric/type/style metadata. They exclude paragraph
+or heading text, labels, XML, paths, filenames, external targets, stack traces,
+and dependency messages. The diagnostic cap prevents malformed-document floods.
+
+Canonical projection schema `3.0` includes semantic numbering definitions,
+effective numbering, text-free heading evidence, and outline structure. It
+excludes paragraph text, runtime counters/cache, current time, random IDs, and
+absolute paths. Repeated and parallel parses—including use of one parser
+instance—must yield identical projections and hashes.
+
+## Resource limits
 
 | Resource | Default |
 | --- | ---: |
@@ -152,17 +188,18 @@ paths, external targets, stack traces, and dependency messages.
 | diagnostics | 200 |
 | styles | 10,000 |
 | style inheritance depth | 64 |
+| abstract numbering definitions | 10,000 |
+| numbering instances | 10,000 |
+| numbering levels and overrides | 100,000 |
+| outline nodes | 100,000 |
 
-Hard-limit failure uses `resource-limit-exceeded`. Cancellation is checked
-during package, relationship, body, section, and style traversal.
+Hard-limit violations raise safe `resource-limit-exceeded` errors. All options
+must be positive.
 
-## Determinism and golden tests
+## Tests
 
-`ParsedDocumentCanonicalProjection` schema `2.0` includes effective formatting
-and provenance, omits document text/cache state, serializes in fixed order, and
-calculates SHA-256. Repeated and parallel parses must yield the same projection
-and hash. The six fixtures are synthetic and parsed from temporary copies whose
-source checksums are rechecked.
+The seven fixtures are wholly synthetic and parsed through checksum-verified
+temporary copies.
 
 ```powershell
 npm run fixtures:generate
@@ -172,7 +209,7 @@ npm run test:docx-parser
 
 ## Explicitly deferred
 
-S2-T03 may add heading semantics. Still deferred are full table-style cascade,
-numbering label/text rendering, rendered-page layout, PPKI validators, findings,
-and auto-fix. Raw/direct formatting, style references, and effective formatting
-must remain distinct.
+Not implemented here: PPKI-specific section detection, abstract/ringkasan
+detection, table-of-contents validation, every Word numbering format and
+special restart mode, full table-style cascade, rendered-page layout, PPKI
+validators, findings, or auto-fix.

@@ -9,8 +9,8 @@ namespace Ppki.DocxEngine;
 
 public sealed class OpenXmlDocxParser : IDocxParser
 {
-    public const string SchemaVersion = "2.0";
-    public const string ProjectionVersion = "2.0";
+    public const string SchemaVersion = "3.0";
+    public const string ProjectionVersion = "3.0";
     private const string RelationshipsNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     private const string WordprocessingDrawingNamespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
     private const string DrawingNamespace = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -57,9 +57,17 @@ public sealed class OpenXmlDocxParser : IDocxParser
                 styles.DocumentDefaults,
                 themeFonts,
                 _options.MaximumStyleInheritanceDepth);
-            var numbering = ParseNumbering(mainPart);
+            var numbering = ParseNumbering(mainPart, context);
             var sections = ParseSections(body, mainPart, context);
             var bodyResult = ParseBody(body, mainPart, styles, numbering, resolver, context);
+            var numberingResult = new OpenXmlNumberingResolver(numbering.FullCatalog).Resolve(bodyResult.Paragraphs);
+            bodyResult = bodyResult with { Paragraphs = numberingResult.Paragraphs };
+            AddDiagnostics(context, numberingResult.Diagnostics);
+            var structureResult = new DocumentOutlineBuilder(
+                styles.Catalog,
+                numbering.FullCatalog,
+                _options.MaximumOutlineNodes).Build(bodyResult.Paragraphs);
+            AddDiagnostics(context, structureResult.Diagnostics);
             var headerFooters = ParseHeaderFooters(mainPart, sections, styles, numbering, resolver, context);
             foreach (var diagnostic in resolver.Diagnostics)
             {
@@ -98,7 +106,10 @@ public sealed class OpenXmlDocxParser : IDocxParser
                 AggregateCounts: counts,
                 ProjectionSchemaVersion: ProjectionVersion,
                 DocumentDefaults: styles.DocumentDefaults,
-                ThemeFonts: themeFonts));
+                ThemeFonts: themeFonts,
+                NumberingDefinitions: numbering.FullCatalog,
+                HeadingInventory: structureResult.Headings,
+                Outline: structureResult.Outline));
         }
         catch (DocxParserException)
         {
@@ -116,6 +127,15 @@ public sealed class OpenXmlDocxParser : IDocxParser
             or InvalidDataException)
         {
             throw new DocxParserException("package-invalid", "DOCX package is corrupt or unsupported.");
+        }
+    }
+
+    private static void AddDiagnostics(ParserContext context, IReadOnlyList<ParserDiagnostic> diagnostics)
+    {
+        foreach (var diagnostic in diagnostics)
+        {
+            context.Diagnostics.Add(diagnostic.Code, diagnostic.Severity, diagnostic.MessageKey,
+                diagnostic.Location, diagnostic.Metadata);
         }
     }
 
@@ -255,34 +275,161 @@ public sealed class OpenXmlDocxParser : IDocxParser
     private static string? Typeface(OpenXmlElement? group, string localName) =>
         Attribute(group?.ChildElements.FirstOrDefault(element => element.LocalName == localName), "typeface");
 
-    private static NumberingContext ParseNumbering(MainDocumentPart mainPart)
+    private NumberingContext ParseNumbering(MainDocumentPart mainPart, ParserContext context)
     {
         var numbering = mainPart.NumberingDefinitionsPart?.Numbering;
-        if (numbering is null) return new([], new Dictionary<int, NumberingDefinition>());
-
-        var abstracts = numbering.Elements<AbstractNum>()
-            .Where(item => item.AbstractNumberId?.Value is not null)
-            .ToDictionary(item => checked((int)item.AbstractNumberId!.Value!), item => item);
-        var definitions = new Dictionary<int, NumberingDefinition>();
-        foreach (var instance in numbering.Elements<NumberingInstance>().OrderBy(item => item.NumberID?.Value ?? int.MaxValue))
+        if (numbering is null)
         {
-            if (instance.NumberID?.Value is not int numberId) continue;
-            var abstractId = instance.AbstractNumId?.Val?.Value;
-            definitions[numberId] = new(numberId, abstractId, abstractId is not null && abstracts.TryGetValue(abstractId.Value, out var value) ? value : null);
+            context.Diagnostics.Add("numbering-part-missing", ParserDiagnosticSeverity.Information,
+                "parser.numbering_part_missing");
+            return new([], new([], []));
         }
 
-        var catalog = definitions.Values.OrderBy(item => item.NumberingId).Select(item =>
+        var abstractSources = numbering.Elements<AbstractNum>().ToArray();
+        if (abstractSources.Length > _options.MaximumAbstractNumberingDefinitions) throw Limit("abstract-numbering-definitions");
+        var abstracts = new List<ParsedAbstractNumbering>();
+        var abstractIds = new HashSet<int>();
+        var totalLevels = 0;
+        for (var order = 0; order < abstractSources.Length; order++)
         {
-            var level = item.Abstract?.Elements<Level>().OrderBy(value => value.LevelIndex?.Value ?? int.MaxValue).FirstOrDefault();
-            return new ParsedNumberingReference(
-                item.NumberingId,
-                null,
-                item.AbstractNumberingId,
-                Attribute(level?.NumberingFormat, "val"),
-                level?.LevelText?.Val?.Value);
+            context.CheckCancellation();
+            var source = abstractSources[order];
+            var id = NumericInt(source, "abstractNumId", context);
+            if (id is null) continue;
+            if (!abstractIds.Add(id.Value))
+            {
+                DuplicateNumberingDiagnostic(context, "abstract", id.Value);
+                continue;
+            }
+            var levels = new List<ParsedNumberingLevel>();
+            var levelIds = new HashSet<int>();
+            foreach (var level in source.Elements<Level>())
+            {
+                if (++totalLevels > _options.MaximumNumberingLevels) throw Limit("numbering-levels");
+                var parsed = ParseNumberingLevel(level, levels.Count, context);
+                if (parsed is null) continue;
+                if (!levelIds.Add(parsed.Level))
+                {
+                    DuplicateNumberingDiagnostic(context, "abstract-level", parsed.Level);
+                    continue;
+                }
+                levels.Add(parsed);
+            }
+            abstracts.Add(new(
+                id.Value,
+                ChildValue(source, "multiLevelType"),
+                ChildValue(source, "styleLink"),
+                ChildValue(source, "numStyleLink"),
+                levels.ToArray(),
+                order));
+        }
+
+        var instanceSources = numbering.Elements<NumberingInstance>().ToArray();
+        if (instanceSources.Length > _options.MaximumNumberingInstances) throw Limit("numbering-instances");
+        var instances = new List<ParsedNumberingInstance>();
+        var instanceIds = new HashSet<int>();
+        for (var order = 0; order < instanceSources.Length; order++)
+        {
+            context.CheckCancellation();
+            var source = instanceSources[order];
+            var id = NumericInt(source, "numId", context);
+            if (id is null) continue;
+            if (!instanceIds.Add(id.Value))
+            {
+                DuplicateNumberingDiagnostic(context, "instance", id.Value);
+                continue;
+            }
+            var overrides = new List<ParsedNumberingLevelOverride>();
+            var overrideLevels = new HashSet<int>();
+            foreach (var levelOverride in source.Elements<LevelOverride>())
+            {
+                if (++totalLevels > _options.MaximumNumberingLevels) throw Limit("numbering-levels");
+                var level = NumericInt(levelOverride, "ilvl", context);
+                if (level is null) continue;
+                if (!overrideLevels.Add(level.Value))
+                {
+                    DuplicateNumberingDiagnostic(context, "level-override", level.Value);
+                    continue;
+                }
+                overrides.Add(new(
+                    level.Value,
+                    NumericInt(levelOverride.GetFirstChild<StartOverrideNumberingValue>(), "val", context),
+                    levelOverride.GetFirstChild<Level>() is { } overrideDefinition
+                        ? ParseNumberingLevel(overrideDefinition, overrides.Count, context)
+                        : null,
+                    overrides.Count));
+            }
+            instances.Add(new(
+                id.Value,
+                NumericInt(source.AbstractNumId, "val", context),
+                overrides.ToArray(),
+                order));
+        }
+
+        var fullCatalog = new ParsedNumberingCatalog(abstracts.ToArray(), instances.ToArray());
+        var legacy = instances.Select(instance =>
+        {
+            var abstractNumbering = abstracts.FirstOrDefault(value => value.AbstractNumberingId == instance.AbstractNumberingId);
+            var level = abstractNumbering?.Levels.OrderBy(value => value.Level).FirstOrDefault();
+            return new ParsedNumberingReference(instance.NumberingId, null, instance.AbstractNumberingId,
+                level?.RawFormat, level?.LevelText);
         }).ToArray();
-        return new(catalog, definitions);
+        return new(legacy, fullCatalog);
     }
+
+    private static ParsedNumberingLevel? ParseNumberingLevel(
+        Level source,
+        int declarationOrder,
+        ParserContext context)
+    {
+        var level = NumericInt(source, "ilvl", context);
+        if (level is null) return null;
+        var indentation = source.PreviousParagraphProperties?.Indentation;
+        var rawFormat = Attribute(source.NumberingFormat, "val");
+        return new(
+            level.Value,
+            NumericInt(source.StartNumberingValue, "val", context),
+            NumberingFormat(rawFormat),
+            rawFormat,
+            source.LevelText?.Val?.Value,
+            NumberingSuffix(Attribute(source.GetFirstChild<LevelSuffix>(), "val")),
+            Attribute(source.LevelJustification, "val"),
+            NumericInt(source.LevelRestart, "val", context),
+            OnOff(source.IsLegalNumberingStyle),
+            source.ParagraphStyleIdInLevel?.Val?.Value,
+            Numeric(indentation, "left", context),
+            Numeric(indentation, "hanging", context),
+            ParseRunFormatting(source.NumberingSymbolRunProperties, context, null),
+            declarationOrder);
+    }
+
+    private static ParsedNumberingFormat NumberingFormat(string? value) => value?.ToLowerInvariant() switch
+    {
+        "decimal" => ParsedNumberingFormat.Decimal,
+        "upperroman" => ParsedNumberingFormat.UpperRoman,
+        "lowerroman" => ParsedNumberingFormat.LowerRoman,
+        "upperletter" => ParsedNumberingFormat.UpperLetter,
+        "lowerletter" => ParsedNumberingFormat.LowerLetter,
+        "bullet" => ParsedNumberingFormat.Bullet,
+        "none" => ParsedNumberingFormat.None,
+        _ => ParsedNumberingFormat.Unsupported
+    };
+
+    private static ParsedNumberingSuffix NumberingSuffix(string? value) => value?.ToLowerInvariant() switch
+    {
+        "tab" => ParsedNumberingSuffix.Tab,
+        "space" => ParsedNumberingSuffix.Space,
+        "nothing" => ParsedNumberingSuffix.Nothing,
+        _ => ParsedNumberingSuffix.Unspecified
+    };
+
+    private static void DuplicateNumberingDiagnostic(ParserContext context, string kind, int id) =>
+        context.Diagnostics.Add("numbering-definition-duplicate", ParserDiagnosticSeverity.Warning,
+            "parser.numbering_definition_duplicate", metadata:
+            [
+                new("id", id.ToString(CultureInfo.InvariantCulture)),
+                new("kind", kind)
+            ]);
 
     private static IReadOnlyList<ParsedSection> ParseSections(Body body, MainDocumentPart mainPart, ParserContext context)
     {
@@ -847,11 +994,12 @@ public sealed class OpenXmlDocxParser : IDocxParser
         var id = properties?.NumberingProperties?.NumberingId?.Val?.Value;
         if (id is null) return null;
         var level = properties?.NumberingProperties?.NumberingLevelReference?.Val?.Value;
-        numbering.Definitions.TryGetValue(id.Value, out var definition);
-        var abstractLevel = definition?.Abstract?.Elements<Level>()
-            .FirstOrDefault(item => item.LevelIndex?.Value == level);
-        return new(id.Value, level, definition?.AbstractNumberingId,
-            Attribute(abstractLevel?.NumberingFormat, "val"), abstractLevel?.LevelText?.Val?.Value);
+        var instance = numbering.FullCatalog.Instances.FirstOrDefault(value => value.NumberingId == id.Value);
+        var abstractNumbering = numbering.FullCatalog.AbstractDefinitions
+            .FirstOrDefault(value => value.AbstractNumberingId == instance?.AbstractNumberingId);
+        var abstractLevel = abstractNumbering?.Levels.FirstOrDefault(item => item.Level == level);
+        return new(id.Value, level, instance?.AbstractNumberingId,
+            abstractLevel?.RawFormat, abstractLevel?.LevelText);
     }
 
     private static DocumentElementLocation MainLocation(
@@ -1139,8 +1287,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
         TextDefaults Defaults,
         ParsedDocumentDefaults DocumentDefaults);
     private sealed record TextDefaults(string? FontName, int? FontSizeHalfPoints);
-    private sealed record NumberingContext(IReadOnlyList<ParsedNumberingReference> Catalog, IReadOnlyDictionary<int, NumberingDefinition> Definitions);
-    private sealed record NumberingDefinition(int NumberingId, int? AbstractNumberingId, AbstractNum? Abstract);
+    private sealed record NumberingContext(IReadOnlyList<ParsedNumberingReference> Catalog, ParsedNumberingCatalog FullCatalog);
     private sealed record RelationshipCounts(int Total, int External);
     private sealed record BodyResult(IReadOnlyList<ParsedParagraph> Paragraphs, IReadOnlyList<ParsedBodyElement> BodyElements);
 }

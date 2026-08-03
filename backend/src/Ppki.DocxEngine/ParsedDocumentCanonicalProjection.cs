@@ -88,6 +88,7 @@ public static class ParsedDocumentCanonicalProjection
                 paragraph.HasTrackedChanges,
                 paragraph.DirectFormatting,
                 paragraph.EffectiveFormatting,
+                paragraph.EffectiveNumbering,
                 Runs = paragraph.RunList.Select(run => new
                 {
                     run.Index,
@@ -146,6 +147,22 @@ public static class ParsedDocumentCanonicalProjection
                 style.RunProperties
             }),
             Numbering = document.Numbering,
+            NumberingCatalog = document.FullNumberingCatalog,
+            Headings = document.Headings.Select(heading => new
+            {
+                heading.Index,
+                heading.ParagraphIndex,
+                Location = heading.Location.ToCompactString(),
+                heading.Level,
+                heading.Classification,
+                heading.Evidence,
+                heading.EffectiveParagraphStyleId,
+                heading.OutlineLevel,
+                heading.Numbering,
+                heading.StartsNewSection,
+                heading.Order
+            }),
+            Outline = document.DocumentOutline,
             Diagnostics = document.ParserDiagnostics.Select(diagnostic => new
             {
                 diagnostic.Code,

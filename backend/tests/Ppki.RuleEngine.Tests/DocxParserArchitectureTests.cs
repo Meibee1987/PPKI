@@ -75,6 +75,32 @@ public sealed class DocxParserArchitectureTests
         Assert.DoesNotContain("ParsedDocument", auditTrail, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Numbering_resolver_and_outline_builder_are_engine_local_and_infrastructure_free()
+    {
+        var root = RepositoryRoot();
+        var numbering = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.DocxEngine", "OpenXmlNumberingResolver.cs"));
+        var outline = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.DocxEngine", "DocumentOutlineBuilder.cs"));
+        var models = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.DocxEngine", "NumberingModels.cs"));
+        var auditTrail = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.Infrastructure", "AuditTrailWriter.cs"));
+
+        foreach (var source in new[] { numbering, outline, models })
+        {
+            foreach (var forbidden in new[]
+            {
+                "HttpClient", "WebRequest", "EntityFrameworkCore", "Supabase", "Ppki.Api", "Ppki.Worker",
+                "InstalledFontCollection", "System.Drawing", "Console.Write", "DateTime.Now", "DateTimeOffset.Now",
+                "Guid.NewGuid", "Random.Shared"
+            })
+            {
+                Assert.DoesNotContain(forbidden, source, StringComparison.OrdinalIgnoreCase);
+            }
+        }
+        Assert.DoesNotContain("DocumentOutline", auditTrail, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ParsedHeading", auditTrail, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("NumberingLabel", auditTrail, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string RepositoryRoot()
     {
         for (var candidate = new DirectoryInfo(Directory.GetCurrentDirectory()); candidate is not null; candidate = candidate.Parent)

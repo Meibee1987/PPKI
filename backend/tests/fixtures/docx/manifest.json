@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatorVersion": "3.0.0",
+  "generatorVersion": "4.0.0",
   "fixtures": [
     {
       "fixtureId": "minimal-compliant-layout",
@@ -14,7 +14,7 @@
         "body": { "font": "Times New Roman", "fontSizePt": 12.0, "lineSpacing": 1.0, "firstLineIndentCm": 1.0, "alignment": "Both" }
       },
       "containsPersonalData": false,
-      "generatorVersion": "3.0.0"
+      "generatorVersion": "4.0.0"
     },
     {
       "fixtureId": "minimal-invalid-layout",
@@ -28,7 +28,7 @@
         "body": { "font": "Calibri", "fontSizePt": 11.0, "lineSpacing": 1.15, "firstLineIndentCm": null, "alignment": "Left" }
       },
       "containsPersonalData": false,
-      "generatorVersion": "3.0.0"
+      "generatorVersion": "4.0.0"
     },
     {
       "fixtureId": "minimal-heading-layout",
@@ -42,7 +42,7 @@
         "normalParagraphAlignment": "Both"
       },
       "containsPersonalData": false,
-      "generatorVersion": "3.0.0"
+      "generatorVersion": "4.0.0"
     },
     {
       "fixtureId": "minimal-table-field-layout",
@@ -58,7 +58,7 @@
         "drawingContentType": "image/png"
       },
       "containsPersonalData": false,
-      "generatorVersion": "3.0.0"
+      "generatorVersion": "4.0.0"
     },
     {
       "fixtureId": "minimal-header-footer-layout",
@@ -72,7 +72,7 @@
         "footerCount": 1
       },
       "containsPersonalData": false,
-      "generatorVersion": "3.0.0"
+      "generatorVersion": "4.0.0"
     },
     {
       "fixtureId": "minimal-style-inheritance-layout",
@@ -88,7 +88,23 @@
         "themeMajorLatin": "Major Latin Synthetic"
       },
       "containsPersonalData": false,
-      "generatorVersion": "3.0.0"
+      "generatorVersion": "4.0.0"
+    },
+    {
+      "fixtureId": "minimal-numbered-heading-layout",
+      "filename": "minimal-numbered-heading-layout.docx",
+      "description": "Synthetic multilevel numbered headings, ordinary list, structural outline, start override, and skipped level.",
+      "synthetic": true,
+      "intendedProperties": ["numbering-catalog", "multilevel-heading", "ordinary-list", "start-override", "upper-roman", "upper-letter", "skipped-heading-level", "header-heading-excluded"],
+      "expectedDocumentProperties": {
+        "abstractNumberingCount": 2,
+        "numberingInstanceCount": 2,
+        "mainParagraphCount": 10,
+        "headingCount": 7,
+        "outlineRootCount": 2
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "4.0.0"
     }
   ]
 }

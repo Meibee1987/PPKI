@@ -81,7 +81,7 @@ public sealed record ParsedBodyElement(
 public sealed record ParsedDocument(
     IReadOnlyList<ParsedSection> Sections,
     IReadOnlyList<ParsedParagraph> Paragraphs,
-    string ParserSchemaVersion = "2.0",
+    string ParserSchemaVersion = "3.0",
     ParsedPackageType PackageType = ParsedPackageType.Document,
     IReadOnlyList<ParsedBodyElement>? BodyElements = null,
     IReadOnlyList<ParsedTable>? Tables = null,
@@ -92,9 +92,12 @@ public sealed record ParsedDocument(
     IReadOnlyList<ParsedNumberingReference>? NumberingCatalog = null,
     IReadOnlyList<ParserDiagnostic>? Diagnostics = null,
     ParsedAggregateCounts? AggregateCounts = null,
-    string ProjectionSchemaVersion = "2.0",
+    string ProjectionSchemaVersion = "3.0",
     ParsedDocumentDefaults? DocumentDefaults = null,
-    ParsedThemeFontCatalog? ThemeFonts = null)
+    ParsedThemeFontCatalog? ThemeFonts = null,
+    ParsedNumberingCatalog? NumberingDefinitions = null,
+    IReadOnlyList<ParsedHeading>? HeadingInventory = null,
+    DocumentOutline? Outline = null)
 {
     public IReadOnlyList<ParsedBodyElement> BodyElementOrder { get; } = BodyElements ?? [];
     public IReadOnlyList<ParsedTable> TableInventory { get; } = Tables ?? [];
@@ -107,6 +110,9 @@ public sealed record ParsedDocument(
     public ParsedAggregateCounts Counts { get; } = AggregateCounts ?? new(Sections.Count, BodyElements?.Count ?? 0, Paragraphs.Count, 0, Tables?.Count ?? 0, Drawings?.Count ?? 0, Fields?.Count ?? 0, HeaderFooters?.Count ?? 0, 0, 0, 0, 0, 0);
     public ParsedDocumentDefaults FormattingDefaults { get; } = DocumentDefaults ?? new(new(), new());
     public ParsedThemeFontCatalog ThemeFontCatalog { get; } = ThemeFonts ?? new(null, null, null, null, null, null);
+    public ParsedNumberingCatalog FullNumberingCatalog { get; } = NumberingDefinitions ?? new([], []);
+    public IReadOnlyList<ParsedHeading> Headings { get; } = HeadingInventory ?? [];
+    public DocumentOutline DocumentOutline { get; } = Outline ?? new([], 0);
 }
 
 public sealed record ParsedSection(
@@ -175,7 +181,8 @@ public sealed record ParsedParagraph(
     bool HasHyperlinks = false,
     bool HasTrackedChanges = false,
     ParagraphFormattingProperties? DirectFormatting = null,
-    EffectiveParagraphFormatting? EffectiveFormatting = null)
+    EffectiveParagraphFormatting? EffectiveFormatting = null,
+    EffectiveParagraphNumbering? EffectiveNumbering = null)
 {
     public IReadOnlyList<ParsedRun> RunList { get; } = Runs ?? [];
 }

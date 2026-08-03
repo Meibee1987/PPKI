@@ -12,6 +12,10 @@ public sealed record DocxParserOptions
     public const int DefaultMaximumDiagnostics = 200;
     public const int DefaultMaximumStyleCount = 10_000;
     public const int DefaultMaximumStyleInheritanceDepth = 64;
+    public const int DefaultMaximumAbstractNumberingDefinitions = 10_000;
+    public const int DefaultMaximumNumberingInstances = 10_000;
+    public const int DefaultMaximumNumberingLevels = 100_000;
+    public const int DefaultMaximumOutlineNodes = 100_000;
 
     public long MaximumInputBytes { get; init; } = DefaultMaximumInputBytes;
     public long MaximumExpandedPackageBytes { get; init; } = DefaultMaximumExpandedPackageBytes;
@@ -23,13 +27,19 @@ public sealed record DocxParserOptions
     public int MaximumDiagnostics { get; init; } = DefaultMaximumDiagnostics;
     public int MaximumStyleCount { get; init; } = DefaultMaximumStyleCount;
     public int MaximumStyleInheritanceDepth { get; init; } = DefaultMaximumStyleInheritanceDepth;
+    public int MaximumAbstractNumberingDefinitions { get; init; } = DefaultMaximumAbstractNumberingDefinitions;
+    public int MaximumNumberingInstances { get; init; } = DefaultMaximumNumberingInstances;
+    public int MaximumNumberingLevels { get; init; } = DefaultMaximumNumberingLevels;
+    public int MaximumOutlineNodes { get; init; } = DefaultMaximumOutlineNodes;
 
     public void Validate()
     {
         if (MaximumInputBytes <= 0 || MaximumExpandedPackageBytes <= 0 || MaximumPackageEntries <= 0
             || MaximumParagraphs <= 0 || MaximumRuns <= 0
             || MaximumTables <= 0 || MaximumRelationships <= 0 || MaximumDiagnostics <= 0
-            || MaximumStyleCount <= 0 || MaximumStyleInheritanceDepth <= 0)
+            || MaximumStyleCount <= 0 || MaximumStyleInheritanceDepth <= 0
+            || MaximumAbstractNumberingDefinitions <= 0 || MaximumNumberingInstances <= 0
+            || MaximumNumberingLevels <= 0 || MaximumOutlineNodes <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(DocxParserOptions), "DOCX parser limits must be positive.");
         }

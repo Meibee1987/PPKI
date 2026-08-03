@@ -44,6 +44,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
         CreateStyleInheritanceDocument(mainPart);
         return;
     }
+    if (fixture.Kind == FixtureKind.NumberedHeading)
+    {
+        CreateNumberedHeadingDocument(mainPart);
+        return;
+    }
     AddStyles(mainPart);
 
     if (fixture.Kind == FixtureKind.TableField)
@@ -79,6 +84,103 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
     mainPart.Document = new Document(body);
     mainPart.Document.Save();
 }
+
+static void CreateNumberedHeadingDocument(MainDocumentPart mainPart)
+{
+    var stylesPart = mainPart.AddNewPart<StyleDefinitionsPart>();
+    stylesPart.Styles = new Styles(
+        CreateStyle("Normal", "Normal", true),
+        HeadingStyle("Heading1", "Heading 1", 0),
+        HeadingStyle("Heading2", "Heading 2", 1),
+        HeadingStyle("Heading3", "Heading 3", 2),
+        new Style(
+            new StyleName { Val = "Synthetic Derived Heading" },
+            new BasedOn { Val = "Heading2" })
+        { Type = StyleValues.Paragraph, StyleId = "SyntheticDerivedHeading" });
+    stylesPart.Styles.Save();
+
+    var numberingPart = mainPart.AddNewPart<NumberingDefinitionsPart>();
+    numberingPart.Numbering = new Numbering(
+        new AbstractNum(
+            HeadingLevel(0, NumberFormatValues.UpperRoman, "%1.", "Heading1", 1, LevelSuffixValues.Space),
+            HeadingLevel(1, NumberFormatValues.Decimal, "%1.%2", "Heading2", 1, LevelSuffixValues.Tab),
+            HeadingLevel(2, NumberFormatValues.UpperLetter, "%1.%2.%3", "Heading3", 1, LevelSuffixValues.Nothing),
+            new MultiLevelType { Val = MultiLevelValues.HybridMultilevel }) { AbstractNumberId = 10 },
+        new NumberingInstance(
+            new AbstractNumId { Val = 10 },
+            new LevelOverride(new StartOverrideNumberingValue { Val = 3 }) { LevelIndex = 1 }) { NumberID = 10 },
+        new AbstractNum(
+            HeadingLevel(0, NumberFormatValues.LowerLetter, "%1)", null, 1, LevelSuffixValues.Space))
+        { AbstractNumberId = 11 },
+        new NumberingInstance(new AbstractNumId { Val = 11 }) { NumberID = 11 });
+    numberingPart.Numbering.Save();
+
+    var headerPart = mainPart.AddNewPart<HeaderPart>();
+    headerPart.Header = new Header(StyledParagraph("Heading header sintetis", "Heading1"));
+    headerPart.Header.Save();
+    var headerId = mainPart.GetIdOfPart(headerPart);
+
+    var body = new Body(
+        NumberedParagraph("Judul tingkat satu sintetis", "Heading1", 10, 0),
+        NumberedParagraph("Judul tingkat dua sintetis", "Heading2", 10, 1),
+        NumberedParagraph("Daftar biasa sintetis", "Normal", 11, 0),
+        NumberedParagraph("Judul tingkat dua kedua sintetis", "SyntheticDerivedHeading", 10, 1),
+        NumberedParagraph("Judul tingkat tiga sintetis", "Heading3", 10, 2),
+        NumberedParagraph("Judul taut numbering sintetis", "Normal", 10, 1),
+        new Paragraph(
+            new ParagraphProperties(new ParagraphStyleId { Val = "Heading3" }, new OutlineLevel { Val = 0 }),
+            new Run(new Text("Outline langsung sintetis"))),
+        new Paragraph(
+            new ParagraphProperties(new OutlineLevel { Val = 2 }),
+            new Run(new Text("Level terlewat sintetis"))),
+        new Paragraph(
+            new ParagraphProperties(new Justification { Val = JustificationValues.Center }),
+            new Run(new RunProperties(new Bold()), new Text("Format saja sintetis"))),
+        new Paragraph(new Run(new Text("Paragraf normal sintetis"))),
+        new SectionProperties(
+            new HeaderReference { Type = HeaderFooterValues.Default, Id = headerId },
+            new PageSize { Width = 11906U, Height = 16838U },
+            new PageMargin { Top = 1701, Right = 1701U, Bottom = 1701, Left = 2268U }));
+    mainPart.Document = new Document(body);
+    mainPart.Document.Save();
+}
+
+static Style HeadingStyle(string id, string name, int outlineLevel) => new(
+    new StyleName { Val = name },
+    new StyleParagraphProperties(
+        new OutlineLevel { Val = outlineLevel },
+        new KeepNext { Val = true }))
+{ Type = StyleValues.Paragraph, StyleId = id };
+
+static Level HeadingLevel(
+    int level,
+    NumberFormatValues format,
+    string text,
+    string? paragraphStyleId,
+    int start,
+    LevelSuffixValues suffix)
+{
+    var definition = new Level(
+        new StartNumberingValue { Val = start },
+        new NumberingFormat { Val = format },
+        new LevelText { Val = text },
+        new LevelSuffix { Val = suffix },
+        new LevelJustification { Val = LevelJustificationValues.Left },
+        new PreviousParagraphProperties(new Indentation { Left = ((level + 1) * 720).ToString(), Hanging = "360" }))
+    { LevelIndex = level };
+    if (paragraphStyleId is not null) definition.Append(new ParagraphStyleIdInLevel { Val = paragraphStyleId });
+    return definition;
+}
+
+static Paragraph NumberedParagraph(string text, string styleId, int numberId, int level) => new(
+    new ParagraphProperties(
+        new ParagraphStyleId { Val = styleId },
+        new NumberingProperties(new NumberingLevelReference { Val = level }, new NumberingId { Val = numberId })),
+    new Run(new Text(text)));
+
+static Paragraph StyledParagraph(string text, string styleId) => new(
+    new ParagraphProperties(new ParagraphStyleId { Val = styleId }),
+    new Run(new Text(text)));
 
 static void CreateStyleInheritanceDocument(MainDocumentPart mainPart)
 {
@@ -413,7 +515,11 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
     new(
         "minimal-style-inheritance-layout.docx",
         11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
-        "Times New Roman", 24U, [], FixtureKind.StyleInheritance)
+        "Times New Roman", 24U, [], FixtureKind.StyleInheritance),
+    new(
+        "minimal-numbered-heading-layout.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.NumberedHeading)
 ];
 
 internal sealed record FixtureDefinition(
@@ -436,4 +542,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading }

@@ -53,8 +53,8 @@ public sealed class OpenXmlFormattingResolver
             ResolveParagraphValue(direct.WidowControl, chain, value => value.WidowControl, _defaults.Paragraph.WidowControl, "widowControl"),
             ResolveParagraphValue(direct.ContextualSpacing, chain, value => value.ContextualSpacing, _defaults.Paragraph.ContextualSpacing, "contextualSpacing"),
             ResolveParagraphValue(direct.OutlineLevel, chain, value => value.OutlineLevel, _defaults.Paragraph.OutlineLevel, "outlineLevel"),
-            ResolveParagraphValue(direct.NumberingId, chain, value => value.NumberingId, _defaults.Paragraph.NumberingId, "numberingId"),
-            ResolveParagraphValue(direct.NumberingLevel, chain, value => value.NumberingLevel, _defaults.Paragraph.NumberingLevel, "numberingLevel"));
+            ResolveParagraphValue(direct.NumberingId, chain, value => value.NumberingId, null, "numberingId"),
+            ResolveParagraphValue(direct.NumberingLevel, chain, value => value.NumberingLevel, null, "numberingLevel"));
     }
 
     public EffectiveRunFormatting ResolveRun(
