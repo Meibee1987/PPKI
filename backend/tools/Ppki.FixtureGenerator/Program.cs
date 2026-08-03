@@ -49,6 +49,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
         CreateNumberedHeadingDocument(mainPart);
         return;
     }
+    if (fixture.Kind == FixtureKind.DocumentSections)
+    {
+        CreateDocumentSectionsDocument(mainPart);
+        return;
+    }
     AddStyles(mainPart);
 
     if (fixture.Kind == FixtureKind.TableField)
@@ -139,6 +144,53 @@ static void CreateNumberedHeadingDocument(MainDocumentPart mainPart)
         new Paragraph(new Run(new Text("Paragraf normal sintetis"))),
         new SectionProperties(
             new HeaderReference { Type = HeaderFooterValues.Default, Id = headerId },
+            new PageSize { Width = 11906U, Height = 16838U },
+            new PageMargin { Top = 1701, Right = 1701U, Bottom = 1701, Left = 2268U }));
+    mainPart.Document = new Document(body);
+    mainPart.Document.Save();
+}
+
+static void CreateDocumentSectionsDocument(MainDocumentPart mainPart)
+{
+    var stylesPart = mainPart.AddNewPart<StyleDefinitionsPart>();
+    stylesPart.Styles = new Styles(
+        CreateStyle("Normal", "Normal", true),
+        HeadingStyle("Heading1", "Heading 1", 0),
+        HeadingStyle("Heading2", "Heading 2", 1));
+    stylesPart.Styles.Save();
+
+    var headerPart = mainPart.AddNewPart<HeaderPart>();
+    headerPart.Header = new Header(StyledParagraph("ABSTRACT", "Heading1"));
+    headerPart.Header.Save();
+    var footerPart = mainPart.AddNewPart<FooterPart>();
+    footerPart.Footer = new Footer(StyledParagraph("SUMMARY", "Heading1"));
+    footerPart.Footer.Save();
+
+    var excludedTable = new Table(
+        new TableProperties(new TableWidth { Width = "5000", Type = TableWidthUnitValues.Dxa }),
+        new TableRow(new TableCell(StyledParagraph("DAFTAR PUSTAKA", "Heading1"))));
+    var body = new Body(
+        new Paragraph(new Run(new Text("Halaman judul sintetis"))),
+        StyledParagraph("  abstrak  ", "Heading1"),
+        new Paragraph(new Run(new Text("Isi abstrak Indonesia sintetis"))),
+        StyledParagraph("ABSTRACT", "Heading1"),
+        new Paragraph(new Run(new Text("Synthetic English abstract body"))),
+        StyledParagraph("ABSTRAK", "Heading1"),
+        new Paragraph(new Run(new Text("Isi abstrak duplikat sintetis"))),
+        StyledParagraph("BAB I PENDAHULUAN", "Heading1"),
+        new Paragraph(new Run(new Text("Isi bab pertama sintetis"))),
+        StyledParagraph("Metode", "Heading2"),
+        new Paragraph(new Run(new Text("Isi metode sintetis"))),
+        excludedTable,
+        StyledParagraph("BAB II HASIL", "Heading1"),
+        new Paragraph(new Run(new Text("Isi bab kedua sintetis"))),
+        StyledParagraph("DAFTAR PUSTAKA", "Heading1"),
+        new Paragraph(new Run(new Text("Referensi sintetis"))),
+        StyledParagraph("LAMPIRAN", "Heading1"),
+        new Paragraph(new Run(new Text("Isi lampiran sintetis"))),
+        new SectionProperties(
+            new HeaderReference { Type = HeaderFooterValues.Default, Id = mainPart.GetIdOfPart(headerPart) },
+            new FooterReference { Type = HeaderFooterValues.Default, Id = mainPart.GetIdOfPart(footerPart) },
             new PageSize { Width = 11906U, Height = 16838U },
             new PageMargin { Top = 1701, Right = 1701U, Bottom = 1701, Left = 2268U }));
     mainPart.Document = new Document(body);
@@ -520,6 +572,10 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         "minimal-numbered-heading-layout.docx",
         11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
         "Times New Roman", 24U, [], FixtureKind.NumberedHeading)
+    ,new(
+        "minimal-document-sections-layout.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.DocumentSections)
 ];
 
 internal sealed record FixtureDefinition(
@@ -542,4 +598,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections }

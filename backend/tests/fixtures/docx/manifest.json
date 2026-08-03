@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatorVersion": "4.0.0",
+  "generatorVersion": "5.0.0",
   "fixtures": [
     {
       "fixtureId": "minimal-compliant-layout",
@@ -14,7 +14,7 @@
         "body": { "font": "Times New Roman", "fontSizePt": 12.0, "lineSpacing": 1.0, "firstLineIndentCm": 1.0, "alignment": "Both" }
       },
       "containsPersonalData": false,
-      "generatorVersion": "4.0.0"
+      "generatorVersion": "5.0.0"
     },
     {
       "fixtureId": "minimal-invalid-layout",
@@ -28,7 +28,7 @@
         "body": { "font": "Calibri", "fontSizePt": 11.0, "lineSpacing": 1.15, "firstLineIndentCm": null, "alignment": "Left" }
       },
       "containsPersonalData": false,
-      "generatorVersion": "4.0.0"
+      "generatorVersion": "5.0.0"
     },
     {
       "fixtureId": "minimal-heading-layout",
@@ -42,7 +42,7 @@
         "normalParagraphAlignment": "Both"
       },
       "containsPersonalData": false,
-      "generatorVersion": "4.0.0"
+      "generatorVersion": "5.0.0"
     },
     {
       "fixtureId": "minimal-table-field-layout",
@@ -58,7 +58,7 @@
         "drawingContentType": "image/png"
       },
       "containsPersonalData": false,
-      "generatorVersion": "4.0.0"
+      "generatorVersion": "5.0.0"
     },
     {
       "fixtureId": "minimal-header-footer-layout",
@@ -72,7 +72,7 @@
         "footerCount": 1
       },
       "containsPersonalData": false,
-      "generatorVersion": "4.0.0"
+      "generatorVersion": "5.0.0"
     },
     {
       "fixtureId": "minimal-style-inheritance-layout",
@@ -88,7 +88,7 @@
         "themeMajorLatin": "Major Latin Synthetic"
       },
       "containsPersonalData": false,
-      "generatorVersion": "4.0.0"
+      "generatorVersion": "5.0.0"
     },
     {
       "fixtureId": "minimal-numbered-heading-layout",
@@ -104,7 +104,23 @@
         "outlineRootCount": 2
       },
       "containsPersonalData": false,
-      "generatorVersion": "4.0.0"
+      "generatorVersion": "5.0.0"
+    },
+    {
+      "fixtureId": "minimal-document-sections-layout",
+      "filename": "minimal-document-sections-layout.docx",
+      "description": "Synthetic front, main, and back matter headings with abstract duplication and excluded table/header/footer headings.",
+      "synthetic": true,
+      "intendedProperties": ["semantic-sections", "abstract-languages", "chapter-marker", "child-section", "back-matter", "duplicate-abstract", "table-heading-excluded", "header-footer-heading-excluded"],
+      "expectedDocumentProperties": {
+        "mainBodyElementCount": 19,
+        "semanticSectionCount": 8,
+        "abstractDescriptorCount": 3,
+        "excludedTableHeadingCount": 1,
+        "detectedChapterCount": 2
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "5.0.0"
     }
   ]
 }

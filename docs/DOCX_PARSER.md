@@ -2,8 +2,9 @@
 
 S2-T01 defines the read-only Open XML model, S2-T02 adds effective formatting
 and provenance, and S2-T03 adds numbering semantics, structural heading
-evidence, and a document outline. These parser tasks do not implement PPKI
-validation, semantic PPKI sections, findings, rendered layout, or auto-fix.
+evidence, and a document outline. S2-T04 adds deterministic semantic-section
+observation and document systematics. These parser tasks do not implement PPKI
+compliance validation, findings, rendered layout, or auto-fix.
 
 ## Package safety and compatibility
 
@@ -16,7 +17,8 @@ Storage, HTTP, Word, or LibreOffice.
 The worker contract remains `IDocxParser.ParseAsync(path, cancellationToken)`.
 `AuditRunner` removes its temporary file in `finally` and exposes only the
 generic `Document parsing failed.` category. Parsed content, numbering labels,
-headings, and outlines are not persisted or written to the audit trail.
+headings, outlines, semantic sections, and observed systematics are not
+persisted or written to the audit trail.
 
 Legacy constructors and paragraph properties retain their existing meaning.
 In particular, raw/direct formatting, effective formatting, provenance,
@@ -24,15 +26,17 @@ effective numbering, and heading classification remain separate models.
 
 ## Schema and intermediate model
 
-Parser and canonical projection schema are `3.0`. Version `3.0` is required
-because the canonical semantics now include the full numbering catalog,
-effective numbering and labels, heading evidence, and the outline tree.
+Parser and canonical projection schema are `4.0`. Version `4.0` is required
+because the canonical semantics now include text-safe semantic sections,
+abstract descriptors, ranges, classification evidence, and observed document
+systematics in addition to the `3.0` numbering and outline contract.
 
 `ParsedDocument` contains ordered body structure, sections, paragraphs/runs,
 structural inventories, document defaults, style/theme catalogs, numbering
-definitions, flat headings, the outline tree, safe counts, and bounded
-diagnostics. It contains no timestamp, random ID, absolute path, user/storage/
-database/audit identifier, credential, or signed URL.
+definitions, flat headings, the outline tree, semantic structure, observed
+systematics, safe counts, and bounded diagnostics. It contains no timestamp,
+random ID, absolute path, user/storage/database/audit identifier, credential,
+or signed URL.
 
 ## Location contract
 
@@ -161,6 +165,77 @@ Nodes retain deterministic locations, heading references, level, parent index,
 and child order. No rendered page range or semantic PPKI section name is
 inferred.
 
+## Semantic section catalog and normalization
+
+`SemanticDocumentStructureDetector` is a separate, stateless engine component.
+Its fixed catalog version is `1.0`. The catalog recognizes controlled exact
+aliases for title/approval/statement pages, Indonesian and English abstract or
+summary sections, common front-matter lists, common main-matter titles,
+references, appendices, and biography. It also recognizes a bounded `BAB` or
+`CHAPTER` marker followed by a positive invariant decimal or Roman token.
+Unknown headings remain observed as an `Other*` kind or unresolved structure;
+they are never treated as violations.
+
+Heading text is read only in memory and is capped at 512 characters by default.
+Normalization uses Unicode NFKC, invariant upper case, trimmed/collapsed white
+space, and controlled punctuation removal. A resolved numbering label may be
+removed only when it is the exact parsed prefix. Matching is exact after
+normalization: there is no substring, fuzzy-distance, language analysis, NLP,
+AI, OS locale, or external service. Normalized text is not retained.
+
+## Chapter, abstract, and summary evidence
+
+Only S2-T03 structural headings are classified. A level-one heading with a
+valid `BAB`/`CHAPTER` marker can be a confirmed chapter; a deeper marker remains
+a candidate and receives safe ambiguity diagnostics. A numbered list, body
+paragraph containing a semantic word, or formatting-only paragraph is never
+promoted. Evidence preserves structural heading kind, direct/style/based-on or
+numbering-linked outline origin, heading level, resolved numbering state,
+Open XML section transition, body order, exact-alias/chapter-marker match, and
+zone boundary without copying heading text.
+
+Exact `ABSTRAK`, `ABSTRACT`, `RINGKASAN`, and `SUMMARY` headings determine the
+controlled Indonesian/English label. Body text is not used for language
+detection. `AbstractSectionDescriptor` references heading/content/end
+locations, paragraph count, optional exact `KATA KUNCI:`/`KEYWORDS:` paragraph
+location, evidence, and safe codes. It never contains abstract content. Word
+count, keyword correctness, and required-presence checks are outside this
+contract.
+
+## Zones, ranges, and observed systematics
+
+The first confirmed chapter or exact main-matter section establishes main
+matter. Exact references or appendices establish back matter; structurally
+bounded material before main matter is front matter. A known kind that would
+move the observed zone backward becomes ambiguous/unknown and emits
+`semantic-zone-regression`. Unknown headings inherit a zone only when those
+boundaries are clear.
+
+Ranges use main-body element order, never rendered pages. Start is the heading;
+content starts at the next paragraph/table body element. Abstract/summary ends
+before the next semantic heading. Other sections end before the next heading
+at the same or higher level, and the last ends at body content end. This admits
+proper parent/child containment while rejecting unresolved/crossing boundaries.
+Tables remain part of containing ranges. Empty sections and malformed overlap
+receive bounded diagnostics.
+
+`DocumentSystematics` is an ordered observation: section kind/zone/range,
+classification state, parent, duplicate group, evidence summary, zone starts,
+chapter count, abstract inventory, ambiguity/duplicate inventories, unknown
+structural headings, and diagnostic codes. It has no expected ordering,
+pass/fail, severity finding, missing-section violation, or compliance score.
+
+Duplicate recognized kinds receive stable integer groups and
+`semantic-section-duplicate`; abstract/summary duplicates additionally receive
+`abstract-section-duplicate`. Repeated chapters and `Other*` headings are not
+duplicates. Ambiguous classification, empty content, unresolved boundaries,
+overlap, zone regression, and overlong headings use safe codes without text.
+
+Structural headings inside main-body tables are retained in the original
+heading inventory but appear only as excluded semantic candidates. Header and
+footer headings are not supplied to the detector. Footnote, endnote, comment,
+and drawing/text-box content is not a section source.
+
 ## Privacy and diagnostics
 
 Diagnostics contain only controlled code/severity/message key, deterministic
@@ -168,9 +243,11 @@ location, and allowlisted numeric/type/style metadata. They exclude paragraph
 or heading text, labels, XML, paths, filenames, external targets, stack traces,
 and dependency messages. The diagnostic cap prevents malformed-document floods.
 
-Canonical projection schema `3.0` includes semantic numbering definitions,
-effective numbering, text-free heading evidence, and outline structure. It
-excludes paragraph text, runtime counters/cache, current time, random IDs, and
+Canonical projection schema `4.0` includes numbering definitions, effective
+numbering, text-free heading evidence, outline structure, semantic sections,
+abstract descriptors, and observed systematics. It excludes paragraph and
+heading text, abstract content, normalized aliases, runtime counters/cache,
+current time, random IDs, and
 absolute paths. Repeated and parallel parses—including use of one parser
 instance—must yield identical projections and hashes.
 
@@ -192,13 +269,17 @@ instance—must yield identical projections and hashes.
 | numbering instances | 10,000 |
 | numbering levels and overrides | 100,000 |
 | outline nodes | 100,000 |
+| semantic sections | 10,000 |
+| fixed section aliases | 1,000 |
+| semantic heading characters | 512 |
+| systematics entries | 10,000 |
 
 Hard-limit violations raise safe `resource-limit-exceeded` errors. All options
 must be positive.
 
 ## Tests
 
-The seven fixtures are wholly synthetic and parsed through checksum-verified
+The eight fixtures are wholly synthetic and parsed through checksum-verified
 temporary copies.
 
 ```powershell
@@ -209,7 +290,8 @@ npm run test:docx-parser
 
 ## Explicitly deferred
 
-Not implemented here: PPKI-specific section detection, abstract/ringkasan
-detection, table-of-contents validation, every Word numbering format and
-special restart mode, full table-style cascade, rendered-page layout, PPKI
-validators, findings, or auto-fix.
+Not implemented here: compliance validation against PPKI order, required or
+missing-section validation, abstract word-count validation, keyword validation,
+table-of-contents consistency, layout validators, every Word numbering format
+and special restart mode, full table-style cascade, findings, rendered-page
+layout, or auto-fix.

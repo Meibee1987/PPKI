@@ -21,8 +21,8 @@ public sealed class DocxParserContractTests
         var paragraph = Assert.Single(parsed.Paragraphs);
         var run = Assert.Single(paragraph.RunList);
 
-        Assert.Equal("3.0", parsed.ParserSchemaVersion);
-        Assert.Equal("3.0", parsed.ProjectionSchemaVersion);
+        Assert.Equal("4.0", parsed.ParserSchemaVersion);
+        Assert.Equal("4.0", parsed.ProjectionSchemaVersion);
         Assert.Equal(11906, section.PageWidthTwips);
         Assert.Equal(16838, section.PageHeightTwips);
         Assert.Equal(1701, section.MarginTopTwips);

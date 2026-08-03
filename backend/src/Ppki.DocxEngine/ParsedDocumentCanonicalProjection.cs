@@ -163,6 +163,56 @@ public static class ParsedDocumentCanonicalProjection
                 heading.Order
             }),
             Outline = document.DocumentOutline,
+            SemanticStructure = new
+            {
+                document.DocumentStructure.CatalogVersion,
+                Sections = document.DocumentStructure.Sections.Select(section => new
+                {
+                    section.Index,
+                    section.Kind,
+                    section.Zone,
+                    section.ClassificationState,
+                    section.ClassificationBasis,
+                    section.HeadingIndex,
+                    HeadingLocation = section.HeadingLocation.ToCompactString(),
+                    section.HeadingLevel,
+                    section.NumberingCategory,
+                    section.Evidence,
+                    section.BodyOrderIndex,
+                    section.ParentSectionIndex,
+                    Range = new
+                    {
+                        StartLocation = section.Range.StartLocation.ToCompactString(),
+                        ContentStartLocation = section.Range.ContentStartLocation?.ToCompactString(),
+                        EndLocation = section.Range.EndLocation.ToCompactString(),
+                        section.Range.StartBodyElementIndex,
+                        section.Range.EndBodyElementIndex,
+                        section.Range.ParagraphCount
+                    },
+                    section.DuplicateGroup,
+                    section.DiagnosticCodes
+                }),
+                AbstractSections = document.DocumentStructure.AbstractSections.Select(section => new
+                {
+                    section.SectionIndex,
+                    section.Kind,
+                    section.Language,
+                    HeadingLocation = section.HeadingLocation.ToCompactString(),
+                    ContentStartLocation = section.ContentStartLocation?.ToCompactString(),
+                    EndLocation = section.EndLocation.ToCompactString(),
+                    section.ParagraphCount,
+                    KeywordParagraphLocation = section.KeywordParagraphLocation?.ToCompactString(),
+                    section.Evidence,
+                    section.DiagnosticCodes
+                }),
+                ExcludedCandidates = document.DocumentStructure.ExcludedCandidates.Select(candidate => new
+                {
+                    candidate.HeadingIndex,
+                    Location = candidate.Location.ToCompactString(),
+                    candidate.Reason
+                })
+            },
+            Systematics = document.Systematics,
             Diagnostics = document.ParserDiagnostics.Select(diagnostic => new
             {
                 diagnostic.Code,

@@ -16,8 +16,8 @@ public sealed class DocxParserNumberingOutlineTests
         var parsed = await Parse(workspace.WorkingPath);
         var catalog = parsed.FullNumberingCatalog;
 
-        Assert.Equal("3.0", parsed.ParserSchemaVersion);
-        Assert.Equal("3.0", parsed.ProjectionSchemaVersion);
+        Assert.Equal("4.0", parsed.ParserSchemaVersion);
+        Assert.Equal("4.0", parsed.ProjectionSchemaVersion);
         Assert.Equal(2, catalog.AbstractDefinitions.Count);
         Assert.Equal(2, catalog.Instances.Count);
         var headingAbstract = catalog.AbstractDefinitions.Single(value => value.AbstractNumberingId == 10);
@@ -343,10 +343,10 @@ public sealed class DocxParserNumberingOutlineTests
     }
 
     [Fact]
-    public async Task All_seven_fixtures_remain_parseable_and_headers_do_not_enter_outline()
+    public async Task All_eight_fixtures_remain_parseable_and_headers_do_not_enter_outline()
     {
         var manifest = await DocxFixtureManifest.LoadAsync(DocxFixtureWorkspace.FixtureRoot);
-        Assert.Equal(7, manifest.Fixtures.Count);
+        Assert.Equal(8, manifest.Fixtures.Count);
         foreach (var definition in manifest.Fixtures)
         {
             await using var workspace = await DocxFixtureWorkspace.CreateAsync(definition.FixtureId);

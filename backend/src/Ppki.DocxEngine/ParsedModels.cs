@@ -81,7 +81,7 @@ public sealed record ParsedBodyElement(
 public sealed record ParsedDocument(
     IReadOnlyList<ParsedSection> Sections,
     IReadOnlyList<ParsedParagraph> Paragraphs,
-    string ParserSchemaVersion = "3.0",
+    string ParserSchemaVersion = "4.0",
     ParsedPackageType PackageType = ParsedPackageType.Document,
     IReadOnlyList<ParsedBodyElement>? BodyElements = null,
     IReadOnlyList<ParsedTable>? Tables = null,
@@ -92,12 +92,14 @@ public sealed record ParsedDocument(
     IReadOnlyList<ParsedNumberingReference>? NumberingCatalog = null,
     IReadOnlyList<ParserDiagnostic>? Diagnostics = null,
     ParsedAggregateCounts? AggregateCounts = null,
-    string ProjectionSchemaVersion = "3.0",
+    string ProjectionSchemaVersion = "4.0",
     ParsedDocumentDefaults? DocumentDefaults = null,
     ParsedThemeFontCatalog? ThemeFonts = null,
     ParsedNumberingCatalog? NumberingDefinitions = null,
     IReadOnlyList<ParsedHeading>? HeadingInventory = null,
-    DocumentOutline? Outline = null)
+    DocumentOutline? Outline = null,
+    SemanticDocumentStructure? SemanticStructure = null,
+    DocumentSystematics? ObservedSystematics = null)
 {
     public IReadOnlyList<ParsedBodyElement> BodyElementOrder { get; } = BodyElements ?? [];
     public IReadOnlyList<ParsedTable> TableInventory { get; } = Tables ?? [];
@@ -113,6 +115,8 @@ public sealed record ParsedDocument(
     public ParsedNumberingCatalog FullNumberingCatalog { get; } = NumberingDefinitions ?? new([], []);
     public IReadOnlyList<ParsedHeading> Headings { get; } = HeadingInventory ?? [];
     public DocumentOutline DocumentOutline { get; } = Outline ?? new([], 0);
+    public SemanticDocumentStructure DocumentStructure { get; } = SemanticStructure ?? new("1.0", [], [], []);
+    public DocumentSystematics Systematics { get; } = ObservedSystematics ?? new([], null, null, null, 0, [], [], [], [], []);
 }
 
 public sealed record ParsedSection(

@@ -15,8 +15,8 @@ public sealed class DocxParserStyleResolutionTests
         await using var workspace = await DocxFixtureWorkspace.CreateAsync("minimal-style-inheritance-layout");
         var parsed = await Parse(workspace.WorkingPath);
 
-        Assert.Equal("3.0", parsed.ParserSchemaVersion);
-        Assert.Equal("3.0", parsed.ProjectionSchemaVersion);
+        Assert.Equal("4.0", parsed.ParserSchemaVersion);
+        Assert.Equal("4.0", parsed.ProjectionSchemaVersion);
         Assert.Equal(5, parsed.Styles.Count);
         Assert.Equal([0, 1, 2, 3, 4], parsed.Styles.Select(style => style.DeclarationOrder));
         Assert.Equal(120, parsed.FormattingDefaults.Paragraph.SpacingBeforeTwips);
@@ -254,7 +254,7 @@ public sealed class DocxParserStyleResolutionTests
     public async Task All_synthetic_fixtures_remain_parseable()
     {
         var manifest = await DocxFixtureManifest.LoadAsync(DocxFixtureWorkspace.FixtureRoot);
-        Assert.Equal(7, manifest.Fixtures.Count);
+        Assert.Equal(8, manifest.Fixtures.Count);
         foreach (var fixture in manifest.Fixtures)
         {
             await using var workspace = await DocxFixtureWorkspace.CreateAsync(fixture.FixtureId);

@@ -9,8 +9,8 @@ namespace Ppki.DocxEngine;
 
 public sealed class OpenXmlDocxParser : IDocxParser
 {
-    public const string SchemaVersion = "3.0";
-    public const string ProjectionVersion = "3.0";
+    public const string SchemaVersion = "4.0";
+    public const string ProjectionVersion = "4.0";
     private const string RelationshipsNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     private const string WordprocessingDrawingNamespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
     private const string DrawingNamespace = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -68,6 +68,15 @@ public sealed class OpenXmlDocxParser : IDocxParser
                 numbering.FullCatalog,
                 _options.MaximumOutlineNodes).Build(bodyResult.Paragraphs);
             AddDiagnostics(context, structureResult.Diagnostics);
+            var semanticResult = new SemanticDocumentStructureDetector(
+                _options.MaximumSemanticSections,
+                _options.MaximumSectionAliases,
+                _options.MaximumSemanticHeadingLength,
+                _options.MaximumSystematicsEntries).Detect(
+                    bodyResult.Paragraphs,
+                    bodyResult.BodyElements,
+                    structureResult.Headings);
+            AddDiagnostics(context, semanticResult.Diagnostics);
             var headerFooters = ParseHeaderFooters(mainPart, sections, styles, numbering, resolver, context);
             foreach (var diagnostic in resolver.Diagnostics)
             {
@@ -109,7 +118,9 @@ public sealed class OpenXmlDocxParser : IDocxParser
                 ThemeFonts: themeFonts,
                 NumberingDefinitions: numbering.FullCatalog,
                 HeadingInventory: structureResult.Headings,
-                Outline: structureResult.Outline));
+                Outline: structureResult.Outline,
+                SemanticStructure: semanticResult.Structure,
+                ObservedSystematics: semanticResult.Systematics));
         }
         catch (DocxParserException)
         {

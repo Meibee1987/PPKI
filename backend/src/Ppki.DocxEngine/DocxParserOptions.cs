@@ -16,6 +16,10 @@ public sealed record DocxParserOptions
     public const int DefaultMaximumNumberingInstances = 10_000;
     public const int DefaultMaximumNumberingLevels = 100_000;
     public const int DefaultMaximumOutlineNodes = 100_000;
+    public const int DefaultMaximumSemanticSections = 10_000;
+    public const int DefaultMaximumSectionAliases = 1_000;
+    public const int DefaultMaximumSemanticHeadingLength = 512;
+    public const int DefaultMaximumSystematicsEntries = 10_000;
 
     public long MaximumInputBytes { get; init; } = DefaultMaximumInputBytes;
     public long MaximumExpandedPackageBytes { get; init; } = DefaultMaximumExpandedPackageBytes;
@@ -31,6 +35,10 @@ public sealed record DocxParserOptions
     public int MaximumNumberingInstances { get; init; } = DefaultMaximumNumberingInstances;
     public int MaximumNumberingLevels { get; init; } = DefaultMaximumNumberingLevels;
     public int MaximumOutlineNodes { get; init; } = DefaultMaximumOutlineNodes;
+    public int MaximumSemanticSections { get; init; } = DefaultMaximumSemanticSections;
+    public int MaximumSectionAliases { get; init; } = DefaultMaximumSectionAliases;
+    public int MaximumSemanticHeadingLength { get; init; } = DefaultMaximumSemanticHeadingLength;
+    public int MaximumSystematicsEntries { get; init; } = DefaultMaximumSystematicsEntries;
 
     public void Validate()
     {
@@ -39,7 +47,9 @@ public sealed record DocxParserOptions
             || MaximumTables <= 0 || MaximumRelationships <= 0 || MaximumDiagnostics <= 0
             || MaximumStyleCount <= 0 || MaximumStyleInheritanceDepth <= 0
             || MaximumAbstractNumberingDefinitions <= 0 || MaximumNumberingInstances <= 0
-            || MaximumNumberingLevels <= 0 || MaximumOutlineNodes <= 0)
+            || MaximumNumberingLevels <= 0 || MaximumOutlineNodes <= 0
+            || MaximumSemanticSections <= 0 || MaximumSectionAliases <= 0
+            || MaximumSemanticHeadingLength <= 0 || MaximumSystematicsEntries <= 0)
         {
             throw new ArgumentOutOfRangeException(nameof(DocxParserOptions), "DOCX parser limits must be positive.");
         }
