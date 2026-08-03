@@ -12,6 +12,25 @@ test("secret scanner accepts documented placeholders", () => {
   assert.deepEqual(findings, []);
 });
 
+test("secret scanner accepts runtime-derived integration passwords", () => {
+  const source = [
+    "Password=${decodeURIComponent(parsed.password)};SSL Mode=Disable",
+    "const password = `S1T06-${randomUUID()}-local`;",
+  ].join("\n");
+
+  assert.deepEqual(scanText(source, { file: "scripts/security-integration-test.mjs" }), []);
+});
+
+test("secret scanner still rejects hard-coded passwords", () => {
+  const findings = scanText([
+    "Password=committed-credential",
+    "const password = `committed-credential`;",
+  ].join("\n"), { file: "settings.mjs" });
+
+  assert.equal(findings.length, 2);
+  assert.ok(findings.every((finding) => finding.category === "connection-password"));
+});
+
 test("secret scanner rejects a synthetic secret without retaining its value", () => {
   const secret = ["sb_secret_", "synthetic", "_1234567890"].join("");
   const findings = scanText(`SUPABASE_SECRET_KEY=${secret}`, { file: "settings.txt" });

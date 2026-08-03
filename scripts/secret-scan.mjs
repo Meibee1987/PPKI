@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const safePlaceholder = /(?:^|[_-])(?:replace(?:[_-]?me)?|your(?:[_-]?(?:key|token|project(?:[_-]?ref)?))?|example|dummy|fixture|verification|test)(?:$|[_-])/i;
 const safeDocumentation = /\b(?:placeholder|dummy|example|fixture|synthetic)\b/i;
+const safeRuntimePassword = /^(?:\$\{decodeURIComponent\([A-Za-z_$][\w$]*\.password\)\}|`[^`\r\n]*\$\{randomUUID\(\)\}[^`\r\n]*`)$/;
 const secretKeyPattern = /\bsb_secret_([A-Za-z0-9_-]+)/g;
 const serviceRoleAssignmentPattern = /\b(?:SUPABASE_(?:SECRET|SERVICE_ROLE)_KEY|SERVICE_ROLE_KEY)\s*[:=]\s*["']?([^\s;"']+)/gi;
 const bearerTokenPattern = /\bBearer\s+(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+)/g;
@@ -35,11 +36,11 @@ function finding({ category, file, text, index, value = "" }) {
   };
 }
 
-function scanPattern(text, file, pattern, category, valueFromMatch) {
+function scanPattern(text, file, pattern, category, valueFromMatch, isAdditionalSafeValue = () => false) {
   const findings = [];
   for (const match of text.matchAll(pattern)) {
     const value = valueFromMatch(match).trim().replace(/^["']|["']$/g, "");
-    if (!isSafePlaceholder(value, text, match.index)) {
+    if (!isSafePlaceholder(value, text, match.index) && !isAdditionalSafeValue(value)) {
       findings.push(finding({ category, file, text, index: match.index, value }));
     }
   }
@@ -51,7 +52,7 @@ export function scanText(text, { file = "<memory>" } = {}) {
     ...scanPattern(text, file, secretKeyPattern, "supabase-secret-key", (match) => match[1]),
     ...scanPattern(text, file, serviceRoleAssignmentPattern, "service-role-key", (match) => match[1]),
     ...scanPattern(text, file, bearerTokenPattern, "bearer-jwt", (match) => match[1]),
-    ...scanPattern(text, file, passwordAssignmentPattern, "connection-password", (match) => match[1]),
+    ...scanPattern(text, file, passwordAssignmentPattern, "connection-password", (match) => match[1], (value) => safeRuntimePassword.test(value)),
     ...scanPattern(text, file, connectionUrlPattern, "connection-password", (match) => match[1]),
     ...[...text.matchAll(privateKeyPattern)].map((match) => finding({ category: "private-key-pem", file, text, index: match.index })),
   ];
