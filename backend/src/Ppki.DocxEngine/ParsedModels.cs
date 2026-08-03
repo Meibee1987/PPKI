@@ -81,7 +81,7 @@ public sealed record ParsedBodyElement(
 public sealed record ParsedDocument(
     IReadOnlyList<ParsedSection> Sections,
     IReadOnlyList<ParsedParagraph> Paragraphs,
-    string ParserSchemaVersion = "1.0",
+    string ParserSchemaVersion = "2.0",
     ParsedPackageType PackageType = ParsedPackageType.Document,
     IReadOnlyList<ParsedBodyElement>? BodyElements = null,
     IReadOnlyList<ParsedTable>? Tables = null,
@@ -91,7 +91,10 @@ public sealed record ParsedDocument(
     IReadOnlyList<ParsedStyleReference>? StyleCatalog = null,
     IReadOnlyList<ParsedNumberingReference>? NumberingCatalog = null,
     IReadOnlyList<ParserDiagnostic>? Diagnostics = null,
-    ParsedAggregateCounts? AggregateCounts = null)
+    ParsedAggregateCounts? AggregateCounts = null,
+    string ProjectionSchemaVersion = "2.0",
+    ParsedDocumentDefaults? DocumentDefaults = null,
+    ParsedThemeFontCatalog? ThemeFonts = null)
 {
     public IReadOnlyList<ParsedBodyElement> BodyElementOrder { get; } = BodyElements ?? [];
     public IReadOnlyList<ParsedTable> TableInventory { get; } = Tables ?? [];
@@ -102,6 +105,8 @@ public sealed record ParsedDocument(
     public IReadOnlyList<ParsedNumberingReference> Numbering { get; } = NumberingCatalog ?? [];
     public IReadOnlyList<ParserDiagnostic> ParserDiagnostics { get; } = Diagnostics ?? [];
     public ParsedAggregateCounts Counts { get; } = AggregateCounts ?? new(Sections.Count, BodyElements?.Count ?? 0, Paragraphs.Count, 0, Tables?.Count ?? 0, Drawings?.Count ?? 0, Fields?.Count ?? 0, HeaderFooters?.Count ?? 0, 0, 0, 0, 0, 0);
+    public ParsedDocumentDefaults FormattingDefaults { get; } = DocumentDefaults ?? new(new(), new());
+    public ParsedThemeFontCatalog ThemeFontCatalog { get; } = ThemeFonts ?? new(null, null, null, null, null, null);
 }
 
 public sealed record ParsedSection(
@@ -128,7 +133,8 @@ public sealed record ParsedSection(
     long? ColumnSpacingTwips = null,
     int? StartPageNumber = null,
     IReadOnlyList<ParsedHeaderFooterReference>? HeaderFooterReferences = null,
-    bool IsBodyLevel = false)
+    bool IsBodyLevel = false,
+    EffectiveSectionFormatting? EffectiveFormatting = null)
 {
     public IReadOnlyList<ParsedHeaderFooterReference> HeaderFooterReferenceList { get; } = HeaderFooterReferences ?? [];
 }
@@ -167,7 +173,9 @@ public sealed record ParsedParagraph(
     bool HasDrawings = false,
     bool HasBookmarks = false,
     bool HasHyperlinks = false,
-    bool HasTrackedChanges = false)
+    bool HasTrackedChanges = false,
+    ParagraphFormattingProperties? DirectFormatting = null,
+    EffectiveParagraphFormatting? EffectiveFormatting = null)
 {
     public IReadOnlyList<ParsedRun> RunList { get; } = Runs ?? [];
 }
@@ -190,7 +198,10 @@ public sealed record ParsedRun(
     IReadOnlyList<int> DrawingIndexes,
     bool IsDeleted,
     bool IsInserted,
-    bool IsHidden);
+    bool IsHidden,
+    ParsedStyleReference? CharacterStyleReference = null,
+    RunFormattingProperties? DirectFormatting = null,
+    EffectiveRunFormatting? EffectiveFormatting = null);
 
 public sealed record ParsedTable(
     int Index,
@@ -251,7 +262,13 @@ public sealed record ParsedStyleReference(
     string? Type,
     string? BasedOnStyleId,
     bool IsDefault,
-    bool IsCustom);
+    bool IsCustom,
+    string? NextStyleId = null,
+    string? LinkedStyleId = null,
+    int DeclarationOrder = 0,
+    ParsedStyleType ParsedType = ParsedStyleType.Unknown,
+    ParagraphFormattingProperties? ParagraphProperties = null,
+    RunFormattingProperties? RunProperties = null);
 
 public sealed record ParsedNumberingReference(
     int NumberingId,

@@ -39,6 +39,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
     document.PackageProperties.Keywords = string.Empty;
 
     var mainPart = document.AddMainDocumentPart();
+    if (fixture.Kind == FixtureKind.StyleInheritance)
+    {
+        CreateStyleInheritanceDocument(mainPart);
+        return;
+    }
     AddStyles(mainPart);
 
     if (fixture.Kind == FixtureKind.TableField)
@@ -73,6 +78,138 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
 
     mainPart.Document = new Document(body);
     mainPart.Document.Save();
+}
+
+static void CreateStyleInheritanceDocument(MainDocumentPart mainPart)
+{
+    var stylesPart = mainPart.AddNewPart<StyleDefinitionsPart>();
+    stylesPart.Styles = new Styles(
+        new DocDefaults(
+            new RunPropertiesDefault(new RunPropertiesBaseStyle(
+                new RunFonts
+                {
+                    AsciiTheme = ThemeFontValues.MinorHighAnsi,
+                    HighAnsiTheme = ThemeFontValues.MinorHighAnsi,
+                    EastAsiaTheme = ThemeFontValues.MinorEastAsia,
+                    ComplexScriptTheme = ThemeFontValues.MinorBidi
+                },
+                new FontSize { Val = "22" },
+                new Italic { Val = true })),
+            new ParagraphPropertiesDefault(new ParagraphPropertiesBaseStyle(
+                new SpacingBetweenLines { Before = "120", After = "120", Line = "240", LineRule = LineSpacingRuleValues.Auto },
+                new KeepLines { Val = true }))),
+        new Style(
+            new StyleName { Val = "Normal" },
+            new StyleParagraphProperties(new WidowControl { Val = false }),
+            new StyleRunProperties(new RunFonts
+            {
+                AsciiTheme = ThemeFontValues.MajorHighAnsi,
+                HighAnsiTheme = ThemeFontValues.MajorHighAnsi
+            }))
+        { Type = StyleValues.Paragraph, StyleId = "Normal", Default = true },
+        new Style(
+            new StyleName { Val = "Synthetic Base" },
+            new BasedOn { Val = "Normal" },
+            new StyleParagraphProperties(
+                new Indentation { Left = "720" },
+                new SpacingBetweenLines { Before = "360", After = "240" },
+                new NumberingProperties(new NumberingLevelReference { Val = 1 }, new NumberingId { Val = 5 })),
+            new StyleRunProperties(new Bold { Val = true }, new FontSize { Val = "24" }))
+        { Type = StyleValues.Paragraph, StyleId = "SyntheticBase" },
+        new Style(
+            new StyleName { Val = "Synthetic Derived" },
+            new BasedOn { Val = "SyntheticBase" },
+            new StyleParagraphProperties(
+                new Justification { Val = JustificationValues.Center },
+                new SpacingBetweenLines { Before = "0" }),
+            new StyleRunProperties(new Bold { Val = true }, new Color { Val = "112233" }))
+        { Type = StyleValues.Paragraph, StyleId = "SyntheticDerived" },
+        new Style(
+            new StyleName { Val = "Synthetic Character Base" },
+            new StyleRunProperties(new Italic { Val = true }, new Color { Val = "445566" }))
+        { Type = StyleValues.Character, StyleId = "SyntheticCharBase" },
+        new Style(
+            new StyleName { Val = "Synthetic Character Derived" },
+            new BasedOn { Val = "SyntheticCharBase" },
+            new StyleRunProperties(
+                new RunFonts
+                {
+                    EastAsiaTheme = ThemeFontValues.MajorEastAsia,
+                    ComplexScriptTheme = ThemeFontValues.MinorBidi
+                },
+                new FontSize { Val = "30" },
+                new SmallCaps { Val = true }))
+        { Type = StyleValues.Character, StyleId = "SyntheticCharDerived" });
+    stylesPart.Styles.Save();
+
+    AddStyleNumbering(mainPart);
+    AddSyntheticTheme(mainPart);
+
+    var paragraphProperties = new ParagraphProperties(
+        new ParagraphStyleId { Val = "SyntheticDerived" },
+        new Justification { Val = JustificationValues.Right },
+        new Indentation { FirstLine = "0" },
+        new KeepNext { Val = false });
+    var styledRun = new Run(
+        new RunProperties(
+            new RunStyle { Val = "SyntheticCharDerived" },
+            new RunFonts { Ascii = "DirectAscii" },
+            new Italic { Val = false }),
+        new Text("Teks pewarisan sintetis"));
+    var defaultParagraph = new Paragraph(new Run(new Text("Teks default sintetis")));
+    mainPart.Document = new Document(new Body(
+        new Paragraph(paragraphProperties, styledRun),
+        defaultParagraph,
+        new SectionProperties()));
+    mainPart.Document.Save();
+}
+
+static void AddStyleNumbering(MainDocumentPart mainPart)
+{
+    var part = mainPart.AddNewPart<NumberingDefinitionsPart>();
+    part.Numbering = new Numbering(
+        new AbstractNum(
+            new Level(
+                new StartNumberingValue { Val = 1 },
+                new NumberingFormat { Val = NumberFormatValues.Decimal },
+                new LevelText { Val = "%2." }) { LevelIndex = 1 }) { AbstractNumberId = 5 },
+        new NumberingInstance(new AbstractNumId { Val = 5 }) { NumberID = 5 });
+    part.Numbering.Save();
+}
+
+static void AddSyntheticTheme(MainDocumentPart mainPart)
+{
+    var part = mainPart.AddNewPart<ThemePart>();
+    part.Theme = new A.Theme(
+        new A.ThemeElements(
+            new A.ColorScheme(
+                new A.Dark1Color(new A.SystemColor { Val = A.SystemColorValues.WindowText, LastColor = "000000" }),
+                new A.Light1Color(new A.SystemColor { Val = A.SystemColorValues.Window, LastColor = "FFFFFF" }),
+                new A.Dark2Color(new A.RgbColorModelHex { Val = "1F497D" }),
+                new A.Light2Color(new A.RgbColorModelHex { Val = "EEECE1" }),
+                new A.Accent1Color(new A.RgbColorModelHex { Val = "4F81BD" }),
+                new A.Accent2Color(new A.RgbColorModelHex { Val = "C0504D" }),
+                new A.Accent3Color(new A.RgbColorModelHex { Val = "9BBB59" }),
+                new A.Accent4Color(new A.RgbColorModelHex { Val = "8064A2" }),
+                new A.Accent5Color(new A.RgbColorModelHex { Val = "4BACC6" }),
+                new A.Accent6Color(new A.RgbColorModelHex { Val = "F79646" }),
+                new A.Hyperlink(new A.RgbColorModelHex { Val = "0000FF" }),
+                new A.FollowedHyperlinkColor(new A.RgbColorModelHex { Val = "800080" })) { Name = "Synthetic" },
+            new A.FontScheme(
+                new A.MajorFont(
+                    new A.LatinFont { Typeface = "Major Latin Synthetic" },
+                    new A.EastAsianFont { Typeface = "Major East Asia Synthetic" },
+                    new A.ComplexScriptFont { Typeface = "Major Complex Synthetic" }),
+                new A.MinorFont(
+                    new A.LatinFont { Typeface = "Minor Latin Synthetic" },
+                    new A.EastAsianFont { Typeface = "Minor East Asia Synthetic" },
+                    new A.ComplexScriptFont { Typeface = "Minor Complex Synthetic" })) { Name = "Synthetic" },
+            new A.FormatScheme(
+                new A.FillStyleList(),
+                new A.LineStyleList(),
+                new A.EffectStyleList(),
+                new A.BackgroundFillStyleList()) { Name = "Synthetic" })) { Name = "Synthetic" };
+    part.Theme.Save();
 }
 
 static void CreateTableFieldDocument(MainDocumentPart mainPart)
@@ -272,7 +409,11 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
     new(
         "minimal-header-footer-layout.docx",
         11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
-        "Times New Roman", 24U, [], FixtureKind.HeaderFooter)
+        "Times New Roman", 24U, [], FixtureKind.HeaderFooter),
+    new(
+        "minimal-style-inheritance-layout.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.StyleInheritance)
 ];
 
 internal sealed record FixtureDefinition(
@@ -295,4 +436,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance }

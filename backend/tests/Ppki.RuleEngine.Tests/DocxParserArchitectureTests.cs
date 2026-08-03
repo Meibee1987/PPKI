@@ -53,6 +53,28 @@ public sealed class DocxParserArchitectureTests
         Assert.DoesNotContain("ProjectReference", project, StringComparison.OrdinalIgnoreCase);
     }
 
+    [Fact]
+    public void Formatting_resolver_has_no_network_database_worker_or_installed_font_dependency()
+    {
+        var root = RepositoryRoot();
+        var resolver = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.DocxEngine", "OpenXmlFormattingResolver.cs"));
+        var model = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.DocxEngine", "FormattingModels.cs"));
+        var auditTrail = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.Infrastructure", "AuditTrailWriter.cs"));
+
+        foreach (var forbidden in new[]
+        {
+            "HttpClient", "WebRequest", "EntityFrameworkCore", "Supabase", "Ppki.Api", "Ppki.Worker",
+            "InstalledFontCollection", "System.Drawing", "Console.Write", "DateTime.Now", "DateTimeOffset.Now",
+            "Guid.NewGuid", "Random.Shared"
+        })
+        {
+            Assert.DoesNotContain(forbidden, resolver, StringComparison.OrdinalIgnoreCase);
+            Assert.DoesNotContain(forbidden, model, StringComparison.OrdinalIgnoreCase);
+        }
+        Assert.DoesNotContain("EffectiveFormatting", auditTrail, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("ParsedDocument", auditTrail, StringComparison.OrdinalIgnoreCase);
+    }
+
     private static string RepositoryRoot()
     {
         for (var candidate = new DirectoryInfo(Directory.GetCurrentDirectory()); candidate is not null; candidate = candidate.Parent)

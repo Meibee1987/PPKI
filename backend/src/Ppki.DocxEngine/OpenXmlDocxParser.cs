@@ -9,7 +9,8 @@ namespace Ppki.DocxEngine;
 
 public sealed class OpenXmlDocxParser : IDocxParser
 {
-    public const string SchemaVersion = "1.0";
+    public const string SchemaVersion = "2.0";
+    public const string ProjectionVersion = "2.0";
     private const string RelationshipsNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
     private const string WordprocessingDrawingNamespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
     private const string DrawingNamespace = "http://schemas.openxmlformats.org/drawingml/2006/main";
@@ -49,11 +50,22 @@ public sealed class OpenXmlDocxParser : IDocxParser
 
             var context = new ParserContext(_options, cancellationToken);
             var relationshipCounts = CountRelationships(document, context);
-            var styles = ParseStyles(mainPart);
+            var styles = ParseStyles(mainPart, context);
+            var themeFonts = ParseThemeFonts(mainPart);
+            var resolver = new OpenXmlFormattingResolver(
+                styles.Catalog,
+                styles.DocumentDefaults,
+                themeFonts,
+                _options.MaximumStyleInheritanceDepth);
             var numbering = ParseNumbering(mainPart);
             var sections = ParseSections(body, mainPart, context);
-            var bodyResult = ParseBody(body, mainPart, styles, numbering, context);
-            var headerFooters = ParseHeaderFooters(mainPart, sections, styles, numbering, context);
+            var bodyResult = ParseBody(body, mainPart, styles, numbering, resolver, context);
+            var headerFooters = ParseHeaderFooters(mainPart, sections, styles, numbering, resolver, context);
+            foreach (var diagnostic in resolver.Diagnostics)
+            {
+                context.Diagnostics.Add(diagnostic.Code, diagnostic.Severity, diagnostic.MessageKey,
+                    diagnostic.Location, diagnostic.Metadata);
+            }
 
             var counts = new ParsedAggregateCounts(
                 sections.Count,
@@ -71,19 +83,22 @@ public sealed class OpenXmlDocxParser : IDocxParser
                 context.CommentReferenceCount);
 
             return Task.FromResult(new ParsedDocument(
-                sections,
-                bodyResult.Paragraphs,
-                SchemaVersion,
-                PackageType(document.DocumentType),
-                bodyResult.BodyElements,
-                context.Tables.ToArray(),
-                context.Drawings.ToArray(),
-                context.Fields.ToArray(),
-                headerFooters,
-                styles.Catalog,
-                numbering.Catalog,
-                context.Diagnostics.Items,
-                counts));
+                Sections: sections,
+                Paragraphs: bodyResult.Paragraphs,
+                ParserSchemaVersion: SchemaVersion,
+                PackageType: PackageType(document.DocumentType),
+                BodyElements: bodyResult.BodyElements,
+                Tables: context.Tables.ToArray(),
+                Drawings: context.Drawings.ToArray(),
+                Fields: context.Fields.ToArray(),
+                HeaderFooters: headerFooters,
+                StyleCatalog: styles.Catalog,
+                NumberingCatalog: numbering.Catalog,
+                Diagnostics: context.Diagnostics.Items,
+                AggregateCounts: counts,
+                ProjectionSchemaVersion: ProjectionVersion,
+                DocumentDefaults: styles.DocumentDefaults,
+                ThemeFonts: themeFonts));
         }
         catch (DocxParserException)
         {
@@ -167,29 +182,78 @@ public sealed class OpenXmlDocxParser : IDocxParser
         return new(total, external);
     }
 
-    private static StylesContext ParseStyles(MainDocumentPart mainPart)
+    private StylesContext ParseStyles(MainDocumentPart mainPart, ParserContext context)
     {
         var styles = mainPart.StyleDefinitionsPart?.Styles;
-        var catalog = styles?.Elements<Style>()
-            .Select(style => new ParsedStyleReference(
-                style.StyleId?.Value ?? string.Empty,
+        var sourceStyles = styles?.Elements<Style>().ToArray() ?? [];
+        if (sourceStyles.Length > _options.MaximumStyleCount) throw Limit("styles");
+
+        var catalog = new List<ParsedStyleReference>();
+        var lookup = new Dictionary<string, Style>(StringComparer.OrdinalIgnoreCase);
+        for (var declarationOrder = 0; declarationOrder < sourceStyles.Length; declarationOrder++)
+        {
+            context.CheckCancellation();
+            var style = sourceStyles[declarationOrder];
+            var styleId = style.StyleId?.Value;
+            if (string.IsNullOrWhiteSpace(styleId))
+            {
+                context.Diagnostics.Add("style-id-missing", ParserDiagnosticSeverity.Warning, "parser.style_id_missing");
+                continue;
+            }
+            if (!lookup.TryAdd(styleId, style))
+            {
+                context.Diagnostics.Add("style-id-duplicate", ParserDiagnosticSeverity.Warning, "parser.style_id_duplicate",
+                    metadata: [new("styleId", NormalizeStyleId(styleId))]);
+                continue;
+            }
+
+            var rawType = Attribute(style, "type");
+            catalog.Add(new ParsedStyleReference(
+                styleId,
                 style.StyleName?.Val?.Value,
-                Attribute(style, "type"),
+                rawType,
                 style.BasedOn?.Val?.Value,
                 OnOffAttribute(style, "default") == true,
-                OnOffAttribute(style, "customStyle") == true))
-            .Where(style => style.StyleId.Length > 0)
-            .OrderBy(style => style.StyleId, StringComparer.Ordinal)
-            .ToArray() ?? [];
-        var lookup = styles?.Elements<Style>()
-            .Where(style => !string.IsNullOrEmpty(style.StyleId?.Value))
-            .ToDictionary(style => style.StyleId!.Value!, StringComparer.OrdinalIgnoreCase)
-            ?? new Dictionary<string, Style>(StringComparer.OrdinalIgnoreCase);
-        var defaults = styles?.DocDefaults?.RunPropertiesDefault?.RunPropertiesBaseStyle;
-        return new(styles, lookup, catalog, new TextDefaults(
-            FirstNonEmpty(defaults?.RunFonts?.Ascii?.Value, defaults?.RunFonts?.HighAnsi?.Value),
-            ParseInt(defaults?.FontSize?.Val?.Value)));
+                OnOffAttribute(style, "customStyle") == true,
+                ChildValue(style, "next"),
+                ChildValue(style, "link"),
+                declarationOrder,
+                StyleType(rawType),
+                ParseParagraphFormatting(style.StyleParagraphProperties, context, null),
+                ParseRunFormatting(style.StyleRunProperties, context, null)));
+        }
+
+        var paragraphDefaults = ParseParagraphFormatting(
+            styles?.DocDefaults?.ParagraphPropertiesDefault?.ParagraphPropertiesBaseStyle,
+            context,
+            null);
+        var runDefaults = ParseRunFormatting(
+            styles?.DocDefaults?.RunPropertiesDefault?.RunPropertiesBaseStyle,
+            context,
+            null);
+        var documentDefaults = new ParsedDocumentDefaults(paragraphDefaults, runDefaults);
+        return new(styles, lookup, catalog.ToArray(), new TextDefaults(
+            FirstNonEmpty(runDefaults.FontAscii, runDefaults.FontHighAnsi),
+            runDefaults.FontSizeHalfPoints), documentDefaults);
     }
+
+    private static ParsedThemeFontCatalog ParseThemeFonts(MainDocumentPart mainPart)
+    {
+        var theme = mainPart.ThemePart?.Theme;
+        var fontScheme = theme?.Descendants().FirstOrDefault(element => element.LocalName == "fontScheme");
+        var major = fontScheme?.ChildElements.FirstOrDefault(element => element.LocalName == "majorFont");
+        var minor = fontScheme?.ChildElements.FirstOrDefault(element => element.LocalName == "minorFont");
+        return new(
+            Typeface(major, "latin"),
+            Typeface(minor, "latin"),
+            Typeface(major, "ea"),
+            Typeface(minor, "ea"),
+            Typeface(major, "cs"),
+            Typeface(minor, "cs"));
+    }
+
+    private static string? Typeface(OpenXmlElement? group, string localName) =>
+        Attribute(group?.ChildElements.FirstOrDefault(element => element.LocalName == localName), "typeface");
 
     private static NumberingContext ParseNumbering(MainDocumentPart mainPart)
     {
@@ -255,7 +319,8 @@ public sealed class OpenXmlDocxParser : IDocxParser
         {
             var location = MainLocation(DocumentElementKind.Section, sectionIndex: 0);
             context.Diagnostics.Add("section-properties-missing", ParserDiagnosticSeverity.Information, "parser.section_properties_missing", location);
-            sections.Add(new ParsedSection(0, null, null, null, null, null, null, location));
+            var section = new ParsedSection(0, null, null, null, null, null, null, location);
+            sections.Add(section with { EffectiveFormatting = OpenXmlFormattingResolver.ResolveSection(section) });
         }
         return sections.ToArray();
     }
@@ -287,7 +352,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
             .Cast<ParsedHeaderFooterReference>()
             .ToArray();
 
-        return new ParsedSection(
+        var parsed = new ParsedSection(
             sectionIndex,
             TwipsToCm(width),
             TwipsToCm(height),
@@ -298,7 +363,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
             location,
             width,
             height,
-            PageOrientation(Attribute(pageSize, "orient"), width, height),
+            PageOrientation(Attribute(pageSize, "orient")),
             top,
             right,
             bottom,
@@ -312,6 +377,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
             NumericInt(pageNumber, "start", context, location),
             references,
             isBodyLevel);
+        return parsed with { EffectiveFormatting = OpenXmlFormattingResolver.ResolveSection(parsed) };
     }
 
     private static ParsedHeaderFooterReference? HeaderFooterReference(
@@ -343,6 +409,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
         MainDocumentPart mainPart,
         StylesContext styles,
         NumberingContext numbering,
+        OpenXmlFormattingResolver resolver,
         ParserContext context)
     {
         var paragraphs = new List<ParsedParagraph>();
@@ -356,7 +423,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
             {
                 case Paragraph paragraph:
                 {
-                    var parsed = ParseParagraph(paragraph, mainPart, styles, numbering, context,
+                    var parsed = ParseParagraph(paragraph, mainPart, styles, numbering, resolver, context,
                         MainLocation(DocumentElementKind.Paragraph, sectionIndex, bodyIndex, context.ParagraphCount), false);
                     paragraphs.Add(parsed);
                     bodyElements.Add(new(bodyIndex, ParsedBodyElementKind.Paragraph, parsed.Location!, parsed.Index));
@@ -365,7 +432,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
                 }
                 case Table table:
                 {
-                    var parsedTable = ParseTable(table, mainPart, styles, numbering, context, sectionIndex, bodyIndex, paragraphs);
+                    var parsedTable = ParseTable(table, mainPart, styles, numbering, resolver, context, sectionIndex, bodyIndex, paragraphs);
                     bodyElements.Add(new(bodyIndex, ParsedBodyElementKind.Table, parsedTable.Location, TableIndex: parsedTable.Index));
                     break;
                 }
@@ -390,6 +457,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
         MainDocumentPart mainPart,
         StylesContext styles,
         NumberingContext numbering,
+        OpenXmlFormattingResolver resolver,
         ParserContext context,
         int sectionIndex,
         int bodyIndex,
@@ -411,7 +479,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
                 foreach (var paragraph in cell.Elements<Paragraph>())
                 {
                     var paragraphLocation = cellLocation with { ParagraphIndex = context.ParagraphCount, ElementKind = DocumentElementKind.Paragraph };
-                    var parsed = ParseParagraph(paragraph, mainPart, styles, numbering, context, paragraphLocation, true);
+                    var parsed = ParseParagraph(paragraph, mainPart, styles, numbering, resolver, context, paragraphLocation, true);
                     paragraphIndexes.Add(parsed.Index);
                     bodyParagraphs.Add(parsed);
                 }
@@ -446,6 +514,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
         MainDocumentPart mainPart,
         StylesContext styles,
         NumberingContext numbering,
+        OpenXmlFormattingResolver resolver,
         ParserContext context,
         DocumentElementLocation location,
         bool isInTable)
@@ -456,6 +525,8 @@ public sealed class OpenXmlDocxParser : IDocxParser
         var styleId = properties?.ParagraphStyleId?.Val?.Value;
         styles.Lookup.TryGetValue(styleId ?? string.Empty, out var style);
         var numberingReference = ParagraphNumbering(properties, numbering);
+        var directFormatting = ParseParagraphFormatting(properties, context, location);
+        var effectiveFormatting = resolver.ResolveParagraph(directFormatting, styleId, location);
         var fieldStartIndex = context.Fields.Count;
         ParseSimpleFields(paragraph, context, location);
         ParseComplexFields(paragraph, context, location);
@@ -465,7 +536,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
         foreach (var run in paragraph.Descendants<Run>())
         {
             var runLocation = location with { RunIndex = runIndex, ElementKind = DocumentElementKind.Run };
-            runs.Add(ParseRun(run, mainPart, context, runLocation, runIndex, paragraphFieldIndexes));
+            runs.Add(ParseRun(run, mainPart, styles, resolver, styleId, context, runLocation, runIndex, paragraphFieldIndexes));
             runIndex++;
         }
 
@@ -541,12 +612,17 @@ public sealed class OpenXmlDocxParser : IDocxParser
             paragraph.Descendants<Drawing>().Any(),
             paragraph.Descendants<BookmarkStart>().Any(),
             paragraph.Descendants<Hyperlink>().Any(),
-            hasTrackedChanges);
+            hasTrackedChanges,
+            directFormatting,
+            effectiveFormatting);
     }
 
     private static ParsedRun ParseRun(
         Run run,
         MainDocumentPart mainPart,
+        StylesContext styles,
+        OpenXmlFormattingResolver resolver,
+        string? paragraphStyleId,
         ParserContext context,
         DocumentElementLocation location,
         int runIndex,
@@ -597,6 +673,16 @@ public sealed class OpenXmlDocxParser : IDocxParser
         }
 
         var properties = run.RunProperties;
+        var directFormatting = ParseRunFormatting(properties, context, location);
+        styles.Lookup.TryGetValue(directFormatting.CharacterStyleId ?? string.Empty, out var characterStyle);
+        var characterStyleReference = directFormatting.CharacterStyleId is null ? null : new ParsedStyleReference(
+            directFormatting.CharacterStyleId,
+            characterStyle?.StyleName?.Val?.Value,
+            characterStyle is null ? null : Attribute(characterStyle, "type"),
+            characterStyle?.BasedOn?.Val?.Value,
+            characterStyle is not null && OnOffAttribute(characterStyle, "default") == true,
+            characterStyle is not null && OnOffAttribute(characterStyle, "customStyle") == true);
+        var effectiveFormatting = resolver.ResolveRun(directFormatting, paragraphStyleId, location);
         return new ParsedRun(
             runIndex,
             location,
@@ -615,7 +701,10 @@ public sealed class OpenXmlDocxParser : IDocxParser
             drawingIndexes.ToArray(),
             run.Ancestors<DeletedRun>().Any(),
             run.Ancestors<InsertedRun>().Any(),
-            OnOff(properties?.Vanish) == true);
+            OnOff(properties?.Vanish) == true,
+            characterStyleReference,
+            directFormatting,
+            effectiveFormatting);
     }
 
     private static int ParseDrawing(Drawing drawing, MainDocumentPart mainPart, ParserContext context, DocumentElementLocation location)
@@ -709,6 +798,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
         IReadOnlyList<ParsedSection> sections,
         StylesContext styles,
         NumberingContext numbering,
+        OpenXmlFormattingResolver resolver,
         ParserContext context)
     {
         var result = new List<ParsedHeaderFooter>();
@@ -740,7 +830,7 @@ public sealed class OpenXmlDocxParser : IDocxParser
                 {
                     var location = new DocumentElementLocation(partKind, part.Uri.OriginalString,
                         ParagraphIndex: context.ParagraphCount, HeaderFooterType: reference.Type, ElementKind: DocumentElementKind.Paragraph);
-                    paragraphs.Add(ParseParagraph(paragraph, mainPart, styles, numbering, context, location, false));
+                    paragraphs.Add(ParseParagraph(paragraph, mainPart, styles, numbering, resolver, context, location, false));
                 }
                 result.Add(new(result.Count, reference.Type, partKind, part.Uri.OriginalString, paragraphs.ToArray(), []));
             }
@@ -782,11 +872,10 @@ public sealed class OpenXmlDocxParser : IDocxParser
         _ => ParsedHeaderFooterType.Unknown
     };
 
-    private static ParsedPageOrientation? PageOrientation(string? value, long? width, long? height) => value?.ToLowerInvariant() switch
+    private static ParsedPageOrientation? PageOrientation(string? value) => value?.ToLowerInvariant() switch
     {
         "portrait" => ParsedPageOrientation.Portrait,
         "landscape" => ParsedPageOrientation.Landscape,
-        null or "" when width is not null && height is not null => width <= height ? ParsedPageOrientation.Portrait : ParsedPageOrientation.Landscape,
         _ => null
     };
 
@@ -833,6 +922,82 @@ public sealed class OpenXmlDocxParser : IDocxParser
         "TIME" => ParsedFieldKind.Time,
         _ => ParsedFieldKind.Unknown
     };
+
+    private static ParagraphFormattingProperties ParseParagraphFormatting(
+        OpenXmlElement? properties,
+        ParserContext context,
+        DocumentElementLocation? location)
+    {
+        var indentation = properties?.GetFirstChild<Indentation>();
+        var spacing = properties?.GetFirstChild<SpacingBetweenLines>();
+        var numbering = properties?.GetFirstChild<NumberingProperties>();
+        return new(
+            Alignment(Attribute(properties?.GetFirstChild<Justification>(), "val")),
+            Numeric(indentation, "left", context, location),
+            Numeric(indentation, "right", context, location),
+            Numeric(indentation, "firstLine", context, location),
+            Numeric(indentation, "hanging", context, location),
+            Numeric(spacing, "before", context, location),
+            Numeric(spacing, "after", context, location),
+            Numeric(spacing, "line", context, location),
+            Attribute(spacing, "lineRule"),
+            OnOff(properties?.GetFirstChild<KeepNext>()),
+            OnOff(properties?.GetFirstChild<KeepLines>()),
+            OnOff(properties?.GetFirstChild<PageBreakBefore>()),
+            OnOff(properties?.GetFirstChild<WidowControl>()),
+            OnOff(properties?.GetFirstChild<ContextualSpacing>()),
+            NumericInt(properties?.GetFirstChild<OutlineLevel>(), "val", context, location),
+            NumericInt(numbering?.NumberingId, "val", context, location),
+            NumericInt(numbering?.NumberingLevelReference, "val", context, location));
+    }
+
+    private static RunFormattingProperties ParseRunFormatting(
+        OpenXmlElement? properties,
+        ParserContext context,
+        DocumentElementLocation? location)
+    {
+        var fonts = properties?.GetFirstChild<RunFonts>();
+        var languages = properties?.GetFirstChild<Languages>();
+        return new(
+            Attribute(properties?.GetFirstChild<RunStyle>(), "val"),
+            Attribute(fonts, "ascii"),
+            Attribute(fonts, "hAnsi"),
+            Attribute(fonts, "eastAsia"),
+            Attribute(fonts, "cs"),
+            Attribute(fonts, "asciiTheme"),
+            Attribute(fonts, "hAnsiTheme"),
+            Attribute(fonts, "eastAsiaTheme"),
+            Attribute(fonts, "cstheme"),
+            NumericInt(properties?.GetFirstChild<FontSize>(), "val", context, location),
+            NumericInt(properties?.GetFirstChild<FontSizeComplexScript>(), "val", context, location),
+            OnOff(properties?.GetFirstChild<Bold>()),
+            OnOff(properties?.GetFirstChild<Italic>()),
+            Attribute(properties?.GetFirstChild<Underline>(), "val"),
+            OnOff(properties?.GetFirstChild<Strike>()),
+            OnOff(properties?.GetFirstChild<Vanish>()),
+            OnOff(properties?.GetFirstChild<Caps>()),
+            OnOff(properties?.GetFirstChild<SmallCaps>()),
+            Attribute(properties?.GetFirstChild<Color>(), "val"),
+            Attribute(languages, "val"),
+            Attribute(languages, "eastAsia"),
+            Attribute(languages, "bidi"),
+            Attribute(properties?.GetFirstChild<VerticalTextAlignment>(), "val"));
+    }
+
+    private static ParsedStyleType StyleType(string? value) => value?.ToLowerInvariant() switch
+    {
+        "paragraph" => ParsedStyleType.Paragraph,
+        "character" => ParsedStyleType.Character,
+        "table" => ParsedStyleType.Table,
+        "numbering" => ParsedStyleType.Numbering,
+        _ => ParsedStyleType.Unknown
+    };
+
+    private static string? ChildValue(OpenXmlElement parent, string localName) =>
+        Attribute(parent.ChildElements.FirstOrDefault(element => element.LocalName == localName), "val");
+
+    private static string NormalizeStyleId(string styleId) => new(styleId.Trim().Take(128)
+        .Select(value => char.IsLetterOrDigit(value) || value is '_' or '-' or '.' ? value : '_').ToArray());
 
     private static string NormalizeFieldInstruction(string instruction)
     {
@@ -971,7 +1136,8 @@ public sealed class OpenXmlDocxParser : IDocxParser
         Styles? Source,
         IReadOnlyDictionary<string, Style> Lookup,
         IReadOnlyList<ParsedStyleReference> Catalog,
-        TextDefaults Defaults);
+        TextDefaults Defaults,
+        ParsedDocumentDefaults DocumentDefaults);
     private sealed record TextDefaults(string? FontName, int? FontSizeHalfPoints);
     private sealed record NumberingContext(IReadOnlyList<ParsedNumberingReference> Catalog, IReadOnlyDictionary<int, NumberingDefinition> Definitions);
     private sealed record NumberingDefinition(int NumberingId, int? AbstractNumberingId, AbstractNum? Abstract);

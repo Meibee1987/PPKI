@@ -20,8 +20,11 @@ public static class ParsedDocumentCanonicalProjection
         var projection = new
         {
             document.ParserSchemaVersion,
+            document.ProjectionSchemaVersion,
             document.PackageType,
             document.Counts,
+            DocumentDefaults = document.FormattingDefaults,
+            ThemeFonts = document.ThemeFontCatalog,
             Sections = document.Sections.Select(section => new
             {
                 section.Index,
@@ -40,6 +43,7 @@ public static class ParsedDocumentCanonicalProjection
                 section.ColumnCount,
                 section.ColumnSpacingTwips,
                 section.StartPageNumber,
+                section.EffectiveFormatting,
                 HeaderFooterReferences = section.HeaderFooterReferenceList.Select(reference => new
                 {
                     reference.Type,
@@ -82,6 +86,8 @@ public static class ParsedDocumentCanonicalProjection
                 paragraph.HasBookmarks,
                 paragraph.HasHyperlinks,
                 paragraph.HasTrackedChanges,
+                paragraph.DirectFormatting,
+                paragraph.EffectiveFormatting,
                 Runs = paragraph.RunList.Select(run => new
                 {
                     run.Index,
@@ -101,7 +107,10 @@ public static class ParsedDocumentCanonicalProjection
                     run.DrawingIndexes,
                     run.IsDeleted,
                     run.IsInserted,
-                    run.IsHidden
+                    run.IsHidden,
+                    CharacterStyleId = run.CharacterStyleReference?.StyleId,
+                    run.DirectFormatting,
+                    run.EffectiveFormatting
                 })
             }),
             Tables = document.TableInventory,
@@ -121,7 +130,21 @@ public static class ParsedDocumentCanonicalProjection
                     RunCount = paragraph.RunList.Count
                 })
             }),
-            Styles = document.Styles,
+            Styles = document.Styles.OrderBy(style => style.DeclarationOrder).Select(style => new
+            {
+                style.StyleId,
+                style.Name,
+                style.Type,
+                style.ParsedType,
+                style.IsDefault,
+                style.IsCustom,
+                style.BasedOnStyleId,
+                style.NextStyleId,
+                style.LinkedStyleId,
+                style.DeclarationOrder,
+                style.ParagraphProperties,
+                style.RunProperties
+            }),
             Numbering = document.Numbering,
             Diagnostics = document.ParserDiagnostics.Select(diagnostic => new
             {
