@@ -12,6 +12,7 @@ public sealed class SchemaContractTests
     private const string StorageMigrationName = "202608020003_storage_security.sql";
     private const string ImmutabilityMigrationName = "202608020004_audit_immutability.sql";
     private const string AuditTrailMigrationName = "202608030001_append_only_audit_trail.sql";
+    private const string DocumentKindSnapshotMigrationName = "202608030002_audit_document_kind_snapshot.sql";
 
     [Fact]
     public void Ownership_migration_is_present_and_contains_no_hosted_credentials()
@@ -68,6 +69,8 @@ public sealed class SchemaContractTests
         Assert.False(audit.FindProperty(nameof(AuditJob.DocumentVersionId))!.IsNullable);
         Assert.False(audit.FindProperty(nameof(AuditJob.ProfileVersionId))!.IsNullable);
         Assert.NotNull(audit.FindProperty(nameof(AuditJob.RequestedByUserId)));
+        Assert.True(audit.FindProperty(nameof(AuditJob.DocumentKindSnapshot))!.IsNullable);
+        Assert.NotNull(audit.FindProperty(nameof(AuditJob.DocumentKindSnapshot))!.GetTypeMapping().Converter);
 
         var finding = db.Model.FindEntityType(typeof(AuditFinding))!;
         Assert.False(finding.FindProperty(nameof(AuditFinding.AuditJobId))!.IsNullable);
@@ -209,6 +212,23 @@ public sealed class SchemaContractTests
     }
 
     [Fact]
+    public void Document_kind_snapshot_migration_is_nullable_bounded_and_immutable_without_backfill()
+    {
+        var sql = File.ReadAllText(DocumentKindSnapshotMigrationPath());
+
+        Assert.Contains("add column if not exists document_kind_snapshot text", sql, StringComparison.Ordinal);
+        Assert.Contains("ck_audit_jobs_document_kind_snapshot", sql, StringComparison.Ordinal);
+        Assert.Contains("'LaporanAkhir', 'Skripsi', 'Tesis', 'Disertasi'", sql, StringComparison.Ordinal);
+        Assert.Contains("old.document_kind_snapshot is distinct from new.document_kind_snapshot", sql, StringComparison.Ordinal);
+        Assert.Contains("trg_audit_jobs_document_kind_snapshot_immutable", sql, StringComparison.Ordinal);
+        Assert.Contains("current_user = relation_owner", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("set document_kind_snapshot", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("DocumentType", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("document_types", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("supabase.co", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Audit_trail_migration_defines_server_only_append_only_table()
     {
         var sql = File.ReadAllText(AuditTrailMigrationPath());
@@ -279,6 +299,8 @@ public sealed class SchemaContractTests
     private static string ImmutabilityMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", ImmutabilityMigrationName);
 
     private static string AuditTrailMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", AuditTrailMigrationName);
+
+    private static string DocumentKindSnapshotMigrationPath() => Path.Combine(RepositoryRoot(), "supabase", "migrations", DocumentKindSnapshotMigrationName);
 
     private static string RepositoryRoot()
     {

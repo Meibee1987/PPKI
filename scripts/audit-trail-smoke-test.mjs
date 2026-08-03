@@ -172,8 +172,8 @@ insert into public.documents (id, owner_user_id, document_type_id, title, curren
 values ('${ids.document}', '${userId}', '${ids.documentType}', 'Synthetic audit trail fixture', 1);
 insert into public.document_versions (id, document_id, version_no, storage_bucket, storage_key, original_filename, mime_type, size_bytes, sha256, created_by_user_id)
 values ('${ids.version}', '${ids.document}', 1, 'documents-original', '${userId}/${ids.document}/${ids.version}/original.docx', 'original.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 4, '${"a".repeat(64)}', '${userId}');
-insert into public.audit_jobs (id, document_version_id, profile_version_id, requested_by_user_id, status)
-values ('${ids.audit}', '${ids.version}', '${ids.profileVersion}', '${userId}', 'Queued');`);
+insert into public.audit_jobs (id, document_version_id, profile_version_id, document_kind_snapshot, requested_by_user_id, status)
+values ('${ids.audit}', '${ids.version}', '${ids.profileVersion}', 'Skripsi', '${userId}', 'Queued');`);
 
     const correlation = "95000000-0000-4000-8000-000000000010";
     const userEvent = await write(env, "audit_trail_events", env.SERVICE_ROLE_KEY, env.SERVICE_ROLE_KEY, { body: {

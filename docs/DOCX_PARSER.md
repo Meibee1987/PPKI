@@ -3,8 +3,9 @@
 S2-T01 defines the read-only Open XML model, S2-T02 adds effective formatting
 and provenance, and S2-T03 adds numbering semantics, structural heading
 evidence, and a document outline. S2-T04 adds deterministic semantic-section
-observation and document systematics. S2-T05 consumes this read-only model for
-the supported Wave 1 layout validators without changing parser schema `4.0`.
+observation and document systematics. S2-T05 and S2-T06 consume this read-only
+model for the supported Wave 1 layout and structural validators without
+changing parser schema `4.0`.
 The parser itself does not implement PPKI compliance, findings, rendered
 layout, or auto-fix.
 
@@ -51,6 +52,11 @@ maindocument/s:0/b:0/p:0/r:0/kind:run
 ```
 
 Locations never claim a rendered page number.
+
+`BodyElementIndex` is a zero-based global sequence across the main document
+body; it does not restart at an Open XML section boundary. Finding ordering may
+therefore place document-level locations first, then sort by `BodyElementIndex`,
+followed by section, paragraph, and run indexes as deterministic tie-breakers.
 
 ## Raw units and formatting layers
 
@@ -292,12 +298,11 @@ npm run test:docx-parser
 
 ## Explicitly deferred
 
-Implemented outside the parser in S2-T05: only the supported deterministic
-page-size, margin, body typography, line-spacing, first-line-indent, and
-alignment validators documented in `docs/LAYOUT_VALIDATORS.md`.
+Implemented outside the parser: the deterministic layout validators documented
+in `docs/LAYOUT_VALIDATORS.md` and the supported heading and abstract/summary
+validators documented in `docs/WAVE1_STRUCTURAL_VALIDATORS.md`.
 
-Not implemented here: compliance validation against PPKI order, required or
-missing-section validation, abstract word-count validation, keyword validation,
-table-of-contents consistency, layout validators, every Word numbering format
-and special restart mode, full table-style cascade, findings, rendered-page
-layout, or auto-fix.
+Not implemented here: rule evaluation itself, formal document-systematics order
+(the catalog has no sequence parameter), keyword-value validation,
+table-of-contents consistency, every Word numbering format and special restart
+mode, full table-style cascade, rendered-page layout, or auto-fix.

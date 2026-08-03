@@ -31,7 +31,8 @@ public sealed record RuleValidationContext(
     AuditRuleSnapshot Snapshot,
     ParsedDocument Document,
     LayoutValidatorOptions Options,
-    CancellationToken CancellationToken);
+    CancellationToken CancellationToken,
+    DocumentKind? DocumentKind = null);
 
 public sealed record LayoutFindingActual(
     string Property,
@@ -194,6 +195,13 @@ public sealed class DocumentLayoutValidationEngine
     public DocumentValidationResult Validate(
         ParsedDocument document,
         IEnumerable<AuditRuleSnapshot> snapshots,
+        CancellationToken cancellationToken) =>
+        Validate(document, snapshots, documentKind: null, cancellationToken);
+
+    public DocumentValidationResult Validate(
+        ParsedDocument document,
+        IEnumerable<AuditRuleSnapshot> snapshots,
+        DocumentKind? documentKind,
         CancellationToken cancellationToken)
     {
         ArgumentNullException.ThrowIfNull(document);
@@ -211,7 +219,7 @@ public sealed class DocumentLayoutValidationEngine
             }
             else
             {
-                result = validator.Validate(new(snapshot, document, _options, cancellationToken));
+                result = validator.Validate(new(snapshot, document, _options, cancellationToken, documentKind));
             }
             outcomes.Add(new(snapshot, result));
             if (result.Applicability == ValidationApplicability.Applicable)
@@ -220,6 +228,10 @@ public sealed class DocumentLayoutValidationEngine
 
         var ordered = candidates
             .OrderBy(value => value.Snapshot.Ordinal)
+            .ThenBy(value => value.Finding.Location.BodyElementIndex ?? int.MinValue)
+            .ThenBy(value => value.Finding.Location.SectionIndex ?? int.MinValue)
+            .ThenBy(value => value.Finding.Location.ParagraphIndex ?? int.MinValue)
+            .ThenBy(value => value.Finding.Location.RunIndex ?? int.MinValue)
             .ThenBy(value => value.Finding.Location.CompactLocation, StringComparer.Ordinal)
             .ThenBy(value => value.Finding.PropertyOrder)
             .ThenBy(value => value.Finding.Actual.NormalizedValue, StringComparer.Ordinal)

@@ -99,13 +99,14 @@ internal static class LayoutValidatorTestData
         bool inTable = false,
         IReadOnlyList<ParsedRun>? runs = null,
         int index = 0,
-        FormattingSourceKind formattingSource = FormattingSourceKind.ParagraphStyle)
+        FormattingSourceKind formattingSource = FormattingSourceKind.ParagraphStyle,
+        string text = "SYNTHETIC-DOCUMENT-TEXT-MARKER")
     {
         var location = new DocumentElementLocation(DocumentPartKind.MainDocument, "/word/document.xml",
             SectionIndex: 0, BodyElementIndex: index, ParagraphIndex: index,
             ElementKind: DocumentElementKind.Paragraph);
         runs ??= [Run(index: 0, paragraphIndex: index)];
-        return new ParsedParagraph(index, "SYNTHETIC-DOCUMENT-TEXT-MARKER", heading ? "Heading1" : "Normal",
+        return new ParsedParagraph(index, text, heading ? "Heading1" : "Normal",
             heading, inTable, null, null, alignment?.ToString() ?? string.Empty, null, null,
             Location: location,
             Runs: runs,
@@ -138,13 +139,16 @@ internal static class LayoutValidatorTestData
         bool empty = false,
         int index = 0,
         int paragraphIndex = 0,
-        FormattingSourceKind source = FormattingSourceKind.ParagraphStyle)
+        FormattingSourceKind source = FormattingSourceKind.ParagraphStyle,
+        string text = "SYNTHETIC-DOCUMENT-TEXT-MARKER",
+        bool? bold = null,
+        string? underline = null)
     {
         var location = new DocumentElementLocation(DocumentPartKind.MainDocument, "/word/document.xml",
             SectionIndex: 0, BodyElementIndex: paragraphIndex, ParagraphIndex: paragraphIndex, RunIndex: index,
             ElementKind: DocumentElementKind.Run);
-        return new ParsedRun(index, location, empty ? [] : ["SYNTHETIC-DOCUMENT-TEXT-MARKER"],
-            null, null, null, null, null, null, null, null, [], 0, [], [], deleted, false, hidden,
+        return new ParsedRun(index, location, empty ? [] : [text],
+            null, null, null, bold, null, underline, null, null, [], 0, [], [], deleted, false, hidden,
             EffectiveFormatting: new(
                 Value(ascii, "fontAscii", source),
                 Value(highAnsi, "fontHighAnsi", source),
@@ -152,9 +156,9 @@ internal static class LayoutValidatorTestData
                 Value<string?>(null, "fontComplexScript"),
                 Value(size, "fontSizeHalfPoints", source),
                 Value<int?>(null, "complexScriptFontSizeHalfPoints"),
-                Value<bool?>(null, "bold"),
+                Value(bold, "bold", source),
                 Value<bool?>(null, "italic"),
-                Value<string?>(null, "underline"),
+                Value(underline, "underline", source),
                 Value<bool?>(null, "strike"),
                 Value<bool?>(hidden, "hidden"),
                 Value<bool?>(null, "caps"),

@@ -99,6 +99,8 @@ public sealed class AuditJob : Entity
     public DocumentVersion? DocumentVersion { get; set; }
     public Guid ProfileVersionId { get; set; }
     public ProfileVersion? ProfileVersion { get; set; }
+    // Nullable for historical rows created before the document kind snapshot was introduced.
+    public DocumentKind? DocumentKindSnapshot { get; set; }
     // Nullable only for legacy rows created before S1-T01. New jobs always set this from the authenticated caller.
     public Guid? RequestedByUserId { get; set; }
     public AuditJobStatus Status { get; set; } = AuditJobStatus.Queued;

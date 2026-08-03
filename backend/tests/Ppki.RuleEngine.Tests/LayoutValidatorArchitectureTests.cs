@@ -28,7 +28,7 @@ public sealed class LayoutValidatorArchitectureTests
         }
 
         var runner = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.RuleEngine", "AuditRunner.cs"));
-        Assert.Contains("validationEngine.Validate(parsed, snapshots, cancellationToken)", runner, StringComparison.Ordinal);
+        Assert.Contains("validationEngine.Validate(parsed, snapshots, documentKind, cancellationToken)", runner, StringComparison.Ordinal);
         Assert.Contains("AuditFindingMapper.Map(audit.Id, validation)", runner, StringComparison.Ordinal);
         Assert.DoesNotContain("RuleFromSnapshot", runner, StringComparison.Ordinal);
         Assert.Contains("Resolved rule validation is unsupported or invalid.", runner, StringComparison.Ordinal);
@@ -41,16 +41,16 @@ public sealed class LayoutValidatorArchitectureTests
         Assert.Equal("4.0", OpenXmlDocxParser.SchemaVersion);
 
         var worker = File.ReadAllText(Path.Combine(root, "backend", "services", "Ppki.Worker", "Program.cs"));
-        Assert.Equal(9, Count(worker, "AddSingleton<IDocumentRuleValidator"));
+        Assert.Equal(25, Count(worker, "AddSingleton<IDocumentRuleValidator"));
         Assert.Contains("AddSingleton<DocumentRuleValidatorRegistry>()", worker, StringComparison.Ordinal);
         Assert.Contains("AddSingleton<DocumentLayoutValidationEngine>()", worker, StringComparison.Ordinal);
     }
 
     [Fact]
-    public void S2T05_does_not_add_deferred_validator_types()
+    public void Wave1_does_not_add_deferred_validator_types()
     {
         var names = typeof(DocumentLayoutValidationEngine).Assembly.GetTypes().Select(value => value.Name).ToArray();
-        foreach (var deferred in new[] { "HeadingValidator", "AbstractValidator", "SystematicsValidator", "TableOfContentsValidator", "AutoFixValidator" })
+        foreach (var deferred in new[] { "SystematicsValidator", "TableOfContentsValidator", "AutoFixValidator" })
             Assert.DoesNotContain(deferred, names, StringComparer.OrdinalIgnoreCase);
     }
 

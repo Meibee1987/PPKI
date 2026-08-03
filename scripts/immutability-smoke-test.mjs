@@ -217,13 +217,16 @@ grant update, delete on table public.audit_rule_snapshots to service_role;`);
     const versionState = await sql(container, `select sha256 || ':' || size_bytes from public.document_versions where id = '${ids.version}'`);
     passed = report("document-version-row-and-hash-unchanged", versionState === `${originalHash}:4`) && passed;
 
-    const queued = await write(env, "audit_jobs", { body: { id: ids.audit, document_version_id: ids.version, profile_version_id: ids.profileVersion, requested_by_user_id: userId, status: "Queued" } });
+    const queued = await write(env, "audit_jobs", { body: { id: ids.audit, document_version_id: ids.version, profile_version_id: ids.profileVersion, document_kind_snapshot: "Skripsi", requested_by_user_id: userId, status: "Queued" } });
     passed = report("audit-queued-created", queued.ok) && passed;
     const startedAt = new Date().toISOString();
     const processing = await write(env, "audit_jobs", { method: "PATCH", id: ids.audit, body: { status: "Processing", started_at: startedAt } });
     passed = report("audit-queued-to-processing-allowed", processing.ok) && passed;
     const identityChange = await write(env, "audit_jobs", { method: "PATCH", id: ids.audit, body: { document_version_id: "94000000-0000-0000-0000-000000000099" } });
     passed = report("audit-identity-update-denied", !identityChange.ok) && passed;
+    const documentKindChange = await write(env, "audit_jobs", { method: "PATCH", id: ids.audit, body: { document_kind_snapshot: "Tesis" } });
+    const documentKindState = await sql(container, `select document_kind_snapshot from public.audit_jobs where id = '${ids.audit}'`);
+    passed = report("audit-document-kind-snapshot-update-denied", !documentKindChange.ok && documentKindState === "Skripsi") && passed;
 
     const snapshot = {
       id: ids.snapshot,
@@ -258,8 +261,9 @@ grant update, delete on table public.audit_rule_snapshots to service_role;`);
     passed = report("processing-to-completed-with-snapshot-allowed", completed.ok) && passed;
 
     const invalidQueued = await write(env, "audit_jobs", { body: { id: ids.invalidAudit, document_version_id: ids.version, profile_version_id: ids.profileVersion, requested_by_user_id: userId, status: "Queued" } });
+    passed = report("legacy-null-document-kind-snapshot-accepted", invalidQueued.ok) && passed;
     const directComplete = await write(env, "audit_jobs", { method: "PATCH", id: ids.invalidAudit, body: { status: "Completed", started_at: startedAt, completed_at: completedAt, resolved_rule_set_hash: "c".repeat(64) } });
-    passed = report("queued-direct-to-completed-denied", invalidQueued.ok && !directComplete.ok) && passed;
+    passed = report("queued-direct-to-completed-denied", !directComplete.ok) && passed;
     const reopen = await write(env, "audit_jobs", { method: "PATCH", id: ids.audit, body: { status: "Processing", completed_at: null } });
     passed = report("completed-to-processing-denied", !reopen.ok) && passed;
     const terminalUpdate = await write(env, "audit_jobs", { method: "PATCH", id: ids.audit, body: { error_count: 0 } });

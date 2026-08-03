@@ -12,6 +12,7 @@ canonical replacements. Run canonical commands from the repository root.
 | Generate/check synthetic DOCX fixtures | `backend/tests/fixtures/docx/README.md` | `npm run fixtures:generate`, then `npm run fixtures:check` |
 | Run parsed-document, style/numbering resolution, outline, semantic-section, systematics, and determinism tests | S2-T01/S2-T02/S2-T03/S2-T04 Open XML parser contract | `npm run test:docx-parser` |
 | Run deterministic Wave 1 layout validator, registry, finding, fixture, and audit-integration tests | S2-T05 layout validation contract | `npm run test:layout-validators` |
+| Run all Wave 1 layout and structural validator tests | S2-T05/S2-T06 validation contracts | `npm run test:wave1-validators` |
 | Run local API/worker security integration | Sprint 01 security closure | `npm run test:security-integration-local` (requires an already-running local Supabase stack; never starts or resets it) |
 | Start stack | README, Supabase setup, bootstrap scripts used `docker compose up --build` | `npm run dev:up` |
 | Rebuild stack | Not previously standardized | `npm run dev:rebuild` |

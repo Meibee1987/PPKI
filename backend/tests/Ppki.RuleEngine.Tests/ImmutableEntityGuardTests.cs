@@ -7,6 +7,24 @@ namespace Ppki.RuleEngine.Tests;
 
 public sealed class ImmutableEntityGuardTests
 {
+    [Fact]
+    public async Task Audit_document_kind_snapshot_change_is_blocked_before_database_access()
+    {
+        await using var db = Context();
+        var audit = new AuditJob
+        {
+            DocumentVersionId = Guid.NewGuid(),
+            ProfileVersionId = Guid.NewGuid(),
+            DocumentKindSnapshot = DocumentKind.Skripsi
+        };
+        db.Attach(audit);
+        audit.DocumentKindSnapshot = DocumentKind.Tesis;
+
+        var error = await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
+
+        Assert.Equal("Audit job document kind snapshot is immutable.", error.Message);
+    }
+
     [Theory]
     [InlineData(EntityState.Modified)]
     [InlineData(EntityState.Deleted)]

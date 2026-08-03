@@ -141,9 +141,9 @@ api.MapGet("/documents/{id:guid}", async (Guid id, ClaimsPrincipal user, PpkiDbC
 });
 
 api.MapPost("/document-versions/{versionId:guid}/audits", async (Guid versionId, ClaimsPrincipal user, PpkiDbContext db, IAuditTrailWriter auditTrail, CancellationToken ct) => {
-    var uid=UserId(user); var owned=await db.DocumentVersions.AnyAsync(v=>v.Id==versionId&&v.Document!.OwnerUserId==uid,ct); if(!owned)return Results.NotFound();
+    var uid=UserId(user); var documentKind=await db.DocumentVersions.Where(v=>v.Id==versionId&&v.Document!.OwnerUserId==uid).Select(v=>(DocumentKind?)v.Document!.DocumentType!.Kind).SingleOrDefaultAsync(ct); if(documentKind is null)return Results.NotFound();
     var active=await db.ProfileVersions.OrderByDescending(x=>x.VersionNo).FirstAsync(x=>x.Status=="Active",ct);
-    var audit=new AuditJob{DocumentVersionId=versionId,ProfileVersionId=active.Id,RequestedByUserId=uid,Status=AuditJobStatus.Queued};
+    var audit=new AuditJob{DocumentVersionId=versionId,ProfileVersionId=active.Id,DocumentKindSnapshot=documentKind,RequestedByUserId=uid,Status=AuditJobStatus.Queued};
     var eventContext=AuditEventContext.User(uid,audit.Id);
     await using var transaction=await db.Database.BeginTransactionAsync(ct); await auditTrail.SetTransactionContextAsync(db,eventContext,ct);
     db.AuditJobs.Add(audit); auditTrail.Add(db,eventContext,new AuditEventData(AuditActions.AuditRequested,AuditResourceTypes.AuditJob,audit.Id,uid,AuditEventMetadata.Create(("audit_status","Queued"))));

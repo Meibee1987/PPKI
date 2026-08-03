@@ -32,6 +32,15 @@ public sealed class UploadFlowContractTests
         Assert.Contains("AddFilter(\"System.Net.Http.HttpClient\", LogLevel.Warning)", worker, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Audit_creation_captures_document_kind_snapshot()
+    {
+        var source = File.ReadAllText(Path.Combine(RepositoryRoot(), "backend", "services", "Ppki.Api", "Program.cs"));
+
+        Assert.Contains("Select(v=>(DocumentKind?)v.Document!.DocumentType!.Kind)", source, StringComparison.Ordinal);
+        Assert.Contains("DocumentKindSnapshot=documentKind", source, StringComparison.Ordinal);
+    }
+
     private static string RepositoryRoot()
     {
         for (var candidate = new DirectoryInfo(Directory.GetCurrentDirectory()); candidate is not null; candidate = candidate.Parent)

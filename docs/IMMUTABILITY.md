@@ -41,7 +41,8 @@ Queued ----------------> Cancelled
 
 `Queued -> Completed`, `Queued -> Failed`, `Processing -> Queued`, and every
 transition out of `Completed`, `Failed`, or `Cancelled` are rejected. Job ID,
-document version, profile version, requester, and creation time never change.
+document version, profile version, nullable document-kind snapshot, requester,
+and creation time never change.
 `started_at` is set once when processing is claimed. `completed_at` is required
 for terminal states and cannot precede `started_at`; a queued cancellation may
 have no start time. Terminal rows reject every update and delete.
@@ -51,6 +52,14 @@ finding counts, score, a generic failure message, and terminal state. Once a
 resolved hash exists, it and `applicable_rule_count` are immutable. Completion
 requires a lowercase 64-character hash and a count equal to the persisted
 snapshot rows. Persisted failure text is bounded, single-line, and generic.
+
+New audit jobs capture `document_kind_snapshot` from the selected document type
+when the job is created. Validation reads only this audit-owned value, never the
+live document/type relation, so later metadata changes cannot alter
+applicability during recovery or replay. The column remains nullable solely for
+historical rows and is not backfilled from current data; validators retain
+their safe null-context behavior. This context is separate from the resolved
+rule-set snapshot and is not part of its hash.
 
 ## Canonical rule-set hash
 
@@ -74,7 +83,8 @@ The worker conditionally claims one queued ID with `UPDATE ... WHERE status =
 2. builds and hashes canonical snapshots;
 3. locks the audit row and, in one transaction, inserts all snapshots and sets
    their hash/count;
-4. validates the DOCX from the immutable version;
+4. validates the DOCX from the immutable version using the audit's immutable
+   nullable document-kind snapshot;
 5. in another transaction, inserts findings while the job is processing and
    transitions the job to completed.
 

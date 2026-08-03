@@ -1,16 +1,18 @@
 # Deterministic Wave 1 layout validators
 
-S2-T05 validates only the nine layout keys already selected by the rule catalog
-importer. It does not validate headings, abstract/ringkasan, semantic ordering,
-required sections, tables, figures, citations, rendered pages, or fixes.
+S2-T05 validates the nine layout keys selected by the rule catalog importer.
+S2-T06 reuses the same registry, finding, ordering, deduplication, limit, and
+snapshot contracts for the supported structural keys documented in
+`docs/WAVE1_STRUCTURAL_VALIDATORS.md`. Layout validator results are unchanged.
 
 ## Rule and snapshot inventory
 
 The 317-entry `rules/ppki-ipb-2019/rules.json` is source data and intentionally
 does not contain `validation_key` or executable validation parameters.
-`RuleCatalogImporter` maps nine implemented rule codes to stable keys; all
-other catalog entries receive `manual.not-implemented` and `IsImplemented=false`.
-The raw catalog and mapping are unchanged by S2-T05.
+`RuleCatalogImporter` maps nine layout rule codes to stable keys. S2-T06 adds
+separate HDG/ABS mappings without changing any layout mapping or `rules.json`.
+All unmapped entries receive `manual.not-implemented` and
+`IsImplemented=false`.
 
 An immutable `AuditRuleSnapshot` contains rule code, domain/subdomain,
 `AppliesTo`, element, requirement JSON, validation key, validation JSON,
@@ -32,16 +34,17 @@ the validator never parses prose or uses a rule code to choose behavior.
 | `body.first-line-indent-1cm` | PPKI-LAY-018 | `FirstLineIndentValidator` | normal body paragraphs | effective first-line indent | 567 twips |
 | `body.justified` | PPKI-LAY-019 | `JustifiedValidator` | normal body paragraphs | effective alignment enum | `Justified` |
 
-No current key unambiguously represents page orientation, paragraph spacing
+No layout key unambiguously represents page orientation, paragraph spacing
 before/after, hanging/left/right indent, or complex-script size. Those
-properties are not guessed. Heading/semantic rules are deferred to S2-T06;
-table/figure/caption/citation/reference rules and the remaining catalog are
-unsupported by this Wave 1 registry.
+properties are not guessed. Supported heading and abstract/summary rules are
+defined in the structural-validator document; table/figure/caption/citation/
+reference rules and the remaining catalog are unsupported by Wave 1.
 
 ## Contract, registry, and applicability
 
 `IDocumentRuleValidator` receives a `RuleValidationContext` containing the
-persisted snapshot, parsed document, bounded options, and cancellation token.
+persisted snapshot, parsed document, optional immutable document kind, bounded
+options, and cancellation token.
 It returns `Applicable`, `NotApplicable`, `Unsupported`, or
 `InvalidRuleConfiguration`, zero or more candidates, and a safe diagnostic
 code. `DocumentRuleValidatorRegistry` rejects duplicate keys and exposes keys

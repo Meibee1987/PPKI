@@ -77,7 +77,8 @@ public sealed class AuditRunner(
                 if (File.Exists(filePath)) File.Delete(filePath);
             }
 
-            var validation = validationEngine.Validate(parsed, snapshots, cancellationToken);
+            DocumentKind? documentKind = audit.DocumentKindSnapshot;
+            var validation = validationEngine.Validate(parsed, snapshots, documentKind, cancellationToken);
             if (validation.Outcomes.Any(value => value.Result.Applicability is
                     ValidationApplicability.Unsupported or ValidationApplicability.InvalidRuleConfiguration))
             {

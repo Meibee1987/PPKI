@@ -133,6 +133,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             Common(entity);
             entity.Property(x => x.DocumentVersionId).HasColumnName("document_version_id");
             entity.Property(x => x.ProfileVersionId).HasColumnName("profile_version_id");
+            entity.Property(x => x.DocumentKindSnapshot).HasColumnName("document_kind_snapshot").HasConversion<string>();
             entity.Property(x => x.RequestedByUserId).HasColumnName("requested_by_user_id");
             entity.Property(x => x.Status).HasColumnName("status").HasConversion<string>();
             entity.Property(x => x.ResolvedRuleSetHash).HasColumnName("resolved_rule_set_hash").HasMaxLength(64);
@@ -257,6 +258,13 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
 
     private void RejectImmutableEntityMutations()
     {
+        if (ChangeTracker.Entries<AuditJob>().Any(entry =>
+            entry.State == EntityState.Modified
+            && entry.Property(item => item.DocumentKindSnapshot).IsModified))
+        {
+            throw new InvalidOperationException("Audit job document kind snapshot is immutable.");
+        }
+
         if (ChangeTracker.Entries<DocumentVersion>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
         {
             throw new InvalidOperationException("Document versions are insert-only.");

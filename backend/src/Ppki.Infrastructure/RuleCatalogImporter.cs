@@ -18,7 +18,23 @@ public static class RuleCatalogImporter
             ["PPKI-LAY-011"] = "section.margin-bottom-3cm",
             ["PPKI-LAY-017"] = "body.line-spacing-single",
             ["PPKI-LAY-018"] = "body.first-line-indent-1cm",
-            ["PPKI-LAY-019"] = "body.justified"
+            ["PPKI-LAY-019"] = "body.justified",
+            ["PPKI-HDG-001"] = "heading.chapter-number-upper-roman-no-period",
+            ["PPKI-HDG-002"] = "heading.maximum-depth-3",
+            ["PPKI-HDG-003"] = "heading.chapter-uppercase",
+            ["PPKI-HDG-004"] = "heading.chapter-bold",
+            ["PPKI-HDG-005"] = "heading.chapter-no-period-no-underline",
+            ["PPKI-HDG-006"] = "heading.chapter-centered",
+            ["PPKI-HDG-007"] = "heading.subheading-decimal-left",
+            ["PPKI-HDG-009"] = "heading.subheading-bold-no-period-no-underline",
+            ["PPKI-HDG-011"] = "heading.subsubheading-decimal-left",
+            ["PPKI-HDG-013"] = "heading.subsubheading-regular-no-period-no-underline",
+            ["PPKI-ABS-001"] = "abstract.skripsi-language-pair",
+            ["PPKI-ABS-003"] = "abstract.skripsi-narrative-paragraph-count-one",
+            ["PPKI-ABS-004"] = "abstract.skripsi-word-count-max-200",
+            ["PPKI-ABS-011"] = "abstract.skripsi-single-spacing-zero-paragraph-spacing",
+            ["PPKI-ABS-013"] = "summary.thesis-dissertation-language-pair",
+            ["PPKI-ABS-019"] = "abstract-summary-single-spacing-zero-paragraph-spacing"
         };
 
     public static async Task ImportAsync(
@@ -26,8 +42,11 @@ public static class RuleCatalogImporter
         string catalogPath,
         CancellationToken cancellationToken = default)
     {
-        if (await db.Rules.AnyAsync(cancellationToken))
+        var existingRules = await db.Rules.ToListAsync(cancellationToken);
+        if (existingRules.Count > 0)
         {
+            if (ReconcileImplementedMappings(existingRules) > 0)
+                await db.SaveChangesAsync(cancellationToken);
             return;
         }
 
@@ -58,6 +77,24 @@ public static class RuleCatalogImporter
         }
 
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    internal static int ReconcileImplementedMappings(IEnumerable<RuleDefinition> rules)
+    {
+        ArgumentNullException.ThrowIfNull(rules);
+        var changed = 0;
+        foreach (var rule in rules)
+        {
+            if (!ImplementedValidators.TryGetValue(rule.RuleCode, out var validationKey))
+                continue;
+            if (rule.IsImplemented && string.Equals(rule.ValidationKey, validationKey, StringComparison.Ordinal))
+                continue;
+
+            rule.ValidationKey = validationKey;
+            rule.IsImplemented = true;
+            changed++;
+        }
+        return changed;
     }
 
     private sealed record RuleCatalog(

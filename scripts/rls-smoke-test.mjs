@@ -134,9 +134,9 @@ insert into public.documents (id, owner_user_id, document_type_id, title, curren
 insert into public.document_versions (id, document_id, version_no, storage_bucket, storage_key, original_filename, mime_type, size_bytes, sha256, created_by_user_id) values
   ('${fixture.versionAId}', '${fixture.documentAId}', 1, 'documents-original', 'rls-smoke/a/v1.docx', 'rls-smoke-a.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 1, '${"a".repeat(64)}', '${userAId}'),
   ('${fixture.versionBId}', '${fixture.documentBId}', 1, 'documents-original', 'rls-smoke/b/v1.docx', 'rls-smoke-b.docx', 'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 1, '${"b".repeat(64)}', '${userBId}');
-insert into public.audit_jobs (id, document_version_id, profile_version_id, requested_by_user_id, status) values
-  ('${fixture.auditAId}', '${fixture.versionAId}', '${fixture.profileVersionId}', '${userAId}', 'Queued'),
-  ('${fixture.auditBId}', '${fixture.versionBId}', '${fixture.profileVersionId}', '${userBId}', 'Queued');
+insert into public.audit_jobs (id, document_version_id, profile_version_id, document_kind_snapshot, requested_by_user_id, status) values
+  ('${fixture.auditAId}', '${fixture.versionAId}', '${fixture.profileVersionId}', 'Skripsi', '${userAId}', 'Queued'),
+  ('${fixture.auditBId}', '${fixture.versionBId}', '${fixture.profileVersionId}', 'Skripsi', '${userBId}', 'Queued');
 update public.audit_jobs
 set status = 'Processing', started_at = now()
 where id in ('${fixture.auditAId}', '${fixture.auditBId}');
