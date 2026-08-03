@@ -1,5 +1,3 @@
-using Ppki.DocxEngine;
-using Ppki.Domain;
 using Ppki.RuleEngine;
 using Xunit;
 
@@ -8,27 +6,17 @@ namespace Ppki.RuleEngine.Tests;
 public sealed class PageSizeA4ValidatorTests
 {
     [Fact]
-    public void Returns_no_finding_for_a4()
+    public void Returns_no_finding_for_a4_effective_section()
     {
-        var document = new ParsedDocument(
-            [new ParsedSection(0, 21m, 29.7m, 3m, 3m, 3m, 4m)],
-            []);
-        var rule = new RuleDefinition
-        {
-            RuleCode = "PPKI-LAY-003",
-            Domain = "LAY",
-            AppliesTo = "Semua",
-            Element = "Ukuran halaman",
-            OfficialRequirement = "Ukuran kertas A4 21,0 cm x 29,7 cm.",
-            ExpectedValuePattern = "A4",
-            Severity = RuleSeverity.Error,
-            FixMode = FixMode.Auto,
-            ValidationKey = "section.page-size-a4",
-            IsImplemented = true
-        };
+        var document = new Ppki.DocxEngine.ParsedDocument(
+            [LayoutValidatorTestData.Section(11906, 16838, 1701, 1701, 1701, 2268)], []);
+        var result = new PageSizeA4Validator().Validate(new(
+            LayoutValidatorTestData.Snapshot("section.page-size-a4"),
+            document,
+            new LayoutValidatorOptions(),
+            CancellationToken.None));
 
-        var result = new PageSizeA4Validator().Validate(document, rule);
-
-        Assert.Empty(result);
+        Assert.Equal(ValidationApplicability.Applicable, result.Applicability);
+        Assert.Empty(result.Findings);
     }
 }

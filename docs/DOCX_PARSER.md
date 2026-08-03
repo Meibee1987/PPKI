@@ -3,8 +3,10 @@
 S2-T01 defines the read-only Open XML model, S2-T02 adds effective formatting
 and provenance, and S2-T03 adds numbering semantics, structural heading
 evidence, and a document outline. S2-T04 adds deterministic semantic-section
-observation and document systematics. These parser tasks do not implement PPKI
-compliance validation, findings, rendered layout, or auto-fix.
+observation and document systematics. S2-T05 consumes this read-only model for
+the supported Wave 1 layout validators without changing parser schema `4.0`.
+The parser itself does not implement PPKI compliance, findings, rendered
+layout, or auto-fix.
 
 ## Package safety and compatibility
 
@@ -289,6 +291,10 @@ npm run test:docx-parser
 ```
 
 ## Explicitly deferred
+
+Implemented outside the parser in S2-T05: only the supported deterministic
+page-size, margin, body typography, line-spacing, first-line-indent, and
+alignment validators documented in `docs/LAYOUT_VALIDATORS.md`.
 
 Not implemented here: compliance validation against PPKI order, required or
 missing-section validation, abstract word-count validation, keyword validation,

@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Microsoft.EntityFrameworkCore;
 using Ppki.Application;
 using Ppki.DocxEngine;
@@ -11,14 +10,11 @@ public sealed class AuditRunner(
     IDbContextFactory<PpkiDbContext> dbFactory,
     IFileStorage fileStorage,
     IDocxParser docxParser,
-    IEnumerable<IRuleValidator> validators,
+    DocumentLayoutValidationEngine validationEngine,
     IResolvedRuleSetSnapshotBuilder snapshotBuilder,
     IResolvedRuleSetHasher snapshotHasher,
     IAuditTrailWriter auditTrail)
 {
-    private readonly IReadOnlyDictionary<string, IRuleValidator> _validators =
-        validators.ToDictionary(x => x.ValidationKey, StringComparer.OrdinalIgnoreCase);
-
     public async Task RunAsync(Guid auditJobId, CancellationToken cancellationToken)
     {
         try
@@ -81,32 +77,14 @@ public sealed class AuditRunner(
                 if (File.Exists(filePath)) File.Delete(filePath);
             }
 
-            var pending = new List<AuditFinding>();
-            foreach (var snapshot in snapshots)
+            var validation = validationEngine.Validate(parsed, snapshots, cancellationToken);
+            if (validation.Outcomes.Any(value => value.Result.Applicability is
+                    ValidationApplicability.Unsupported or ValidationApplicability.InvalidRuleConfiguration))
             {
-                if (!_validators.TryGetValue(snapshot.ValidationKey, out var validator)) continue;
-                var rule = RuleFromSnapshot(snapshot);
-
-                foreach (var result in validator.Validate(parsed, rule))
-                {
-                    pending.Add(new AuditFinding
-                    {
-                        AuditJobId = audit.Id,
-                        RuleId = snapshot.RuleId,
-                        Severity = snapshot.Severity,
-                        RuleCodeSnapshot = snapshot.RuleCode,
-                        FixModeSnapshot = snapshot.FixMode,
-                        SourceSectionSnapshot = rule.SourceSection,
-                        PdfPageSnapshot = rule.PdfPage,
-                        PrintedPageSnapshot = rule.PrintedPage,
-                        Message = result.Message,
-                        ActualValueJson = JsonSerializer.Serialize(result.Actual),
-                        ExpectedValueJson = JsonSerializer.Serialize(result.Expected),
-                        LocationJson = JsonSerializer.Serialize(result.Location),
-                        Confidence = result.Confidence
-                    });
-                }
+                throw new InvalidOperationException("Resolved rule validation is unsupported or invalid.");
             }
+
+            var pending = AuditFindingMapper.Map(audit.Id, validation);
 
             await CompleteAuditAsync(auditJobId, pending, cancellationToken);
         }
@@ -226,43 +204,6 @@ public sealed class AuditRunner(
         }
     }
 
-    private static RuleDefinition RuleFromSnapshot(AuditRuleSnapshot snapshot)
-    {
-        using var requirement = JsonDocument.Parse(snapshot.RequirementJson);
-        using var source = JsonDocument.Parse(snapshot.SourceReferenceJson);
-        var requirementRoot = requirement.RootElement;
-        var sourceRoot = source.RootElement;
-
-        return new RuleDefinition
-        {
-            Id = snapshot.RuleId,
-            RuleCode = snapshot.RuleCode,
-            Domain = snapshot.Domain,
-            Subdomain = snapshot.Subdomain,
-            AppliesTo = snapshot.AppliesTo,
-            Element = snapshot.Element,
-            OfficialRequirement = requirementRoot.GetProperty("officialRequirement").GetString() ?? string.Empty,
-            ExpectedValuePattern = requirementRoot.GetProperty("expectedValuePattern").GetString() ?? string.Empty,
-            Severity = snapshot.Severity,
-            FixMode = snapshot.FixMode,
-            ValidationKey = snapshot.ValidationKey,
-            IsImplemented = true,
-            SourceSection = NullableString(sourceRoot, "sourceSection"),
-            PdfPage = NullableInt(sourceRoot, "pdfPage"),
-            PrintedPage = NullableString(sourceRoot, "printedPage")
-        };
-    }
-
-    private static string? NullableString(JsonElement root, string propertyName) =>
-        root.TryGetProperty(propertyName, out var value) && value.ValueKind != JsonValueKind.Null
-            ? value.GetString()
-            : null;
-
-    private static int? NullableInt(JsonElement root, string propertyName) =>
-        root.TryGetProperty(propertyName, out var value) && value.ValueKind != JsonValueKind.Null
-            ? value.GetInt32()
-            : null;
-
     private static decimal CalculateScore(IEnumerable<AuditFinding> findings)
     {
         var violatedRules = findings
@@ -277,4 +218,5 @@ public sealed class AuditRunner(
 
         return Math.Max(0, 100 - violatedRules);
     }
+
 }
