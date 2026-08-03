@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatorVersion": "1.0.0",
+  "generatorVersion": "2.0.0",
   "fixtures": [
     {
       "fixtureId": "minimal-compliant-layout",
@@ -14,7 +14,7 @@
         "body": { "font": "Times New Roman", "fontSizePt": 12.0, "lineSpacing": 1.0, "firstLineIndentCm": 1.0, "alignment": "Both" }
       },
       "containsPersonalData": false,
-      "generatorVersion": "1.0.0"
+      "generatorVersion": "2.0.0"
     },
     {
       "fixtureId": "minimal-invalid-layout",
@@ -28,7 +28,7 @@
         "body": { "font": "Calibri", "fontSizePt": 11.0, "lineSpacing": 1.15, "firstLineIndentCm": null, "alignment": "Left" }
       },
       "containsPersonalData": false,
-      "generatorVersion": "1.0.0"
+      "generatorVersion": "2.0.0"
     },
     {
       "fixtureId": "minimal-heading-layout",
@@ -42,7 +42,37 @@
         "normalParagraphAlignment": "Both"
       },
       "containsPersonalData": false,
-      "generatorVersion": "1.0.0"
+      "generatorVersion": "2.0.0"
+    },
+    {
+      "fixtureId": "minimal-table-field-layout",
+      "filename": "minimal-table-field-layout.docx",
+      "description": "Synthetic table, numbering, field, tabs, breaks, and one-pixel drawing inventory fixture.",
+      "synthetic": true,
+      "intendedProperties": ["table", "numbering", "complex-field", "tab", "line-break", "page-break", "inline-drawing"],
+      "expectedDocumentProperties": {
+        "tableCount": 1,
+        "tableRows": 1,
+        "tableCells": 2,
+        "fieldKind": "Page",
+        "drawingContentType": "image/png"
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "2.0.0"
+    },
+    {
+      "fixtureId": "minimal-header-footer-layout",
+      "filename": "minimal-header-footer-layout.docx",
+      "description": "Synthetic paragraph-level and final sections with internal header and footer references.",
+      "synthetic": true,
+      "intendedProperties": ["paragraph-section", "final-section", "header", "footer"],
+      "expectedDocumentProperties": {
+        "sectionCount": 2,
+        "headerCount": 1,
+        "footerCount": 1
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "2.0.0"
     }
   ]
 }

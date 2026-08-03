@@ -1,6 +1,9 @@
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
+using A = DocumentFormat.OpenXml.Drawing;
+using DW = DocumentFormat.OpenXml.Drawing.Wordprocessing;
+using PIC = DocumentFormat.OpenXml.Drawing.Pictures;
 
 var outputDirectory = GetOutputDirectory(args);
 var fixtures = CreateFixtures();
@@ -38,6 +41,17 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
     var mainPart = document.AddMainDocumentPart();
     AddStyles(mainPart);
 
+    if (fixture.Kind == FixtureKind.TableField)
+    {
+        CreateTableFieldDocument(mainPart);
+        return;
+    }
+    if (fixture.Kind == FixtureKind.HeaderFooter)
+    {
+        CreateHeaderFooterDocument(mainPart, fixture);
+        return;
+    }
+
     var body = new Body();
     foreach (var paragraph in fixture.Paragraphs)
     {
@@ -60,6 +74,115 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
     mainPart.Document = new Document(body);
     mainPart.Document.Save();
 }
+
+static void CreateTableFieldDocument(MainDocumentPart mainPart)
+{
+    AddNumbering(mainPart);
+    var imagePart = mainPart.AddImagePart(ImagePartType.Png);
+    using (var image = new MemoryStream(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")))
+    {
+        imagePart.FeedData(image);
+    }
+    var imageRelationshipId = mainPart.GetIdOfPart(imagePart);
+    var numbered = CreateParagraph(new ParagraphDefinition("Daftar sintetis", null, JustificationValues.Left, 240U, null), BaselineFixture());
+    numbered.ParagraphProperties!.Append(new NumberingProperties(
+        new NumberingLevelReference { Val = 0 },
+        new NumberingId { Val = 1 }));
+    numbered.Append(new Run(
+        new Text("A"),
+        new TabChar(),
+        new Text("B"),
+        new Break { Type = BreakValues.TextWrapping },
+        new Break { Type = BreakValues.Page },
+        new FootnoteReference { Id = 1 },
+        new EndnoteReference { Id = 1 },
+        new CommentReference { Id = "1" },
+        CreateDrawing(imageRelationshipId)));
+    var fieldParagraph = new Paragraph(
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Begin }),
+        new Run(new FieldCode(" PAGE ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Separate }),
+        new Run(new Text("1")),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.End }));
+    var table = new Table(
+        new TableProperties(
+            new TableStyle { Val = "SyntheticTable" },
+            new TableWidth { Width = "5000", Type = TableWidthUnitValues.Dxa }),
+        new TableGrid(new GridColumn { Width = "2500" }, new GridColumn { Width = "2500" }),
+        new TableRow(
+            new TableCell(
+                new TableCellProperties(new TableCellWidth { Width = "2500", Type = TableWidthUnitValues.Dxa }),
+                new Paragraph(new Run(new Text("Sel satu sintetis")))),
+            new TableCell(
+                new TableCellProperties(new TableCellWidth { Width = "2500", Type = TableWidthUnitValues.Dxa }),
+                new Paragraph(new Run(new Text("Sel dua sintetis"))))));
+    var body = new Body(numbered, fieldParagraph, table, StandardSection());
+    mainPart.Document = new Document(body);
+    mainPart.Document.Save();
+}
+
+static void CreateHeaderFooterDocument(MainDocumentPart mainPart, FixtureDefinition fixture)
+{
+    var headerPart = mainPart.AddNewPart<HeaderPart>();
+    headerPart.Header = new Header(new Paragraph(new Run(new Text("Header sintetis"))));
+    headerPart.Header.Save();
+    var footerPart = mainPart.AddNewPart<FooterPart>();
+    footerPart.Footer = new Footer(new Paragraph(new Run(new Text("Footer sintetis"))));
+    footerPart.Footer.Save();
+    var headerId = mainPart.GetIdOfPart(headerPart);
+    var footerId = mainPart.GetIdOfPart(footerPart);
+    var firstSection = StandardSection(
+        new HeaderReference { Type = HeaderFooterValues.Default, Id = headerId });
+    var firstParagraph = CreateParagraph(new ParagraphDefinition("Bagian pertama sintetis", null, JustificationValues.Left, 240U, null), fixture);
+    firstParagraph.ParagraphProperties!.Append(firstSection);
+    var finalSection = StandardSection(
+        new FooterReference { Type = HeaderFooterValues.Default, Id = footerId });
+    var body = new Body(
+        firstParagraph,
+        CreateParagraph(new ParagraphDefinition("Bagian kedua sintetis", null, JustificationValues.Left, 240U, null), fixture),
+        finalSection);
+    mainPart.Document = new Document(body);
+    mainPart.Document.Save();
+}
+
+static SectionProperties StandardSection(params OpenXmlElement[] references) => new(
+    references.Concat<OpenXmlElement>([
+        new PageSize { Width = 11906U, Height = 16838U },
+        new PageMargin { Top = 1701, Right = 1701U, Bottom = 1701, Left = 2268U, Header = 720U, Footer = 720U, Gutter = 0U },
+        new Columns { ColumnCount = 1, Space = "720" },
+        new PageNumberType { Start = 1 }
+    ]));
+
+static Drawing CreateDrawing(string relationshipId) => new(
+    new DW.Inline(
+        new DW.Extent { Cx = 9525L, Cy = 9525L },
+        new DW.DocProperties { Id = 1U, Name = "Synthetic image" },
+        new A.Graphic(
+            new A.GraphicData(
+                new PIC.Picture(
+                    new PIC.NonVisualPictureProperties(
+                        new PIC.NonVisualDrawingProperties { Id = 1U, Name = "synthetic.png" },
+                        new PIC.NonVisualPictureDrawingProperties()),
+                    new PIC.BlipFill(new A.Blip { Embed = relationshipId }),
+                    new PIC.ShapeProperties()))
+            { Uri = "http://schemas.openxmlformats.org/drawingml/2006/picture" })));
+
+static void AddNumbering(MainDocumentPart mainPart)
+{
+    var part = mainPart.AddNewPart<NumberingDefinitionsPart>();
+    part.Numbering = new Numbering(
+        new AbstractNum(
+            new Level(
+                new StartNumberingValue { Val = 1 },
+                new NumberingFormat { Val = NumberFormatValues.Decimal },
+                new LevelText { Val = "%1." }) { LevelIndex = 0 }) { AbstractNumberId = 1 },
+        new NumberingInstance(new AbstractNumId { Val = 1 }) { NumberID = 1 });
+    part.Numbering.Save();
+}
+
+static FixtureDefinition BaselineFixture() => new(
+    "", 11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+    "Times New Roman", 24U, [], FixtureKind.Basic);
 
 static Paragraph CreateParagraph(ParagraphDefinition definition, FixtureDefinition fixture)
 {
@@ -115,7 +238,7 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         2268U,
         "Times New Roman",
         24U,
-        [new ParagraphDefinition("Paragraf sintetis untuk pengujian parser.", null, JustificationValues.Both, 240U, 567U)]),
+        [new ParagraphDefinition("Paragraf sintetis untuk pengujian parser.", null, JustificationValues.Both, 240U, 567U)], FixtureKind.Basic),
     new(
         "minimal-invalid-layout.docx",
         12240U,
@@ -126,7 +249,7 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         1440U,
         "Calibri",
         22U,
-        [new ParagraphDefinition("Paragraf sintetis untuk pengujian parser.", null, JustificationValues.Left, 276U, null)]),
+        [new ParagraphDefinition("Paragraf sintetis untuk pengujian parser.", null, JustificationValues.Left, 276U, null)], FixtureKind.Basic),
     new(
         "minimal-heading-layout.docx",
         11906U,
@@ -141,7 +264,15 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
             new ParagraphDefinition("BAB I DOKUMEN SINTETIS", "Heading1", JustificationValues.Center, 240U, null),
             new ParagraphDefinition("1.1 Subbab Sintetis", "Heading2", JustificationValues.Left, 240U, null),
             new ParagraphDefinition("Paragraf sintetis untuk pengujian parser.", null, JustificationValues.Both, 240U, 567U)
-        ])
+        ], FixtureKind.Basic),
+    new(
+        "minimal-table-field-layout.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.TableField),
+    new(
+        "minimal-header-footer-layout.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.HeaderFooter)
 ];
 
 internal sealed record FixtureDefinition(
@@ -154,7 +285,8 @@ internal sealed record FixtureDefinition(
     uint MarginLeftTwips,
     string FontName,
     uint FontSizeHalfPoints,
-    IReadOnlyList<ParagraphDefinition> Paragraphs);
+    IReadOnlyList<ParagraphDefinition> Paragraphs,
+    FixtureKind Kind);
 
 internal sealed record ParagraphDefinition(
     string Text,
@@ -162,3 +294,5 @@ internal sealed record ParagraphDefinition(
     JustificationValues Alignment,
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
+
+internal enum FixtureKind { Basic, TableField, HeaderFooter }

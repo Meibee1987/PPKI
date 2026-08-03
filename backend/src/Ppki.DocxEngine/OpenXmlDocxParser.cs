@@ -1,3 +1,7 @@
+using System.Globalization;
+using System.IO.Compression;
+using System.Xml;
+using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 
@@ -5,136 +9,972 @@ namespace Ppki.DocxEngine;
 
 public sealed class OpenXmlDocxParser : IDocxParser
 {
+    public const string SchemaVersion = "1.0";
+    private const string RelationshipsNamespace = "http://schemas.openxmlformats.org/officeDocument/2006/relationships";
+    private const string WordprocessingDrawingNamespace = "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing";
+    private const string DrawingNamespace = "http://schemas.openxmlformats.org/drawingml/2006/main";
+
+    private readonly DocxParserOptions _options;
+
+    public OpenXmlDocxParser() : this(new DocxParserOptions()) { }
+
+    public OpenXmlDocxParser(DocxParserOptions options)
+    {
+        options.Validate();
+        _options = options;
+    }
+
     public Task<ParsedDocument> ParseAsync(string filePath, CancellationToken cancellationToken)
     {
+        ArgumentException.ThrowIfNullOrWhiteSpace(filePath);
         cancellationToken.ThrowIfCancellationRequested();
 
-        using var document = WordprocessingDocument.Open(filePath, false);
-        var mainPart = document.MainDocumentPart
-            ?? throw new InvalidDataException("DOCX does not contain a MainDocumentPart.");
-        var body = mainPart.Document?.Body
-            ?? throw new InvalidDataException("The DOCX file does not contain a document body.");
+        var fileInfo = new FileInfo(filePath);
+        if (!fileInfo.Exists) throw new DocxParserException("package-not-found", "DOCX package was not found.");
+        if (fileInfo.Length > _options.MaximumInputBytes) throw Limit("input-bytes");
 
-        var styles = mainPart.StyleDefinitionsPart?.Styles;
-        var defaults = ResolveDefaults(styles);
-        var sections = ParseSections(body);
-        var paragraphs = ParseParagraphs(body, styles, defaults);
+        try
+        {
+            PreflightPackage(filePath, cancellationToken);
+            using var document = WordprocessingDocument.Open(filePath, false, new OpenSettings
+            {
+                AutoSave = false
+            });
+            cancellationToken.ThrowIfCancellationRequested();
 
-        return Task.FromResult(new ParsedDocument(sections, paragraphs));
+            var mainPart = document.MainDocumentPart
+                ?? throw new DocxParserException("main-part-missing", "DOCX package does not contain a main document part.");
+            var body = mainPart.Document?.Body
+                ?? throw new DocxParserException("body-missing", "DOCX package does not contain a document body.");
+
+            var context = new ParserContext(_options, cancellationToken);
+            var relationshipCounts = CountRelationships(document, context);
+            var styles = ParseStyles(mainPart);
+            var numbering = ParseNumbering(mainPart);
+            var sections = ParseSections(body, mainPart, context);
+            var bodyResult = ParseBody(body, mainPart, styles, numbering, context);
+            var headerFooters = ParseHeaderFooters(mainPart, sections, styles, numbering, context);
+
+            var counts = new ParsedAggregateCounts(
+                sections.Count,
+                bodyResult.BodyElements.Count,
+                context.ParagraphCount,
+                context.RunCount,
+                context.TableCount,
+                context.Drawings.Count,
+                context.Fields.Count,
+                headerFooters.Count,
+                relationshipCounts.Total,
+                relationshipCounts.External,
+                context.FootnoteReferenceCount,
+                context.EndnoteReferenceCount,
+                context.CommentReferenceCount);
+
+            return Task.FromResult(new ParsedDocument(
+                sections,
+                bodyResult.Paragraphs,
+                SchemaVersion,
+                PackageType(document.DocumentType),
+                bodyResult.BodyElements,
+                context.Tables.ToArray(),
+                context.Drawings.ToArray(),
+                context.Fields.ToArray(),
+                headerFooters,
+                styles.Catalog,
+                numbering.Catalog,
+                context.Diagnostics.Items,
+                counts));
+        }
+        catch (DocxParserException)
+        {
+            throw;
+        }
+        catch (OperationCanceledException)
+        {
+            throw;
+        }
+        catch (Exception exception) when (exception is IOException
+            or FileFormatException
+            or UnauthorizedAccessException
+            or OpenXmlPackageException
+            or XmlException
+            or InvalidDataException)
+        {
+            throw new DocxParserException("package-invalid", "DOCX package is corrupt or unsupported.");
+        }
     }
 
-    private static IReadOnlyList<ParsedSection> ParseSections(Body body)
+    private void PreflightPackage(string filePath, CancellationToken cancellationToken)
     {
-        var properties = body.Descendants<SectionProperties>().ToList();
-        if (properties.Count == 0)
+        using var archive = ZipFile.OpenRead(filePath);
+        long expandedBytes = 0;
+        var entries = 0;
+        foreach (var entry in archive.Entries)
         {
-            return [new ParsedSection(0, null, null, null, null, null, null)];
+            cancellationToken.ThrowIfCancellationRequested();
+            entries++;
+            if (entries > _options.MaximumPackageEntries) throw Limit("package-entries");
+            try
+            {
+                expandedBytes = checked(expandedBytes + entry.Length);
+            }
+            catch (OverflowException)
+            {
+                throw Limit("expanded-package-bytes");
+            }
+            if (expandedBytes > _options.MaximumExpandedPackageBytes) throw Limit("expanded-package-bytes");
+        }
+    }
+
+    private static ParsedPackageType PackageType(WordprocessingDocumentType type) => type switch
+    {
+        WordprocessingDocumentType.Template => ParsedPackageType.Template,
+        WordprocessingDocumentType.MacroEnabledDocument => ParsedPackageType.MacroEnabledDocument,
+        WordprocessingDocumentType.MacroEnabledTemplate => ParsedPackageType.MacroEnabledTemplate,
+        _ => ParsedPackageType.Document
+    };
+
+    private RelationshipCounts CountRelationships(WordprocessingDocument document, ParserContext context)
+    {
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var queue = new Queue<OpenXmlPart>();
+        foreach (var pair in document.Parts.OrderBy(item => item.OpenXmlPart.Uri.OriginalString, StringComparer.Ordinal))
+        {
+            queue.Enqueue(pair.OpenXmlPart);
         }
 
-        return properties.Select((section, index) =>
+        var total = 0;
+        var external = document.ExternalRelationships.Count();
+        total += document.Parts.Count() + external;
+        while (queue.Count > 0)
         {
-            var pageSize = section.GetFirstChild<PageSize>();
-            var margin = section.GetFirstChild<PageMargin>();
-            return new ParsedSection(
-                index,
-                TwipsToCm(pageSize?.Width?.Value),
-                TwipsToCm(pageSize?.Height?.Value),
-                TwipsToCm(margin?.Top?.Value),
-                TwipsToCm(margin?.Right?.Value),
-                TwipsToCm(margin?.Bottom?.Value),
-                TwipsToCm(margin?.Left?.Value));
-        }).ToList();
+            context.CheckCancellation();
+            var part = queue.Dequeue();
+            if (!visited.Add(part.Uri.OriginalString)) continue;
+            var internalParts = part.Parts.OrderBy(item => item.OpenXmlPart.Uri.OriginalString, StringComparer.Ordinal).ToArray();
+            var externalParts = part.ExternalRelationships.ToArray();
+            total += internalParts.Length + externalParts.Length;
+            external += externalParts.Length;
+            foreach (var pair in internalParts) queue.Enqueue(pair.OpenXmlPart);
+            if (total > _options.MaximumRelationships) throw Limit("relationships");
+        }
+
+        if (external > 0)
+        {
+            context.Diagnostics.Add("external-relationship-ignored", ParserDiagnosticSeverity.Warning, "parser.external_relationship_ignored",
+                metadata: [new("count", external.ToString(CultureInfo.InvariantCulture))]);
+        }
+        return new(total, external);
     }
 
-    private static IReadOnlyList<ParsedParagraph> ParseParagraphs(
-        Body body,
-        Styles? styles,
-        TextDefaults defaults)
+    private static StylesContext ParseStyles(MainDocumentPart mainPart)
     {
-        return body.Descendants<Paragraph>().Select((paragraph, index) =>
-        {
-            var text = paragraph.InnerText.Trim();
-            var styleId = paragraph.ParagraphProperties?.ParagraphStyleId?.Val?.Value;
-            var style = styles?.Elements<Style>()
-                .FirstOrDefault(x => string.Equals(x.StyleId?.Value, styleId, StringComparison.OrdinalIgnoreCase));
-            var firstRunProperties = paragraph.Elements<Run>()
-                .Select(x => x.RunProperties)
-                .FirstOrDefault(x => x is not null);
-
-            var font = FirstNonEmpty(
-                firstRunProperties?.RunFonts?.Ascii?.Value,
-                firstRunProperties?.RunFonts?.HighAnsi?.Value,
-                style?.StyleRunProperties?.RunFonts?.Ascii?.Value,
-                style?.StyleRunProperties?.RunFonts?.HighAnsi?.Value,
-                defaults.FontName);
-
-            var fontSize = HalfPointsToPoints(FirstNonEmpty(
-                firstRunProperties?.FontSize?.Val?.Value,
-                style?.StyleRunProperties?.FontSize?.Val?.Value,
-                defaults.FontSizeHalfPoints));
-
-            var alignment = paragraph.ParagraphProperties?.Justification?.Val?.InnerText
-                ?? style?.StyleParagraphProperties?.Justification?.Val?.InnerText
-                ?? "Left";
-
-            var spacing = paragraph.ParagraphProperties?.SpacingBetweenLines
-                ?? style?.StyleParagraphProperties?.SpacingBetweenLines;
-            var lineSpacing = ResolveLineSpacing(spacing);
-
-            var indentation = paragraph.ParagraphProperties?.Indentation
-                ?? style?.StyleParagraphProperties?.Indentation;
-            var firstLineIndent = TwipsStringToCm(indentation?.FirstLine?.Value);
-
-            return new ParsedParagraph(
-                index,
-                text,
-                styleId,
-                styleId?.StartsWith("Heading", StringComparison.OrdinalIgnoreCase) == true,
-                paragraph.Ancestors<Table>().Any(),
-                font,
-                fontSize,
-                alignment,
-                lineSpacing,
-                firstLineIndent);
-        }).ToList();
+        var styles = mainPart.StyleDefinitionsPart?.Styles;
+        var catalog = styles?.Elements<Style>()
+            .Select(style => new ParsedStyleReference(
+                style.StyleId?.Value ?? string.Empty,
+                style.StyleName?.Val?.Value,
+                Attribute(style, "type"),
+                style.BasedOn?.Val?.Value,
+                OnOffAttribute(style, "default") == true,
+                OnOffAttribute(style, "customStyle") == true))
+            .Where(style => style.StyleId.Length > 0)
+            .OrderBy(style => style.StyleId, StringComparer.Ordinal)
+            .ToArray() ?? [];
+        var lookup = styles?.Elements<Style>()
+            .Where(style => !string.IsNullOrEmpty(style.StyleId?.Value))
+            .ToDictionary(style => style.StyleId!.Value!, StringComparer.OrdinalIgnoreCase)
+            ?? new Dictionary<string, Style>(StringComparer.OrdinalIgnoreCase);
+        var defaults = styles?.DocDefaults?.RunPropertiesDefault?.RunPropertiesBaseStyle;
+        return new(styles, lookup, catalog, new TextDefaults(
+            FirstNonEmpty(defaults?.RunFonts?.Ascii?.Value, defaults?.RunFonts?.HighAnsi?.Value),
+            ParseInt(defaults?.FontSize?.Val?.Value)));
     }
 
-    private static TextDefaults ResolveDefaults(Styles? styles)
+    private static NumberingContext ParseNumbering(MainDocumentPart mainPart)
     {
-        var runDefaults = styles?.DocDefaults?.RunPropertiesDefault?.RunPropertiesBaseStyle;
-        return new TextDefaults(
-            FirstNonEmpty(runDefaults?.RunFonts?.Ascii?.Value, runDefaults?.RunFonts?.HighAnsi?.Value),
-            runDefaults?.FontSize?.Val?.Value);
+        var numbering = mainPart.NumberingDefinitionsPart?.Numbering;
+        if (numbering is null) return new([], new Dictionary<int, NumberingDefinition>());
+
+        var abstracts = numbering.Elements<AbstractNum>()
+            .Where(item => item.AbstractNumberId?.Value is not null)
+            .ToDictionary(item => checked((int)item.AbstractNumberId!.Value!), item => item);
+        var definitions = new Dictionary<int, NumberingDefinition>();
+        foreach (var instance in numbering.Elements<NumberingInstance>().OrderBy(item => item.NumberID?.Value ?? int.MaxValue))
+        {
+            if (instance.NumberID?.Value is not int numberId) continue;
+            var abstractId = instance.AbstractNumId?.Val?.Value;
+            definitions[numberId] = new(numberId, abstractId, abstractId is not null && abstracts.TryGetValue(abstractId.Value, out var value) ? value : null);
+        }
+
+        var catalog = definitions.Values.OrderBy(item => item.NumberingId).Select(item =>
+        {
+            var level = item.Abstract?.Elements<Level>().OrderBy(value => value.LevelIndex?.Value ?? int.MaxValue).FirstOrDefault();
+            return new ParsedNumberingReference(
+                item.NumberingId,
+                null,
+                item.AbstractNumberingId,
+                Attribute(level?.NumberingFormat, "val"),
+                level?.LevelText?.Val?.Value);
+        }).ToArray();
+        return new(catalog, definitions);
     }
 
-    private static decimal? ResolveLineSpacing(SpacingBetweenLines? spacing)
+    private static IReadOnlyList<ParsedSection> ParseSections(Body body, MainDocumentPart mainPart, ParserContext context)
     {
-        var line = spacing?.Line?.Value;
-        if (!decimal.TryParse(line, out var value))
+        var sections = new List<ParsedSection>();
+        var bodyIndex = 0;
+        var paragraphIndex = 0;
+        foreach (var element in body.Elements())
         {
+            context.CheckCancellation();
+            if (element is Paragraph paragraph)
+            {
+                var sectionProperties = paragraph.ParagraphProperties?.SectionProperties;
+                if (sectionProperties is not null)
+                {
+                    sections.Add(ParseSection(sectionProperties, sections.Count, bodyIndex, paragraphIndex, false, mainPart, context));
+                }
+                paragraphIndex += paragraph.Descendants<Paragraph>().Count() + 1;
+            }
+            else if (element is Table table)
+            {
+                paragraphIndex += table.Descendants<Paragraph>().Count();
+            }
+            bodyIndex++;
+        }
+
+        var finalProperties = body.Elements<SectionProperties>().LastOrDefault();
+        if (finalProperties is not null)
+        {
+            var index = Array.FindLastIndex(body.Elements().ToArray(), element => ReferenceEquals(element, finalProperties));
+            sections.Add(ParseSection(finalProperties, sections.Count, index < 0 ? body.ChildElements.Count - 1 : index, null, true, mainPart, context));
+        }
+
+        if (sections.Count == 0)
+        {
+            var location = MainLocation(DocumentElementKind.Section, sectionIndex: 0);
+            context.Diagnostics.Add("section-properties-missing", ParserDiagnosticSeverity.Information, "parser.section_properties_missing", location);
+            sections.Add(new ParsedSection(0, null, null, null, null, null, null, location));
+        }
+        return sections.ToArray();
+    }
+
+    private static ParsedSection ParseSection(
+        SectionProperties properties,
+        int sectionIndex,
+        int bodyElementIndex,
+        int? paragraphIndex,
+        bool isBodyLevel,
+        MainDocumentPart mainPart,
+        ParserContext context)
+    {
+        var location = MainLocation(DocumentElementKind.Section, sectionIndex, bodyElementIndex, paragraphIndex);
+        var pageSize = properties.GetFirstChild<PageSize>();
+        var pageMargin = properties.GetFirstChild<PageMargin>();
+        var columns = properties.GetFirstChild<Columns>();
+        var pageNumber = properties.GetFirstChild<PageNumberType>();
+        var width = Numeric(pageSize, "w", context, location);
+        var height = Numeric(pageSize, "h", context, location);
+        var top = Numeric(pageMargin, "top", context, location);
+        var right = Numeric(pageMargin, "right", context, location);
+        var bottom = Numeric(pageMargin, "bottom", context, location);
+        var left = Numeric(pageMargin, "left", context, location);
+        var references = properties.ChildElements
+            .Where(item => item is HeaderReference or FooterReference)
+            .Select(item => HeaderFooterReference(item, mainPart, context, location))
+            .Where(item => item is not null)
+            .Cast<ParsedHeaderFooterReference>()
+            .ToArray();
+
+        return new ParsedSection(
+            sectionIndex,
+            TwipsToCm(width),
+            TwipsToCm(height),
+            TwipsToCm(top),
+            TwipsToCm(right),
+            TwipsToCm(bottom),
+            TwipsToCm(left),
+            location,
+            width,
+            height,
+            PageOrientation(Attribute(pageSize, "orient"), width, height),
+            top,
+            right,
+            bottom,
+            left,
+            Numeric(pageMargin, "header", context, location),
+            Numeric(pageMargin, "footer", context, location),
+            Numeric(pageMargin, "gutter", context, location),
+            Attribute(properties.GetFirstChild<SectionType>(), "val"),
+            NumericInt(columns, "num", context, location),
+            Numeric(columns, "space", context, location),
+            NumericInt(pageNumber, "start", context, location),
+            references,
+            isBodyLevel);
+    }
+
+    private static ParsedHeaderFooterReference? HeaderFooterReference(
+        OpenXmlElement reference,
+        MainDocumentPart mainPart,
+        ParserContext context,
+        DocumentElementLocation location)
+    {
+        var relationshipId = Attribute(reference, "id", RelationshipsNamespace);
+        if (string.IsNullOrWhiteSpace(relationshipId))
+        {
+            context.Diagnostics.Add("relationship-id-missing", ParserDiagnosticSeverity.Warning, "parser.relationship_id_missing", location);
             return null;
         }
+        string? partUri = null;
+        try
+        {
+            partUri = mainPart.GetPartById(relationshipId).Uri.OriginalString;
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            context.Diagnostics.Add("relationship-broken", ParserDiagnosticSeverity.Warning, "parser.relationship_broken", location);
+        }
+        return new(HeaderFooterType(Attribute(reference, "type")), relationshipId, partUri);
+    }
 
-        var rule = spacing?.LineRule?.Value;
-        return rule is null || rule == LineSpacingRuleValues.Auto
-            ? Math.Round(value / 240m, 2)
+    private static BodyResult ParseBody(
+        Body body,
+        MainDocumentPart mainPart,
+        StylesContext styles,
+        NumberingContext numbering,
+        ParserContext context)
+    {
+        var paragraphs = new List<ParsedParagraph>();
+        var bodyElements = new List<ParsedBodyElement>();
+        var sectionIndex = 0;
+        var bodyIndex = 0;
+        foreach (var element in body.Elements())
+        {
+            context.CheckCancellation();
+            switch (element)
+            {
+                case Paragraph paragraph:
+                {
+                    var parsed = ParseParagraph(paragraph, mainPart, styles, numbering, context,
+                        MainLocation(DocumentElementKind.Paragraph, sectionIndex, bodyIndex, context.ParagraphCount), false);
+                    paragraphs.Add(parsed);
+                    bodyElements.Add(new(bodyIndex, ParsedBodyElementKind.Paragraph, parsed.Location!, parsed.Index));
+                    if (paragraph.ParagraphProperties?.SectionProperties is not null) sectionIndex++;
+                    break;
+                }
+                case Table table:
+                {
+                    var parsedTable = ParseTable(table, mainPart, styles, numbering, context, sectionIndex, bodyIndex, paragraphs);
+                    bodyElements.Add(new(bodyIndex, ParsedBodyElementKind.Table, parsedTable.Location, TableIndex: parsedTable.Index));
+                    break;
+                }
+                case SectionProperties:
+                    bodyElements.Add(new(bodyIndex, ParsedBodyElementKind.SectionProperties,
+                        MainLocation(DocumentElementKind.Section, sectionIndex, bodyIndex), SectionIndex: sectionIndex));
+                    break;
+                default:
+                    bodyElements.Add(new(bodyIndex, ParsedBodyElementKind.Unsupported,
+                        MainLocation(DocumentElementKind.Unknown, sectionIndex, bodyIndex)));
+                    context.Diagnostics.Add("body-element-unsupported", ParserDiagnosticSeverity.Warning, "parser.body_element_unsupported",
+                        MainLocation(DocumentElementKind.Unknown, sectionIndex, bodyIndex), [new("kind", element.LocalName)]);
+                    break;
+            }
+            bodyIndex++;
+        }
+        return new(paragraphs.ToArray(), bodyElements.ToArray());
+    }
+
+    private static ParsedTable ParseTable(
+        Table table,
+        MainDocumentPart mainPart,
+        StylesContext styles,
+        NumberingContext numbering,
+        ParserContext context,
+        int sectionIndex,
+        int bodyIndex,
+        ICollection<ParsedParagraph> bodyParagraphs)
+    {
+        var tableIndex = context.NextTable();
+        var location = MainLocation(DocumentElementKind.Table, sectionIndex, bodyIndex, tableIndex: tableIndex);
+        var rows = new List<ParsedTableRow>();
+        var rowIndex = 0;
+        foreach (var row in table.Elements<TableRow>())
+        {
+            var rowLocation = location with { RowIndex = rowIndex, ElementKind = DocumentElementKind.TableRow };
+            var cells = new List<ParsedTableCell>();
+            var cellIndex = 0;
+            foreach (var cell in row.Elements<TableCell>())
+            {
+                var cellLocation = rowLocation with { CellIndex = cellIndex, ElementKind = DocumentElementKind.TableCell };
+                var paragraphIndexes = new List<int>();
+                foreach (var paragraph in cell.Elements<Paragraph>())
+                {
+                    var paragraphLocation = cellLocation with { ParagraphIndex = context.ParagraphCount, ElementKind = DocumentElementKind.Paragraph };
+                    var parsed = ParseParagraph(paragraph, mainPart, styles, numbering, context, paragraphLocation, true);
+                    paragraphIndexes.Add(parsed.Index);
+                    bodyParagraphs.Add(parsed);
+                }
+                if (cell.Descendants<Table>().Any())
+                {
+                    context.Diagnostics.Add("nested-table-inventory-limited", ParserDiagnosticSeverity.Warning, "parser.nested_table_inventory_limited", cellLocation);
+                }
+                var width = cell.TableCellProperties?.TableCellWidth;
+                cells.Add(new(cellIndex, cellLocation,
+                    Numeric(width, "w", context, cellLocation), Attribute(width, "type"), paragraphIndexes.ToArray()));
+                cellIndex++;
+            }
+            rows.Add(new(rowIndex, rowLocation, cells.ToArray()));
+            rowIndex++;
+        }
+        var properties = table.TableProperties;
+        var tableWidth = properties?.TableWidth;
+        var parsedTable = new ParsedTable(
+            tableIndex,
+            location,
+            properties?.TableStyle?.Val?.Value,
+            Numeric(tableWidth, "w", context, location),
+            Attribute(tableWidth, "type"),
+            table.TableGrid?.Elements<GridColumn>().Select(column => ParseLong(column.Width?.Value)).ToArray() ?? [],
+            rows.ToArray());
+        context.Tables.Add(parsedTable);
+        return parsedTable;
+    }
+
+    private static ParsedParagraph ParseParagraph(
+        Paragraph paragraph,
+        MainDocumentPart mainPart,
+        StylesContext styles,
+        NumberingContext numbering,
+        ParserContext context,
+        DocumentElementLocation location,
+        bool isInTable)
+    {
+        var paragraphIndex = context.NextParagraph();
+        location = location with { ParagraphIndex = paragraphIndex };
+        var properties = paragraph.ParagraphProperties;
+        var styleId = properties?.ParagraphStyleId?.Val?.Value;
+        styles.Lookup.TryGetValue(styleId ?? string.Empty, out var style);
+        var numberingReference = ParagraphNumbering(properties, numbering);
+        var fieldStartIndex = context.Fields.Count;
+        ParseSimpleFields(paragraph, context, location);
+        ParseComplexFields(paragraph, context, location);
+        var paragraphFieldIndexes = Enumerable.Range(fieldStartIndex, context.Fields.Count - fieldStartIndex).ToArray();
+        var runs = new List<ParsedRun>();
+        var runIndex = 0;
+        foreach (var run in paragraph.Descendants<Run>())
+        {
+            var runLocation = location with { RunIndex = runIndex, ElementKind = DocumentElementKind.Run };
+            runs.Add(ParseRun(run, mainPart, context, runLocation, runIndex, paragraphFieldIndexes));
+            runIndex++;
+        }
+
+        var directAlignment = Alignment(Attribute(properties?.Justification, "val"));
+        var effectiveAlignment = directAlignment ?? Alignment(Attribute(style?.StyleParagraphProperties?.Justification, "val"));
+        var directSpacing = properties?.SpacingBetweenLines;
+        var effectiveSpacing = directSpacing ?? style?.StyleParagraphProperties?.SpacingBetweenLines;
+        var directIndentation = properties?.Indentation;
+        var effectiveIndentation = directIndentation ?? style?.StyleParagraphProperties?.Indentation;
+        var firstRunProperties = paragraph.Descendants<Run>().Select(run => run.RunProperties).FirstOrDefault(value => value is not null);
+        var font = FirstNonEmpty(
+            firstRunProperties?.RunFonts?.Ascii?.Value,
+            firstRunProperties?.RunFonts?.HighAnsi?.Value,
+            style?.StyleRunProperties?.RunFonts?.Ascii?.Value,
+            style?.StyleRunProperties?.RunFonts?.HighAnsi?.Value,
+            styles.Defaults.FontName);
+        var fontSizeHalfPoints = FirstNonNull(
+            ParseInt(firstRunProperties?.FontSize?.Val?.Value),
+            ParseInt(style?.StyleRunProperties?.FontSize?.Val?.Value),
+            styles.Defaults.FontSizeHalfPoints);
+
+        var text = string.Concat(runs.Where(run => !run.IsDeleted).SelectMany(run => run.TextSegments));
+        var directLine = Numeric(directSpacing, "line", context, location);
+        var directFirstLine = Numeric(directIndentation, "firstLine", context, location);
+        var paragraphStyle = styleId is null ? null : new ParsedStyleReference(
+            styleId,
+            style?.StyleName?.Val?.Value,
+            style is null ? null : Attribute(style, "type"),
+            style?.BasedOn?.Val?.Value,
+            style is not null && OnOffAttribute(style, "default") == true,
+            style is not null && OnOffAttribute(style, "customStyle") == true);
+
+        context.FootnoteReferenceCount += paragraph.Descendants<FootnoteReference>().Count();
+        context.EndnoteReferenceCount += paragraph.Descendants<EndnoteReference>().Count();
+        context.CommentReferenceCount += paragraph.Descendants<CommentReference>().Count();
+        var hasTrackedChanges = paragraph.Descendants<InsertedRun>().Any() || paragraph.Descendants<DeletedRun>().Any();
+        if (hasTrackedChanges)
+        {
+            context.Diagnostics.Add("tracked-changes-present", ParserDiagnosticSeverity.Warning, "parser.tracked_changes_present", location);
+        }
+
+        return new ParsedParagraph(
+            paragraphIndex,
+            text,
+            styleId,
+            styleId?.StartsWith("Heading", StringComparison.OrdinalIgnoreCase) == true,
+            isInTable,
+            font,
+            fontSizeHalfPoints is null ? null : fontSizeHalfPoints.Value / 2m,
+            AlignmentName(effectiveAlignment),
+            LineSpacingMultiple(effectiveSpacing),
+            TwipsToCm(Numeric(effectiveIndentation, "firstLine", context, location)),
+            location,
+            paragraphStyle,
+            numberingReference,
+            directAlignment,
+            Numeric(directIndentation, "left", context, location),
+            Numeric(directIndentation, "right", context, location),
+            directFirstLine,
+            Numeric(directIndentation, "hanging", context, location),
+            Numeric(directSpacing, "before", context, location),
+            Numeric(directSpacing, "after", context, location),
+            directLine,
+            Attribute(directSpacing, "lineRule"),
+            OnOff(properties?.KeepNext),
+            OnOff(properties?.KeepLines),
+            OnOff(properties?.PageBreakBefore),
+            NumericInt(properties?.OutlineLevel, "val", context, location),
+            runs.ToArray(),
+            paragraph.Descendants<TabChar>().Any(),
+            paragraph.Descendants<Break>().Any() || paragraph.Descendants<CarriageReturn>().Any(),
+            paragraph.Descendants<FieldChar>().Any() || paragraph.Descendants<SimpleField>().Any(),
+            paragraph.Descendants<Drawing>().Any(),
+            paragraph.Descendants<BookmarkStart>().Any(),
+            paragraph.Descendants<Hyperlink>().Any(),
+            hasTrackedChanges);
+    }
+
+    private static ParsedRun ParseRun(
+        Run run,
+        MainDocumentPart mainPart,
+        ParserContext context,
+        DocumentElementLocation location,
+        int runIndex,
+        IReadOnlyList<int> paragraphFieldIndexes)
+    {
+        context.NextRun();
+        var segments = new List<string>();
+        var breaks = new List<ParsedBreakKind>();
+        var drawingIndexes = new List<int>();
+        var fieldIndexes = new List<int>();
+        var tabCount = 0;
+        foreach (var child in run.ChildElements)
+        {
+            switch (child)
+            {
+                case Text text:
+                    segments.Add(text.Text);
+                    break;
+                case DeletedText deletedText:
+                    segments.Add(deletedText.Text);
+                    break;
+                case TabChar:
+                    tabCount++;
+                    segments.Add("\t");
+                    break;
+                case Break lineBreak:
+                    var kind = BreakKind(Attribute(lineBreak, "type"));
+                    breaks.Add(kind);
+                    segments.Add(kind == ParsedBreakKind.Page ? "\f" : "\n");
+                    break;
+                case CarriageReturn:
+                    breaks.Add(ParsedBreakKind.Line);
+                    segments.Add("\n");
+                    break;
+                case Drawing drawing:
+                    drawingIndexes.Add(ParseDrawing(drawing, mainPart, context, location));
+                    break;
+                case FieldChar:
+                case FieldCode:
+                    break;
+            }
+        }
+
+        if ((run.Descendants<FieldChar>().Any() || run.Descendants<FieldCode>().Any() || run.Ancestors<SimpleField>().Any())
+            && paragraphFieldIndexes.Count > 0)
+        {
+            fieldIndexes.AddRange(paragraphFieldIndexes);
+        }
+
+        var properties = run.RunProperties;
+        return new ParsedRun(
+            runIndex,
+            location,
+            segments.ToArray(),
+            properties?.RunFonts?.Ascii?.Value,
+            properties?.RunFonts?.HighAnsi?.Value,
+            ParseInt(properties?.FontSize?.Val?.Value),
+            OnOff(properties?.Bold),
+            OnOff(properties?.Italic),
+            Attribute(properties?.Underline, "val"),
+            FirstNonEmpty(properties?.Languages?.Val?.Value, properties?.Languages?.EastAsia?.Value),
+            Attribute(properties?.VerticalTextAlignment, "val"),
+            breaks.ToArray(),
+            tabCount,
+            fieldIndexes.ToArray(),
+            drawingIndexes.ToArray(),
+            run.Ancestors<DeletedRun>().Any(),
+            run.Ancestors<InsertedRun>().Any(),
+            OnOff(properties?.Vanish) == true);
+    }
+
+    private static int ParseDrawing(Drawing drawing, MainDocumentPart mainPart, ParserContext context, DocumentElementLocation location)
+    {
+        var index = context.Drawings.Count;
+        var drawingLocation = location with { ElementKind = DocumentElementKind.Drawing };
+        var blip = drawing.Descendants().FirstOrDefault(element => element.LocalName == "blip" && element.NamespaceUri == DrawingNamespace);
+        var relationshipId = Attribute(blip, "embed", RelationshipsNamespace);
+        string? contentType = null;
+        var external = false;
+        if (!string.IsNullOrWhiteSpace(relationshipId))
+        {
+            try
+            {
+                contentType = mainPart.GetPartById(relationshipId).ContentType;
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                external = mainPart.ExternalRelationships.Any(item => item.Id == relationshipId);
+                context.Diagnostics.Add(external ? "external-drawing-ignored" : "drawing-relationship-broken",
+                    ParserDiagnosticSeverity.Warning,
+                    external ? "parser.external_drawing_ignored" : "parser.relationship_broken",
+                    drawingLocation);
+            }
+        }
+        var extent = drawing.Descendants().FirstOrDefault(element => element.LocalName == "extent" && element.NamespaceUri == WordprocessingDrawingNamespace);
+        var kind = drawing.Descendants().Any(element => element.LocalName == "inline" && element.NamespaceUri == WordprocessingDrawingNamespace)
+            ? ParsedDrawingKind.Inline
+            : drawing.Descendants().Any(element => element.LocalName == "anchor" && element.NamespaceUri == WordprocessingDrawingNamespace)
+                ? ParsedDrawingKind.Anchor
+                : ParsedDrawingKind.Unknown;
+        context.Drawings.Add(new(index, drawingLocation, kind, relationshipId, contentType,
+            ParseLong(Attribute(extent, "cx")), ParseLong(Attribute(extent, "cy")), external));
+        return index;
+    }
+
+    private static void ParseSimpleFields(Paragraph paragraph, ParserContext context, DocumentElementLocation location)
+    {
+        foreach (var field in paragraph.Descendants<SimpleField>())
+        {
+            var instruction = field.Instruction?.Value ?? string.Empty;
+            context.Fields.Add(new(context.Fields.Count, location with { ElementKind = DocumentElementKind.Field },
+                FieldKind(instruction), NormalizeFieldInstruction(instruction), true, true, true));
+        }
+    }
+
+    private static void ParseComplexFields(Paragraph paragraph, ParserContext context, DocumentElementLocation location)
+    {
+        var active = false;
+        var separated = false;
+        var instruction = new List<string>();
+        foreach (var element in paragraph.Descendants())
+        {
+            if (element is FieldChar fieldChar)
+            {
+                var type = Attribute(fieldChar, "fldCharType");
+                if (string.Equals(type, "begin", StringComparison.OrdinalIgnoreCase))
+                {
+                    active = true;
+                    separated = false;
+                    instruction.Clear();
+                }
+                else if (active && string.Equals(type, "separate", StringComparison.OrdinalIgnoreCase))
+                {
+                    separated = true;
+                }
+                else if (active && string.Equals(type, "end", StringComparison.OrdinalIgnoreCase))
+                {
+                    var combined = string.Concat(instruction);
+                    context.Fields.Add(new(context.Fields.Count, location with { ElementKind = DocumentElementKind.Field },
+                        FieldKind(combined), NormalizeFieldInstruction(combined), true, separated, true));
+                    active = false;
+                }
+            }
+            else if (active && element is FieldCode code)
+            {
+                instruction.Add(code.Text);
+            }
+        }
+        if (active)
+        {
+            var combined = string.Concat(instruction);
+            context.Fields.Add(new(context.Fields.Count, location with { ElementKind = DocumentElementKind.Field },
+                FieldKind(combined), NormalizeFieldInstruction(combined), true, separated, false));
+            context.Diagnostics.Add("field-unbalanced", ParserDiagnosticSeverity.Warning, "parser.field_unbalanced", location);
+        }
+    }
+
+    private static IReadOnlyList<ParsedHeaderFooter> ParseHeaderFooters(
+        MainDocumentPart mainPart,
+        IReadOnlyList<ParsedSection> sections,
+        StylesContext styles,
+        NumberingContext numbering,
+        ParserContext context)
+    {
+        var result = new List<ParsedHeaderFooter>();
+        var references = sections.SelectMany(section => section.HeaderFooterReferenceList)
+            .Where(reference => reference.NormalizedPartUri is not null)
+            .GroupBy(reference => reference.NormalizedPartUri!, StringComparer.Ordinal)
+            .Select(group => group.First())
+            .OrderBy(reference => reference.NormalizedPartUri, StringComparer.Ordinal);
+        foreach (var reference in references)
+        {
+            context.CheckCancellation();
+            try
+            {
+                var part = mainPart.GetPartById(reference.RelationshipId);
+                OpenXmlCompositeElement? root = part switch
+                {
+                    HeaderPart headerPart => headerPart.Header,
+                    FooterPart footerPart => footerPart.Footer,
+                    _ => null
+                };
+                if (root is null)
+                {
+                    context.Diagnostics.Add("header-footer-part-invalid", ParserDiagnosticSeverity.Warning, "parser.header_footer_part_invalid");
+                    continue;
+                }
+                var partKind = part is HeaderPart ? DocumentPartKind.Header : DocumentPartKind.Footer;
+                var paragraphs = new List<ParsedParagraph>();
+                foreach (var paragraph in root.Descendants<Paragraph>())
+                {
+                    var location = new DocumentElementLocation(partKind, part.Uri.OriginalString,
+                        ParagraphIndex: context.ParagraphCount, HeaderFooterType: reference.Type, ElementKind: DocumentElementKind.Paragraph);
+                    paragraphs.Add(ParseParagraph(paragraph, mainPart, styles, numbering, context, location, false));
+                }
+                result.Add(new(result.Count, reference.Type, partKind, part.Uri.OriginalString, paragraphs.ToArray(), []));
+            }
+            catch (ArgumentOutOfRangeException)
+            {
+                context.Diagnostics.Add("relationship-broken", ParserDiagnosticSeverity.Warning, "parser.relationship_broken");
+            }
+        }
+        return result.ToArray();
+    }
+
+    private static ParsedNumberingReference? ParagraphNumbering(ParagraphProperties? properties, NumberingContext numbering)
+    {
+        var id = properties?.NumberingProperties?.NumberingId?.Val?.Value;
+        if (id is null) return null;
+        var level = properties?.NumberingProperties?.NumberingLevelReference?.Val?.Value;
+        numbering.Definitions.TryGetValue(id.Value, out var definition);
+        var abstractLevel = definition?.Abstract?.Elements<Level>()
+            .FirstOrDefault(item => item.LevelIndex?.Value == level);
+        return new(id.Value, level, definition?.AbstractNumberingId,
+            Attribute(abstractLevel?.NumberingFormat, "val"), abstractLevel?.LevelText?.Val?.Value);
+    }
+
+    private static DocumentElementLocation MainLocation(
+        DocumentElementKind kind,
+        int? sectionIndex = null,
+        int? bodyElementIndex = null,
+        int? paragraphIndex = null,
+        int? runIndex = null,
+        int? tableIndex = null) =>
+        new(DocumentPartKind.MainDocument, "/word/document.xml", sectionIndex, bodyElementIndex,
+            paragraphIndex, runIndex, tableIndex, ElementKind: kind);
+
+    private static ParsedHeaderFooterType HeaderFooterType(string? value) => value?.ToLowerInvariant() switch
+    {
+        "default" => ParsedHeaderFooterType.Default,
+        "first" => ParsedHeaderFooterType.First,
+        "even" => ParsedHeaderFooterType.Even,
+        _ => ParsedHeaderFooterType.Unknown
+    };
+
+    private static ParsedPageOrientation? PageOrientation(string? value, long? width, long? height) => value?.ToLowerInvariant() switch
+    {
+        "portrait" => ParsedPageOrientation.Portrait,
+        "landscape" => ParsedPageOrientation.Landscape,
+        null or "" when width is not null && height is not null => width <= height ? ParsedPageOrientation.Portrait : ParsedPageOrientation.Landscape,
+        _ => null
+    };
+
+    private static ParsedAlignment? Alignment(string? value) => value?.ToLowerInvariant() switch
+    {
+        "left" => ParsedAlignment.Left,
+        "center" => ParsedAlignment.Center,
+        "right" => ParsedAlignment.Right,
+        "both" => ParsedAlignment.Justified,
+        "distribute" => ParsedAlignment.Distributed,
+        "start" => ParsedAlignment.Start,
+        "end" => ParsedAlignment.End,
+        _ => null
+    };
+
+    private static string AlignmentName(ParsedAlignment? value) => value switch
+    {
+        ParsedAlignment.Center => "Center",
+        ParsedAlignment.Right => "Right",
+        ParsedAlignment.Justified => "Both",
+        ParsedAlignment.Distributed => "Distribute",
+        ParsedAlignment.Start => "Start",
+        ParsedAlignment.End => "End",
+        _ => "Left"
+    };
+
+    private static ParsedBreakKind BreakKind(string? value) => value?.ToLowerInvariant() switch
+    {
+        "page" => ParsedBreakKind.Page,
+        "column" => ParsedBreakKind.Column,
+        "textwrapping" => ParsedBreakKind.TextWrapping,
+        null or "" => ParsedBreakKind.Line,
+        _ => ParsedBreakKind.Unknown
+    };
+
+    private static ParsedFieldKind FieldKind(string instruction) => NormalizeFieldInstruction(instruction) switch
+    {
+        "PAGE" => ParsedFieldKind.Page,
+        "NUMPAGES" => ParsedFieldKind.NumPages,
+        "TOC" => ParsedFieldKind.Toc,
+        "REF" => ParsedFieldKind.Ref,
+        "HYPERLINK" => ParsedFieldKind.Hyperlink,
+        "DATE" => ParsedFieldKind.Date,
+        "TIME" => ParsedFieldKind.Time,
+        _ => ParsedFieldKind.Unknown
+    };
+
+    private static string NormalizeFieldInstruction(string instruction)
+    {
+        var value = instruction.TrimStart();
+        var length = 0;
+        while (length < value.Length && char.IsLetter(value[length])) length++;
+        return length == 0 ? "UNKNOWN" : value[..length].ToUpperInvariant();
+    }
+
+    private static decimal? LineSpacingMultiple(SpacingBetweenLines? spacing)
+    {
+        var value = Numeric(spacing, "line");
+        var rule = Attribute(spacing, "lineRule");
+        return value is not null && (string.IsNullOrEmpty(rule) || string.Equals(rule, "auto", StringComparison.OrdinalIgnoreCase))
+            ? Math.Round(value.Value / 240m, 2, MidpointRounding.AwayFromZero)
             : null;
     }
 
-    private static decimal? HalfPointsToPoints(string? value) =>
-        decimal.TryParse(value, out var halfPoints) ? halfPoints / 2m : null;
+    private static bool? OnOff(OpenXmlElement? element)
+    {
+        if (element is null) return null;
+        var value = Attribute(element, "val");
+        return value?.ToLowerInvariant() switch
+        {
+            "0" or "false" or "off" => false,
+            _ => true
+        };
+    }
 
-    private static decimal? TwipsStringToCm(string? value) =>
-        decimal.TryParse(value, out var twips) ? TwipsToCm(twips) : null;
+    private static bool? OnOffAttribute(OpenXmlElement element, string name)
+    {
+        var value = Attribute(element, name);
+        if (value is null) return null;
+        return value.ToLowerInvariant() is not ("0" or "false" or "off");
+    }
 
-    private static decimal? TwipsToCm(long? twips) =>
-        twips is null ? null : Math.Round(twips.Value / 1440m * 2.54m, 2);
+    private static string? Attribute(OpenXmlElement? element, string localName)
+        => Attribute(element, localName, null);
 
-    private static decimal TwipsToCm(decimal twips) =>
-        Math.Round(twips / 1440m * 2.54m, 2);
+    private static string? Attribute(OpenXmlElement? element, string localName, string? namespaceUri)
+    {
+        if (element is null) return null;
+        return element.GetAttributes().FirstOrDefault(item =>
+            item.LocalName == localName && (namespaceUri is null || item.NamespaceUri == namespaceUri)).Value;
+    }
 
-    private static string? FirstNonEmpty(params string?[] values) =>
-        values.FirstOrDefault(x => !string.IsNullOrWhiteSpace(x));
+    private static long? Numeric(OpenXmlElement? element, string attributeName, ParserContext? context = null, DocumentElementLocation? location = null)
+    {
+        var raw = Attribute(element, attributeName);
+        if (raw is null) return null;
+        if (long.TryParse(raw, NumberStyles.Integer, CultureInfo.InvariantCulture, out var value)) return value;
+        context?.Diagnostics.Add("numeric-value-invalid", ParserDiagnosticSeverity.Warning, "parser.numeric_value_invalid", location,
+            [new("attribute", attributeName)]);
+        return null;
+    }
 
-    private sealed record TextDefaults(string? FontName, string? FontSizeHalfPoints);
+    private static int? NumericInt(OpenXmlElement? element, string attributeName, ParserContext? context = null, DocumentElementLocation? location = null)
+    {
+        var value = Numeric(element, attributeName, context, location);
+        return value is >= int.MinValue and <= int.MaxValue ? checked((int)value.Value) : null;
+    }
+
+    private static long? ParseLong(string? value) =>
+        long.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+
+    private static int? ParseInt(string? value) =>
+        int.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture, out var parsed) ? parsed : null;
+
+    private static int? FirstNonNull(params int?[] values) => values.FirstOrDefault(value => value is not null);
+
+    private static string? FirstNonEmpty(params string?[] values) => values.FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+
+    private static decimal? TwipsToCm(long? twips) => twips is null
+        ? null
+        : Math.Round(twips.Value * 2.54m / 1440m, 2, MidpointRounding.AwayFromZero);
+
+    private static DocxParserException Limit(string resource) =>
+        new("resource-limit-exceeded", $"DOCX parser resource limit exceeded: {resource}.");
+
+    private sealed class ParserContext(DocxParserOptions options, CancellationToken cancellationToken)
+    {
+        public int ParagraphCount { get; private set; }
+        public int RunCount { get; private set; }
+        public int TableCount { get; private set; }
+        public int FootnoteReferenceCount { get; set; }
+        public int EndnoteReferenceCount { get; set; }
+        public int CommentReferenceCount { get; set; }
+        public List<ParsedTable> Tables { get; } = [];
+        public List<ParsedDrawing> Drawings { get; } = [];
+        public List<ParsedField> Fields { get; } = [];
+        public DiagnosticCollector Diagnostics { get; } = new(options.MaximumDiagnostics);
+
+        public void CheckCancellation() => cancellationToken.ThrowIfCancellationRequested();
+        public int NextParagraph()
+        {
+            CheckCancellation();
+            if (ParagraphCount >= options.MaximumParagraphs) throw Limit("paragraphs");
+            return ParagraphCount++;
+        }
+        public void NextRun()
+        {
+            CheckCancellation();
+            if (RunCount >= options.MaximumRuns) throw Limit("runs");
+            RunCount++;
+        }
+        public int NextTable()
+        {
+            CheckCancellation();
+            if (TableCount >= options.MaximumTables) throw Limit("tables");
+            return TableCount++;
+        }
+    }
+
+    private sealed class DiagnosticCollector(int maximum)
+    {
+        private readonly List<ParserDiagnostic> _items = [];
+        private bool _truncated;
+        public IReadOnlyList<ParserDiagnostic> Items => _items.ToArray();
+
+        public void Add(string code, ParserDiagnosticSeverity severity, string messageKey,
+            DocumentElementLocation? location = null, IReadOnlyList<ParserDiagnosticMetadata>? metadata = null)
+        {
+            if (_items.Count < maximum)
+            {
+                _items.Add(new(code, severity, messageKey, location,
+                    metadata?.OrderBy(item => item.Name, StringComparer.Ordinal).ToArray()));
+                return;
+            }
+            if (_truncated || maximum == 0) return;
+            _items[^1] = new("diagnostics-truncated", ParserDiagnosticSeverity.Warning, "parser.diagnostics_truncated");
+            _truncated = true;
+        }
+    }
+
+    private sealed record StylesContext(
+        Styles? Source,
+        IReadOnlyDictionary<string, Style> Lookup,
+        IReadOnlyList<ParsedStyleReference> Catalog,
+        TextDefaults Defaults);
+    private sealed record TextDefaults(string? FontName, int? FontSizeHalfPoints);
+    private sealed record NumberingContext(IReadOnlyList<ParsedNumberingReference> Catalog, IReadOnlyDictionary<int, NumberingDefinition> Definitions);
+    private sealed record NumberingDefinition(int NumberingId, int? AbstractNumberingId, AbstractNum? Abstract);
+    private sealed record RelationshipCounts(int Total, int External);
+    private sealed record BodyResult(IReadOnlyList<ParsedParagraph> Paragraphs, IReadOnlyList<ParsedBodyElement> BodyElements);
 }

@@ -67,7 +67,14 @@ public sealed class AuditRunner(
             ParsedDocument parsed;
             try
             {
-                parsed = await docxParser.ParseAsync(filePath, cancellationToken);
+                try
+                {
+                    parsed = await docxParser.ParseAsync(filePath, cancellationToken);
+                }
+                catch (DocxParserException)
+                {
+                    throw new InvalidOperationException("Document parsing failed.");
+                }
             }
             finally
             {
