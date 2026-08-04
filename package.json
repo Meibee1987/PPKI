@@ -15,6 +15,8 @@
     "test:fix-execution-local": "node scripts/fix-execution-smoke-test.mjs",
     "test:reaudit": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --filter FullyQualifiedName~Reaudit",
     "test:reaudit-local": "node scripts/reaudit-smoke-test.mjs",
+    "test:audit-comparison": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --filter FullyQualifiedName~AuditComparison",
+    "test:audit-comparison-local": "node scripts/audit-comparison-smoke-test.mjs",
     "check:secrets": "node scripts/secret-scan.mjs",
     "check:migrations": "node scripts/migration-check.mjs",
     "fixtures:generate": "dotnet run --project backend/tools/Ppki.FixtureGenerator/Ppki.FixtureGenerator.csproj -- --output backend/tests/fixtures/docx/generated",

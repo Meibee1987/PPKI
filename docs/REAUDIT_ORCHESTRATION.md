@@ -1,8 +1,9 @@
 # Re-audit orchestration
 
 S4-T01 queues one new audit for the `DocumentVersion` produced by a completed
-`FixExecution`. It does not modify the source audit or its findings, create a
-comparison, or resolve findings. There is no frontend change in this task.
+`FixExecution`. It does not modify the source audit or its findings or resolve
+findings. S4-T02 subsequently derives a read-only comparison from the completed
+pair; it does not change this orchestration. There is no frontend change.
 
 ## API and ownership
 
@@ -77,5 +78,6 @@ then leaves the synthetic result audit terminal so a development worker cannot
 claim it later. It does not read environment files, print credentials, use a
 hosted Supabase project, or reset the database.
 
-Before/after comparison, finding resolution, ignore/accepted-risk behavior,
-and all UI work are explicitly deferred to later tasks.
+The derived before/after read model is documented in
+[AUDIT_COMPARISON.md](AUDIT_COMPARISON.md). Persisted finding resolution,
+ignore/accepted-risk behavior, and all UI work remain explicitly deferred.

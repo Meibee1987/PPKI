@@ -16,6 +16,8 @@ Semua command canonical dijalankan dari root repository.
 | Test fix-plan preview | `npm run test:fix-plan-preview` |
 | Test re-audit orchestration | `npm run test:reaudit` |
 | Smoke re-audit lokal | `npm run test:reaudit-local` |
+| Test audit comparison | `npm run test:audit-comparison` |
+| Smoke audit comparison lokal | `npm run test:audit-comparison-local` |
 | Verifikasi repository | `npm run verify` |
 
 Supabase CLI adalah infrastruktur development canonical. `compose.yaml` berisi
@@ -42,3 +44,10 @@ smoke tersebut menjalankan API lokal pada port bebas, tidak membaca `.env`,
 tidak mencetak credential, tidak melakukan database reset, dan tidak menyentuh
 hosted Supabase. Detail kontraknya ada di
 [REAUDIT_ORCHESTRATION.md](REAUDIT_ORCHESTRATION.md).
+
+`test:audit-comparison` memverifikasi read model deterministik secara offline.
+`test:audit-comparison-local` membutuhkan stack Supabase CLI lokal dan migration
+terkini; smoke menjalankan API loopback pada port bebas dengan fixture bounded,
+tanpa membaca `.env`, mencetak credential, memakai hosted Supabase, atau reset
+database. Detail kontraknya ada di
+[AUDIT_COMPARISON.md](AUDIT_COMPARISON.md).

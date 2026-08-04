@@ -37,6 +37,7 @@ builder.Services.AddScoped<IFixPlanPreviewService, FixPlanPreviewService>();
 builder.Services.AddScoped<IFixExecutionRepository, FixExecutionRepository>();
 builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();
 builder.Services.AddScoped<IReauditService, ReauditService>();
+builder.Services.AddScoped<IAuditComparisonService, AuditComparisonService>();
 builder.Services.AddSingleton<IResolvedRuleSetHasher, ResolvedRuleSetHasher>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IRemediationCapabilityRegistry>(_ => ProductionFixCapabilities.CreatePreviewRegistry());
@@ -266,6 +267,32 @@ api.MapPost("/fix-executions/{executionId}/re-audit", async (string executionId,
   .WithSummary("Queue one canonical audit of a completed fix result using the exact source audit context.")
   .Produces<ReauditAccepted>(StatusCodes.Status202Accepted)
   .Produces<ReauditAccepted>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .ProducesProblem(StatusCodes.Status409Conflict)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapGet("/fix-executions/{executionId}/comparison", async (string executionId,
+    string? status, string? severity, string? domain, string? ruleCode,
+    string? sort, int? page, int? pageSize, ClaimsPrincipal user,
+    IAuditComparisonService comparisons, CancellationToken ct) => {
+    if(!Guid.TryParse(executionId,out var parsedExecutionId)||parsedExecutionId==Guid.Empty)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid audit comparison request.",
+            extensions:new Dictionary<string,object?>{{"code","audit-comparison-execution-id-invalid"}});
+    if(!AuditComparisonQuery.TryCreate(status,severity,domain,ruleCode,sort,page,pageSize,
+        out var query,out var errorCode))
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid audit comparison query.",
+            extensions:new Dictionary<string,object?>{{"code",errorCode}});
+    try {
+        var result=await comparisons.GetAsync(parsedExecutionId,UserId(user),query,ct);
+        return result is null?Results.NotFound():Results.Ok(result);
+    } catch(AuditComparisonException exception) {
+        return Results.Problem(statusCode:StatusCodes.Status409Conflict,
+            title:"Audit comparison is not ready for this fix execution.",
+            extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
+    }
+}).WithName("GetFixExecutionAuditComparison")
+  .WithSummary("Read a deterministic derived comparison of source and result audit findings.")
+  .Produces<AuditComparisonDto>(StatusCodes.Status200OK)
   .ProducesProblem(StatusCodes.Status400BadRequest)
   .ProducesProblem(StatusCodes.Status409Conflict)
   .Produces(StatusCodes.Status404NotFound);

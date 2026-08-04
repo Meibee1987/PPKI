@@ -105,3 +105,14 @@ re-sorting. See `docs/FINDINGS_UI.md` for presentation and privacy boundaries.
 The document-detail handoff uses the API's explicit per-collection ordering but
 selects the greatest audit `CreatedAt` across versions, so the latest-audit link
 does not accidentally depend on nested array insertion order.
+
+## Before/after comparison
+
+`GET /api/fix-executions/{executionId}/comparison` derives a deterministic,
+read-only comparison from a completed source audit and completed resulting
+re-audit. It exposes the separate statuses `StillDetected`, `Changed`,
+`NoLongerDetected`, and `NewlyDetected`; these are not persisted resolution
+states. Raw actual/expected JSON and internal identity/fingerprint values are
+never returned. See [AUDIT_COMPARISON.md](AUDIT_COMPARISON.md) for readiness,
+pairing, duplicate, filter, pagination, historical-isolation, and privacy
+contracts.
