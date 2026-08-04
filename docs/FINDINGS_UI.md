@@ -72,6 +72,21 @@ location, bounded actual/expected fields, action availability, and a link to
 the detail endpoint. `None` is shown as no available action and never creates a
 fix button.
 
+The primary list and detail presentation translates the safe snapshot into
+three user questions: what is wrong, what condition is required, and what the
+user should do next. Known deterministic cases use explicit compiled copy;
+unknown cases use a bounded generic explanation and never include document
+text. Engine property names, diagnostic codes, validation keys, and bounded
+actual/expected fields remain available under an opt-in technical-details
+disclosure rather than dominating the page.
+
+The detail page separates `Sebelum`, `Target perbaikan`, and `Sesudah aktual`.
+Target is never presented as an applied change. Until a result document version
+and completed re-audit establish lineage, the actual-after panel explicitly
+says that no repair result is available. Its read-only evidence trail records
+the completed audit snapshot, detected finding, and the absence of a proven
+result; it creates no event or persistence row.
+
 Location indexes are retained unchanged in data but displayed one-based as
 Bagian, Elemen dokumen, Paragraf, and Segmen format. A location with no indexes
 is displayed as `Dokumen`. Partial or unknown locations use a safe fallback;
@@ -105,6 +120,8 @@ npm run test:findings-ui
 Also run web configuration tests, typecheck, production build, S3-T01/backend
 regression commands, repository hygiene checks, and `npm run verify`.
 
-Not included: auto-fix, Confirm preview, manual/ignore workflow, re-audit,
-scoring-policy configuration, export, lecturer review, or finding-resolution
-state mutation.
+Not included: auto-fix, a simulated DOCX rendering, manual/ignore workflow,
+re-audit mutation, scoring-policy configuration, export, lecturer review, or
+finding-resolution state mutation. Actual after-state classification remains
+the responsibility of the deterministic audit-comparison read model once valid
+fix-execution and re-audit lineage exists.

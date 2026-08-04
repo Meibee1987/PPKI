@@ -1,6 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { formatTimestamp, pageRange, presentLocation, presentPayload, scorePresentation } from "./findings-presentation.ts";
+import type { AuditFinding } from "./audit-contract.ts";
+import { findingGuidance, formatTimestamp, pageRange, presentLocation, presentPayload, scorePresentation } from "./findings-presentation.ts";
+
+const semanticFinding: Pick<AuditFinding, "ruleCode" | "validationKey" | "element" | "reasonCode" | "actual" | "expected" | "actionAvailability"> = {
+  ruleCode: "PPKI-ABS-013",
+  validationKey: "summary.thesis-dissertation-language-pair",
+  element: "Bahasa",
+  reasonCode: "semantic-section-required",
+  actual: { Property: "sectionPresence.SummaryEnglish", NormalizedValue: "absent" },
+  expected: { Property: "sectionPresence.SummaryEnglish", AcceptedValues: ["present"] },
+  actionAvailability: "None",
+};
 
 test("renders document-level location as Dokumen", () => assert.equal(presentLocation({ SectionIndex: null, BodyElementIndex: null, ParagraphIndex: null, RunIndex: null }).primary, "Dokumen"));
 test("renders section index as a one-based human label", () => assert.deepEqual(presentLocation({ SectionIndex: 0 }).details, ["Bagian 1"]));
@@ -14,6 +25,30 @@ test("renders unknown safe fields through a bounded fallback", () => { const val
 test("limits arrays and recursive depth", () => { const rows = presentPayload({ acceptedValues: ["a", "b", "c", "d", "e", "f", "g"], nested: { deeper: { value: "hidden-by-depth" } } }); assert.equal(rows[0].value, "a, b, c, d, e, f"); assert.equal(rows[1].value, "Data terstruktur"); });
 test("truncates long strings", () => assert.ok(presentPayload({ value: "a".repeat(300) })[0].value.length <= 120));
 test("never exposes sensitive keys or a synthetic document marker", () => { const marker = "PRIVATE-THESIS-MARKER"; const rows = presentPayload({ property: "safe", text: marker, nested: { rawXml: marker, filename: marker, stack: marker, path: marker, url: marker, exception: marker } }); assert.doesNotMatch(JSON.stringify(rows), new RegExp(marker)); });
+
+test("explains a missing English abstract in user language", () => {
+  const guidance = findingGuidance(semanticFinding);
+  assert.equal(guidance.title, "Abstrak bahasa Inggris belum terdeteksi");
+  assert.match(guidance.issue, /tidak menemukan bagian abstrak berbahasa Inggris/);
+  assert.equal(guidance.repairStatus, "Perbaikan manual diperlukan");
+});
+test("never presents a target as an actual completed repair", () => {
+  const guidance = findingGuidance(semanticFinding);
+  assert.match(guidance.afterTitle, /Belum/);
+  assert.match(guidance.afterDetail, /versi dokumen baru dan audit ulang/);
+  assert.doesNotMatch(`${guidance.afterTitle} ${guidance.afterDetail}`, /sudah diperbaiki/i);
+});
+test("explains deterministic justified alignment without inventing document text", () => {
+  const guidance = findingGuidance({ ...semanticFinding, ruleCode: "PPKI-LAY-019", validationKey: "body.justified", element: "Perataan paragraf", reasonCode: "paragraph-alignment-invalid", actual: { Property: "alignment", NormalizedValue: "left" }, expected: { Property: "alignment", AcceptedValues: ["both"] } });
+  assert.match(guidance.title, /rata kiri-kanan/);
+  assert.match(guidance.expected, /rata kiri-kanan/);
+});
+test("generic guidance remains bounded and excludes payload content", () => {
+  const marker = "PRIVATE-THESIS-MARKER";
+  const guidance = findingGuidance({ ...semanticFinding, validationKey: "unknown.key", reasonCode: "unknown", actual: { text: marker }, expected: {} });
+  assert.doesNotMatch(JSON.stringify(guidance), new RegExp(marker));
+  assert.equal(guidance.steps.length, 3);
+});
 
 test("NotConfigured shows no invented numeric score", () => { const value = scorePresentation("NotConfigured", null, null); assert.equal(value.title, "Skor belum dikonfigurasi"); assert.doesNotMatch(`${value.title} ${value.detail}`, /(^|\D)(0|100)(\D|$)/); });
 test("Calculated shows backend score and policy version", () => assert.deepEqual(scorePresentation("Calculated", 87.5, "policy-v1"), { title: "87.5", detail: "Kebijakan policy-v1" }));

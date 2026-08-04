@@ -1,7 +1,16 @@
-import type { JsonValue, ScoreState } from "./audit-contract";
+import type { AuditFinding, JsonValue, ScoreState } from "./audit-contract";
 
 export type DisplayRow = { label: string; value: string };
 export type LocationPresentation = { primary: string; compact: string | null; details: string[]; accessibleLabel: string };
+export type FindingGuidance = {
+  title: string;
+  issue: string;
+  expected: string;
+  repairStatus: string;
+  afterTitle: string;
+  afterDetail: string;
+  steps: string[];
+};
 
 const sensitiveKeys = ["text", "title", "filename", "path", "url", "xml", "stack", "exception", "content"];
 const labels: Record<string, string> = {
@@ -13,6 +22,74 @@ const labels: Record<string, string> = {
   diagnosticcode: "Kode diagnostik", contractsource: "Sumber kontrak", validationkey: "Kunci validasi",
   minimum: "Minimum", maximum: "Maksimum", required: "Wajib", order: "Urutan",
 };
+
+export function findingGuidance(finding: Pick<AuditFinding, "ruleCode" | "validationKey" | "element" | "reasonCode" | "actual" | "expected" | "actionAvailability">): FindingGuidance {
+  const property = payloadString(finding.actual, "property") ?? payloadString(finding.expected, "property");
+  const normalized = payloadString(finding.actual, "normalizedValue");
+  const accepted = payloadStrings(finding.expected, "acceptedValues");
+  const missingEnglishSummary = property?.toLowerCase().includes("summaryenglish")
+    || finding.validationKey === "summary.thesis-dissertation-language-pair";
+  const requiredPresence = normalized?.toLowerCase() === "absent"
+    && accepted.some(value => value.toLowerCase() === "present");
+
+  if (missingEnglishSummary && (requiredPresence || finding.reasonCode === "semantic-section-required")) {
+    return {
+      title: "Abstrak bahasa Inggris belum terdeteksi",
+      issue: "Pemeriksaan snapshot tidak menemukan bagian abstrak berbahasa Inggris pada struktur dokumen.",
+      expected: "Dokumen harus memiliki bagian abstrak bahasa Inggris yang dapat dikenali sebagai bagian tersendiri.",
+      repairStatus: "Perbaikan manual diperlukan",
+      afterTitle: "Belum ada hasil perbaikan",
+      afterDetail: "Sesudah aktual baru dapat dibuktikan dari versi dokumen baru dan audit ulang.",
+      steps: [
+        "Periksa apakah abstrak bahasa Inggris sudah tersedia.",
+        "Pastikan judul dan strukturnya mengikuti pedoman PPKI serta tidak berada di text box atau tabel.",
+        "Unggah hasil sebagai versi baru, lalu jalankan audit ulang untuk membuktikan perbaikannya.",
+      ],
+    };
+  }
+
+  if (property?.toLowerCase() === "alignment" && accepted.some(value => value.toLowerCase() === "both")) {
+    return {
+      title: `${finding.element} belum rata kiri-kanan`,
+      issue: "Perataan yang terbaca belum menggunakan justified/rata kiri-kanan.",
+      expected: "Paragraf harus menggunakan perataan rata kiri-kanan sesuai aturan PPKI.",
+      repairStatus: finding.actionAvailability === "None" ? "Belum ada aksi perbaikan" : "Perbaikan tersedia",
+      afterTitle: "Belum ada hasil perbaikan",
+      afterDetail: "Sesudah aktual hanya ditampilkan setelah hasil perbaikan disimpan sebagai versi baru dan diaudit ulang.",
+      steps: [
+        "Buka paragraf pada lokasi yang ditunjukkan.",
+        "Ubah perataan paragraf menjadi rata kiri-kanan.",
+        "Simpan sebagai versi baru dan jalankan audit ulang.",
+      ],
+    };
+  }
+
+  return {
+    title: `${finding.element} belum sesuai`,
+    issue: `Nilai yang terbaca belum memenuhi aturan ${finding.ruleCode}.`,
+    expected: "Sesuaikan bagian ini dengan nilai yang diwajibkan pada panel target perbaikan.",
+    repairStatus: finding.actionAvailability === "None" ? "Perbaikan manual diperlukan" : "Perbaikan tersedia",
+    afterTitle: "Belum ada hasil perbaikan",
+    afterDetail: "Upload versi baru dan audit ulang diperlukan untuk menampilkan sesudah aktual.",
+    steps: [
+      "Periksa bagian dokumen pada lokasi yang ditunjukkan.",
+      "Bandingkan detail teknis sebelum dengan target perbaikan.",
+      "Simpan perubahan sebagai versi baru dan jalankan audit ulang.",
+    ],
+  };
+}
+
+function payloadString(value: JsonValue, expectedKey: string): string | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const entry = Object.entries(value).find(([key]) => normalizeKey(key) === normalizeKey(expectedKey));
+  return entry && typeof entry[1] === "string" ? entry[1] : null;
+}
+
+function payloadStrings(value: JsonValue, expectedKey: string): string[] {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return [];
+  const entry = Object.entries(value).find(([key]) => normalizeKey(key) === normalizeKey(expectedKey));
+  return entry && Array.isArray(entry[1]) ? entry[1].filter(item => typeof item === "string") : [];
+}
 
 export function presentPayload(value: JsonValue, limit = 12): DisplayRow[] {
   const rows: DisplayRow[] = [];

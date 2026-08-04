@@ -6,6 +6,7 @@ const read = (relative: string) => readFileSync(new URL(relative, import.meta.ur
 const list = read("../components/audit-findings-client.tsx");
 const detail = read("../components/finding-detail-client.tsx");
 const client = read("./audit-api.ts");
+const presentation = read("./findings-presentation.ts");
 const styles = read("../app/globals.css");
 
 test("typed API client separates summary, list, and lazy detail requests", () => {
@@ -30,8 +31,21 @@ test("read-only UI exposes no fix, mutation, export, or retry-audit request", ()
 });
 
 test("Action None is presented as no action and never as a fix control", () => {
-  assert.match(list, /actionAvailability === "None" \? "Tidak ada"/);
+  assert.match(list, /Status perbaikan/);
+  assert.match(presentation, /actionAvailability === "None"/);
   assert.doesNotMatch(list, />\s*(?:Apply|Auto|Confirm|Perbaiki)\s*</i);
+});
+
+test("finding detail answers problem, location, repair steps, and evidence trail before technical data", () => {
+  for (const label of ["Apa yang salah?", "Sebelum dan sesudah", "Bagian yang perlu diperiksa", "Cara memperbaiki", "Jejak pemeriksaan", "Lihat detail teknis"]) assert.match(detail, new RegExp(label));
+  assert.match(detail, /Sesudah aktual hanya berasal dari versi baru dan audit ulang, bukan simulasi/);
+  assert.match(detail, /<details className="technical-details">/);
+});
+
+test("actual after remains explicitly unavailable without result lineage", () => {
+  assert.match(presentation, /Belum ada hasil perbaikan/);
+  assert.match(presentation, /versi dokumen baru dan audit ulang/);
+  assert.doesNotMatch(detail, /preview berhasil|sudah diperbaiki/i);
 });
 
 test("production components do not log, inject HTML, or store finding payloads", () => {
