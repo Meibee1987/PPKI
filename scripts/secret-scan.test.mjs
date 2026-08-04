@@ -5,7 +5,14 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { formatFindings, isTestOrFixtureFile, maskValue, scanText } from "./secret-scan.mjs";
+import {
+  formatFindings,
+  isTestOrFixtureFile,
+  maskValue,
+  scanText,
+  scanTrackedFiles,
+  trackedEnvironmentFiles,
+} from "./secret-scan.mjs";
 
 test("secret scanner accepts documented placeholders", () => {
   const findings = scanText("SUPABASE_SECRET_KEY=sb_secret_REPLACE_ME\nPassword=REPLACE_ME", { file: ".env.example" });
@@ -49,6 +56,45 @@ test("repository scan excludes tests and fixtures that exercise forbidden patter
   assert.equal(isTestOrFixtureFile("apps/web/src/lib/environment.test.ts"), true);
   assert.equal(isTestOrFixtureFile("backend/tests/Ppki.Tests/example.cs"), true);
   assert.equal(isTestOrFixtureFile("docs/security.md"), false);
+});
+
+test("tracked environment policy accepts only the two exact root templates", () => {
+  assert.deepEqual(trackedEnvironmentFiles([
+    ".env.example",
+    ".env.local.example",
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.production",
+    ".env.local.example.backup",
+    "nested/.env.local",
+    "nested/.env.example",
+  ]), [
+    ".env",
+    ".env.local",
+    ".env.development",
+    ".env.production",
+    ".env.local.example.backup",
+    "nested/.env.local",
+    "nested/.env.example",
+  ]);
+});
+
+test("both exact example templates remain subject to content scanning", async () => {
+  const safeFindings = await scanTrackedFiles(
+    [".env.example", ".env.local.example"],
+    async () => "SUPABASE_SECRET_KEY=sb_secret_REPLACE_ME\nPassword=REPLACE_ME",
+  );
+  assert.deepEqual(safeFindings, []);
+
+  const syntheticSecret = ["sb_secret_", "ciLeakMarker", "_1234567890"].join("");
+  const unsafeFindings = await scanTrackedFiles(
+    [".env.local.example"],
+    async () => `SUPABASE_SECRET_KEY=${syntheticSecret}`,
+  );
+  assert.ok(unsafeFindings.some((finding) => finding.category === "supabase-secret-key"));
+  assert.ok(unsafeFindings.some((finding) => finding.category === "service-role-key"));
+  assert.doesNotMatch(JSON.stringify(unsafeFindings), new RegExp(syntheticSecret));
 });
 
 test("secret scan CLI exits non-zero for a tracked environment file", async () => {

@@ -12,6 +12,10 @@ const bearerTokenPattern = /\bBearer\s+(eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za
 const passwordAssignmentPattern = /\bpassword\s*=\s*([^;\r\n]+)/gi;
 const connectionUrlPattern = /\b(?:postgres(?:ql)?|mysql):\/\/[^\s:@/]+:([^\s@/]+)@/gi;
 const privateKeyPattern = /-----BEGIN (?:[A-Z0-9 ]+ )?PRIVATE KEY-----/g;
+const trackedEnvironmentTemplateAllowlist = new Set([
+  ".env.example",
+  ".env.local.example",
+]);
 
 function lineNumber(text, index) {
   return text.slice(0, index).split("\n").length;
@@ -60,8 +64,10 @@ export function scanText(text, { file = "<memory>" } = {}) {
 
 export function trackedEnvironmentFiles(files) {
   return files.filter((file) => {
-    const baseName = path.posix.basename(file.replaceAll("\\", "/"));
-    return (baseName === ".env" || baseName.startsWith(".env.")) && baseName !== ".env.example";
+    const normalized = file.replaceAll("\\", "/").replace(/^\.\//, "");
+    const baseName = path.posix.basename(normalized);
+    const isEnvironmentFile = baseName === ".env" || baseName.startsWith(".env.");
+    return isEnvironmentFile && !trackedEnvironmentTemplateAllowlist.has(normalized);
   });
 }
 
