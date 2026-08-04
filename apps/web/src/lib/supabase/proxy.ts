@@ -1,6 +1,7 @@
 import { createServerClient } from "@supabase/ssr";
 import { NextResponse, type NextRequest } from "next/server";
 import { getPublicSupabaseEnvironment } from "./environment";
+import { isProtectedPath } from "../route-access";
 
 export async function updateSession(request: NextRequest) {
   const { supabaseUrl, supabasePublishableKey } = getPublicSupabaseEnvironment();
@@ -21,7 +22,7 @@ export async function updateSession(request: NextRequest) {
 
   const { data: { user } } = await supabase.auth.getUser();
   const pathname = request.nextUrl.pathname;
-  const protectedPath = pathname === "/" || pathname.startsWith("/documents");
+  const protectedPath = isProtectedPath(pathname);
   const authPath = pathname === "/login" || pathname === "/signup";
 
   if (!user && protectedPath) {

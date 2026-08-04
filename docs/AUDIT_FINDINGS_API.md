@@ -76,5 +76,15 @@ signed URL, raw XML, parser diagnostics, stack trace, or exception details.
 Historical values come only from `AuditFinding`, `AuditRuleSnapshot`, and
 `AuditJob`; live `RuleDefinition` data cannot replace them.
 
-Not included: findings/score UI, auto-fix, Confirm preview, ignore/manual review
-workflow, re-audit, export, or lecturer review.
+Not included: auto-fix, Confirm preview, ignore/manual review workflow,
+re-audit, export, or lecturer review.
+
+## Frontend consumer
+
+The S3-T02 read-only UI consumes these endpoints at `/audits/[auditId]` and
+`/audits/[auditId]/findings/[findingId]`. List filters and pagination are stored
+in URL query parameters and passed through to this API without client-side
+re-sorting. See `docs/FINDINGS_UI.md` for presentation and privacy boundaries.
+The document-detail handoff uses the API's explicit per-collection ordering but
+selects the greatest audit `CreatedAt` across versions, so the latest-audit link
+does not accidentally depend on nested array insertion order.

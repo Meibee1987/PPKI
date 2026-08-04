@@ -1,5 +1,19 @@
 import { createClient } from "./supabase/client";
 import { getPublicSupabaseEnvironment } from "./supabase/environment";
+import { safeProblemCode } from "./api-errors";
+
+export class ApiRequestError extends Error {
+  constructor(public readonly status: number, public readonly code?: string) {
+    super(status === 404
+      ? "Data tidak ditemukan atau tidak dapat diakses."
+      : status === 401 || status === 403
+        ? "Sesi tidak dapat mengakses data ini."
+        : status >= 500
+          ? "Layanan sedang mengalami gangguan. Coba lagi nanti."
+          : "Permintaan tidak dapat diproses.");
+    this.name = "ApiRequestError";
+  }
+}
 
 export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise<T> {
   const { apiBaseUrl } = getPublicSupabaseEnvironment();
@@ -19,8 +33,12 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
     cache: "no-store",
   });
   if (!response.ok) {
-    const payload = await response.text();
-    throw new Error(payload || `API error ${response.status}`);
+    let code: string | undefined;
+    try {
+      const payload: unknown = await response.json();
+      code = safeProblemCode(payload);
+    } catch { /* Malformed error bodies are deliberately not surfaced. */ }
+    throw new ApiRequestError(response.status, code);
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
