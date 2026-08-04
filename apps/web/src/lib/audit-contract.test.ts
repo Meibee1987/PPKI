@@ -30,10 +30,80 @@ test("parses a valid audit summary without calculating score", () => {
   assert.equal(parsed.scoreState, "NotConfigured"); assert.equal(parsed.score, null); assert.equal(parsed.severity.error, 1);
 });
 
+test("parses the completed backend wire summary with deterministic profile UUID and null score", () => {
+  const parsed = parseAuditSummary({
+    ...summary,
+    profileVersionId: "21000000-0000-0000-0000-000000000001",
+    persistedFindingCount: 2228,
+    findingCount: 2228,
+    errorCount: 2228,
+    severity: { error: 2228, warning: 0, info: 0 },
+    domains: [{ domain: "LAY", findingCount: 2228 }],
+  });
+  assert.equal(parsed.status, "Completed");
+  assert.equal(parsed.persistedFindingCount, 2228);
+  assert.equal(parsed.scoreState, "NotConfigured");
+  assert.equal(parsed.score, null);
+});
+
+test("rejects a stale numeric scoreState from the backend", () => {
+  assert.throws(() => parseAuditSummary({ ...summary, scoreState: 1 }), /kontrak/);
+});
+
 test("parses a paginated findings response and preserves backend ordering", () => {
   const second = { ...finding, id: "55555555-5555-4555-8555-555555555555", ruleOrdinal: 2 };
   const parsed = parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 2, items: [finding, second] });
   assert.deepEqual(parsed.items.map(item => item.id), [finding.id, second.id]);
+});
+
+test("parses a bounded first page when findings exceed one page", () => {
+  const items = Array.from({ length: 25 }, (_, index) => ({
+    ...finding,
+    id: `55555555-5555-4555-8555-${String(index + 1).padStart(12, "0")}`,
+  }));
+  const parsed = parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 2228, items });
+  assert.equal(parsed.page, 1);
+  assert.equal(parsed.pageSize, 25);
+  assert.equal(parsed.totalCount, 2228);
+  assert.equal(parsed.items.length, 25);
+});
+
+test("parses explicit null and empty safe finding variants", () => {
+  const parsed = parseAuditFindingPage({
+    page: 2,
+    pageSize: 25,
+    totalCount: 2228,
+    items: [{
+      ...finding,
+      actual: null,
+      expected: {},
+      location: { CompactLocation: "", SectionIndex: null, ParagraphIndex: 0 },
+      confidence: null,
+      source: { sourceSection: null, pdfPage: null, printedPage: null },
+    }],
+  });
+  assert.equal(parsed.items[0].actual, null);
+  assert.deepEqual(parsed.items[0].expected, {});
+  assert.equal(parsed.items[0].confidence, null);
+  assert.equal(parsed.items[0].source.sourceSection, null);
+});
+
+test("does not parse a problem response as a success DTO", () => {
+  assert.throws(() => parseAuditSummary({
+    type: "about:blank",
+    title: "Invalid request",
+    status: 400,
+    code: "finding-pagination-invalid",
+  }), /kontrak/);
+});
+
+test("finding wire shape excludes raw transport and sensitive top-level fields", () => {
+  const parsed = parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 1, items: [finding] });
+  const keys = Object.keys(parsed.items[0]);
+  for (const forbidden of ["actualJson", "expectedJson", "actualValueJson", "expectedValueJson", "path", "filename", "text", "xml", "url", "secret"])
+    assert.equal(keys.includes(forbidden), false);
+  assert.equal(typeof parsed.items[0].actual, "object");
+  assert.equal(typeof parsed.items[0].expected, "object");
 });
 
 test("parses finding detail snapshot fields", () => {

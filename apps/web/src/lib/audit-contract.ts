@@ -93,7 +93,7 @@ export class ApiContractError extends Error {
 }
 
 type UnknownRecord = Record<string, unknown>;
-const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 function record(value: unknown): UnknownRecord {
   if (value === null || typeof value !== "object" || Array.isArray(value)) throw new ApiContractError();
