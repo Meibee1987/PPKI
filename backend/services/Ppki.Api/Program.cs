@@ -6,6 +6,7 @@ using Microsoft.Extensions.Diagnostics.HealthChecks;
 using Microsoft.Extensions.Options;
 using Ppki.Application;
 using Ppki.Domain;
+using Ppki.FixEngine;
 using Ppki.Infrastructure;
 using Ppki.Api;
 
@@ -30,6 +31,10 @@ builder.Services.AddHttpClient();
 builder.Services.AddDbContextFactory<PpkiDbContext>(o => o.UseNpgsql(connectionString));
 builder.Services.AddScoped<IFileStorage, SupabaseFileStorage>();
 builder.Services.AddScoped<IAuditReadService, AuditReadService>();
+builder.Services.AddScoped<IFixPlanSourceReader, FixPlanSourceReader>();
+builder.Services.AddScoped<IFixPlanPreviewService, FixPlanPreviewService>();
+builder.Services.AddSingleton<IRemediationCapabilityRegistry>(_ => RemediationCapabilityRegistry.Empty());
+builder.Services.AddSingleton<IFixPlanPreviewPlanner, DeterministicFixPlanPreviewPlanner>();
 builder.Services.AddSingleton<IStorageObjectPathBuilder, StorageObjectPathBuilder>();
 builder.Services.AddSingleton<IAuditTrailWriter, AuditTrailWriter>();
 builder.Services.AddSingleton<IAuditScoreCalculator, AuditScoreCalculator>();
@@ -174,6 +179,27 @@ api.MapGet("/audits/{id:guid}/findings/{findingId:guid}", async (Guid id,
     var result=await audits.GetFindingAsync(id,findingId,UserId(user),ct);
     return result is null?Results.NotFound():Results.Ok(result);
 });
+
+api.MapPost("/audits/{id:guid}/fix-plan-preview", async (Guid id,
+    ClaimsPrincipal user, FixPlanPreviewRequest? request,
+    IFixPlanPreviewService previews, CancellationToken ct) => {
+    if(!FixPlanSelection.TryCreate(request?.FindingIds,out var selection,out var errorCode))
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,
+            title:"Invalid fix plan selection.",extensions:new Dictionary<string,object?>{{"code",errorCode}});
+    try {
+        var result=await previews.PreviewAsync(id,UserId(user),selection,ct);
+        return result is null?Results.NotFound():Results.Ok(result);
+    } catch(FixPlanConfigurationException exception) {
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,
+            title:"Invalid remediation capability configuration.",
+            extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
+    }
+}).WithName("PreviewAuditFixPlan")
+  .WithSummary("Build a deterministic, read-only fix-plan preview from audit snapshots.")
+  .Accepts<FixPlanPreviewRequest>("application/json")
+  .Produces<FixPlanPreview>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .Produces(StatusCodes.Status404NotFound);
 
 api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IAuditTrailWriter auditTrail, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {
     var uid=UserId(user); var version=await db.DocumentVersions.AsNoTracking().SingleOrDefaultAsync(v=>v.Id==id&&v.Document!.OwnerUserId==uid,ct); if(version is null)return Results.NotFound();

@@ -10,6 +10,7 @@
     <ProjectReference Include="../../services/Ppki.Api/Ppki.Api.csproj" />
     <ProjectReference Include="../../src/Ppki.DocxEngine/Ppki.DocxEngine.csproj" />
     <ProjectReference Include="../../src/Ppki.Domain/Ppki.Domain.csproj" />
+    <ProjectReference Include="../../src/Ppki.FixEngine/Ppki.FixEngine.csproj" />
     <ProjectReference Include="../../src/Ppki.Infrastructure/Ppki.Infrastructure.csproj" />
     <ProjectReference Include="../../src/Ppki.RuleEngine/Ppki.RuleEngine.csproj" />
   </ItemGroup>

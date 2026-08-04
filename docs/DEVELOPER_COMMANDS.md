@@ -13,6 +13,7 @@ Semua command canonical dijalankan dari root repository.
 | Preflight/status aman | `npm run dev:status` |
 | Stop Supabase lokal | `npm run dev:stop` |
 | Test bootstrap | `npm run test:dev-bootstrap` |
+| Test fix-plan preview | `npm run test:fix-plan-preview` |
 | Verifikasi repository | `npm run verify` |
 
 Supabase CLI adalah infrastruktur development canonical. `compose.yaml` berisi

@@ -21,6 +21,7 @@
     "test:wave1-validators": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter \"FullyQualifiedName~LayoutValidator|FullyQualifiedName~Wave1\"",
     "test:audit-read-model": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter FullyQualifiedName~AuditRead",
     "test:scoring": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter FullyQualifiedName~AuditScoring",
+    "test:fix-plan-preview": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --filter FullyQualifiedName~FixPlanPreview",
     "test:findings-ui": "npm run --prefix apps/web test:findings-ui",
     "dev:prerequisites": "node scripts/developer.mjs prerequisites",
     "dev:infra": "node scripts/dev-bootstrap.mjs infra",

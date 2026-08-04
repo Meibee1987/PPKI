@@ -2,6 +2,7 @@
   <ItemGroup>
     <ProjectReference Include="../../src/Ppki.Application/Ppki.Application.csproj" />
     <ProjectReference Include="../../src/Ppki.Domain/Ppki.Domain.csproj" />
+    <ProjectReference Include="../../src/Ppki.FixEngine/Ppki.FixEngine.csproj" />
     <ProjectReference Include="../../src/Ppki.Infrastructure/Ppki.Infrastructure.csproj" />
   </ItemGroup>
   <ItemGroup>

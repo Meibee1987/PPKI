@@ -57,6 +57,22 @@ Action-availability and location-kind filters are not exposed because neither
 is a persisted formal field. Every returned item reports action availability
 as `None`; S3-T01 does not infer an action from `FixMode`.
 
+## Fix-plan preview
+
+`POST /api/audits/{auditId}/fix-plan-preview` accepts a read-only computation
+request containing 1 through 100 finding UUIDs. Duplicate IDs are normalized;
+request order is not meaningful. Historical finding/rule/audit snapshots are
+the only plan data, and the ownership-filtered query selects only requested
+findings before materialization. Missing, foreign-audit, and foreign-owner
+selections return the same safe 404 contract. Invalid input returns 400 Problem
+Details. A semantic conflict is HTTP 200 with state `Conflict`.
+
+The endpoint does not infer support from `FixMode`. The production capability
+registry is intentionally empty until a formal provider exists, so current
+previews are `NotAvailable` and finding action availability stays `None`. It
+never saves a plan, accesses storage, downloads or mutates a DOCX, creates a
+version, or exposes Apply. See [FIX_PLAN_PREVIEW.md](FIX_PLAN_PREVIEW.md).
+
 ## Finding detail
 
 `GET /api/audits/{auditId}/findings/{findingId}` returns the finding and audit
@@ -76,8 +92,9 @@ signed URL, raw XML, parser diagnostics, stack trace, or exception details.
 Historical values come only from `AuditFinding`, `AuditRuleSnapshot`, and
 `AuditJob`; live `RuleDefinition` data cannot replace them.
 
-Not included: auto-fix, Confirm preview, ignore/manual review workflow,
-re-audit, export, or lecturer review.
+Not included: preview UI, Confirm workflow, Apply Fix, DOCX mutation, new
+document version, ignore/manual review workflow, re-audit, rollback, export,
+or lecturer review.
 
 ## Frontend consumer
 
