@@ -10,6 +10,25 @@ namespace Ppki.RuleEngine.Tests;
 public sealed class AuditReadModelTests
 {
     [Fact]
+    public void Completed_summary_wire_contract_uses_string_score_state_with_null_score()
+    {
+        var summary = new AuditSummaryDto(
+            Guid.NewGuid(), "Completed", Guid.NewGuid(), Guid.NewGuid(), "Skripsi",
+            new string('a', 64), 1, 1, 2_228, 2_228, 2_228, 0, 0,
+            new(2_228, 0, 0), [new("LAY", 2_228)], new(0, 0, 0, 2_228),
+            AuditScoreState.NotConfigured, null, null, null,
+            "scoring-policy-not-configured", DateTimeOffset.UtcNow,
+            DateTimeOffset.UtcNow, null, null);
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(
+            summary, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
+        Assert.Equal(JsonValueKind.String, json.RootElement.GetProperty("scoreState").ValueKind);
+        Assert.Equal("NotConfigured", json.RootElement.GetProperty("scoreState").GetString());
+        Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("score").ValueKind);
+    }
+
+    [Fact]
     public void Summary_counts_are_consistent_across_severity_domain_and_fix_mode()
     {
         var result = AuditSummaryCounts.FromBuckets([

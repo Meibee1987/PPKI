@@ -1,7 +1,9 @@
+using System.Text.Json.Serialization;
 using Ppki.Domain;
 
 namespace Ppki.Application;
 
+[JsonConverter(typeof(JsonStringEnumConverter<AuditScoreState>))]
 public enum AuditScoreState
 {
     Calculated,
