@@ -18,6 +18,8 @@
     "test:docx-parser": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter FullyQualifiedName~DocxParser",
     "test:layout-validators": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter FullyQualifiedName~LayoutValidator",
     "test:wave1-validators": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter \"FullyQualifiedName~LayoutValidator|FullyQualifiedName~Wave1\"",
+    "test:audit-read-model": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter FullyQualifiedName~AuditRead",
+    "test:scoring": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter FullyQualifiedName~AuditScoring",
     "dev:prerequisites": "node scripts/developer.mjs prerequisites",
     "dev:up": "docker compose up --build",
     "dev:rebuild": "docker compose up --build --force-recreate",

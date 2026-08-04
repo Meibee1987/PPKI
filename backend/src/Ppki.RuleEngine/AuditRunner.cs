@@ -173,7 +173,10 @@ public sealed class AuditRunner(
         audit.ErrorCount = findings.Count(item => item.Severity == RuleSeverity.Error);
         audit.WarningCount = findings.Count(item => item.Severity == RuleSeverity.Warning);
         audit.InfoCount = findings.Count(item => item.Severity == RuleSeverity.Info);
-        audit.Score = CalculateScore(findings);
+        // A numeric score is only valid when it is produced by an explicit,
+        // versioned scoring policy. No policy is configured yet, so new audits
+        // deliberately persist no score instead of an undocumented default.
+        audit.Score = null;
         audit.Status = AuditJobStatus.Completed;
         audit.CompletedAt = DateTimeOffset.UtcNow;
         await db.SaveChangesAsync(cancellationToken);
@@ -203,21 +206,6 @@ public sealed class AuditRunner(
             // Preserve the original worker exception. Recovery may safely retry
             // only a still-processing job and cannot duplicate snapshots.
         }
-    }
-
-    private static decimal CalculateScore(IEnumerable<AuditFinding> findings)
-    {
-        var violatedRules = findings
-            .GroupBy(item => item.RuleId)
-            .Select(group => group.Max(item => item.Severity switch
-            {
-                RuleSeverity.Error => 8,
-                RuleSeverity.Warning => 3,
-                _ => 0
-            }))
-            .Sum();
-
-        return Math.Max(0, 100 - violatedRules);
     }
 
 }

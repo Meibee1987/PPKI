@@ -1,5 +1,4 @@
 using System.Security.Claims;
-using System.Text.Json;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Microsoft.EntityFrameworkCore;
@@ -30,8 +29,10 @@ builder.Services.AddOptions<ReadinessHealthCheckOptions>()
 builder.Services.AddHttpClient();
 builder.Services.AddDbContextFactory<PpkiDbContext>(o => o.UseNpgsql(connectionString));
 builder.Services.AddScoped<IFileStorage, SupabaseFileStorage>();
+builder.Services.AddScoped<IAuditReadService, AuditReadService>();
 builder.Services.AddSingleton<IStorageObjectPathBuilder, StorageObjectPathBuilder>();
 builder.Services.AddSingleton<IAuditTrailWriter, AuditTrailWriter>();
+builder.Services.AddSingleton<IAuditScoreCalculator, AuditScoreCalculator>();
 builder.Services.AddScoped<IDatabaseReadinessProbe, DatabaseReadinessProbe>();
 builder.Services.AddHealthChecks()
     .AddCheck("live", () => HealthCheckResult.Healthy(), tags: ["live"])
@@ -151,16 +152,27 @@ api.MapPost("/document-versions/{versionId:guid}/audits", async (Guid versionId,
     return Results.Accepted($"/api/audits/{audit.Id}",new{audit.Id,status=audit.Status.ToString()});
 });
 
-api.MapGet("/audits/{id:guid}", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) => {
-    var uid=UserId(user); var a=await db.AuditJobs.AsNoTracking().SingleOrDefaultAsync(x=>x.Id==id&&x.DocumentVersion!.Document!.OwnerUserId==uid,ct); if(a is null)return Results.NotFound();
-    return Results.Ok(new{a.Id,Status=a.Status.ToString(),TotalRules=a.ApplicableRuleCount,a.ErrorCount,a.WarningCount,a.InfoCount,a.Score,a.ResolvedRuleSetHash,a.StartedAt,a.CompletedAt,a.ErrorMessage});
+api.MapGet("/audits/{id:guid}", async (Guid id, ClaimsPrincipal user, IAuditReadService audits, CancellationToken ct) => {
+    var result=await audits.GetSummaryAsync(id,UserId(user),ct);
+    return result is null?Results.NotFound():Results.Ok(result);
 });
 
-api.MapGet("/audits/{id:guid}/findings", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) => {
-    var uid=UserId(user); var owned=await db.AuditJobs.AnyAsync(x=>x.Id==id&&x.DocumentVersion!.Document!.OwnerUserId==uid,ct); if(!owned)return Results.NotFound();
-    var rows=await db.AuditFindings.AsNoTracking().Where(x=>x.AuditJobId==id).OrderBy(x=>x.Severity).ThenBy(x=>x.RuleCodeSnapshot).ToListAsync(ct);
-    var snapshots=await db.AuditRuleSnapshots.AsNoTracking().Where(x=>x.AuditJobId==id).ToDictionaryAsync(x=>x.RuleCode,ct);
-    return Results.Ok(rows.Select(x=>{snapshots.TryGetValue(x.RuleCodeSnapshot,out var snapshot);return new{x.Id,RuleCode=x.RuleCodeSnapshot,Element=snapshot?.Element??string.Empty,Domain=snapshot?.Domain??string.Empty,Severity=x.Severity.ToString(),FixMode=x.FixModeSnapshot.ToString(),x.Message,Actual=JsonSerializer.Deserialize<JsonElement>(x.ActualValueJson),Expected=JsonSerializer.Deserialize<JsonElement>(x.ExpectedValueJson),Location=JsonSerializer.Deserialize<JsonElement>(x.LocationJson),x.Confidence,Source=new{SourceSection=x.SourceSectionSnapshot,PdfPage=x.PdfPageSnapshot,PrintedPage=x.PrintedPageSnapshot}};}));
+api.MapGet("/audits/{id:guid}/findings", async (Guid id, ClaimsPrincipal user,
+    IAuditReadService audits, string? severity, string? fixMode, string? domain,
+    string? ruleCode, string? validationKey, string? sort, int? page, int? pageSize,
+    CancellationToken ct) => {
+    if(!AuditFindingQuery.TryCreate(severity,fixMode,domain,ruleCode,validationKey,
+        sort,page,pageSize,out var query,out var errorCode))
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,
+            title:"Invalid findings query.",extensions:new Dictionary<string,object?>{{"code",errorCode}});
+    var result=await audits.GetFindingsAsync(id,UserId(user),query,ct);
+    return result is null?Results.NotFound():Results.Ok(result);
+});
+
+api.MapGet("/audits/{id:guid}/findings/{findingId:guid}", async (Guid id,
+    Guid findingId, ClaimsPrincipal user, IAuditReadService audits, CancellationToken ct) => {
+    var result=await audits.GetFindingAsync(id,findingId,UserId(user),ct);
+    return result is null?Results.NotFound():Results.Ok(result);
 });
 
 api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IAuditTrailWriter auditTrail, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {
