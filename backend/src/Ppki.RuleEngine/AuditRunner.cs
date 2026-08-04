@@ -31,28 +31,40 @@ public sealed class AuditRunner(
                     .ThenInclude(x => x!.Document)
                     .SingleAsync(x => x.Id == auditJobId && x.Status == AuditJobStatus.Processing, cancellationToken);
 
-                var assignedRules = await db.ProfileRules
-                    .AsNoTracking()
-                    .Where(assignment => assignment.ProfileVersionId == audit.ProfileVersionId && assignment.Rule!.IsImplemented)
-                    .Select(assignment => assignment.Rule!)
-                    .ToListAsync(cancellationToken);
-
-                if (assignedRules.Count > 0)
+                if (audit.SourceFixExecutionId is not null)
                 {
-                    resolvedRules = assignedRules;
-                    resolutionLayer = "profile";
+                    if (audit.ResolvedRuleSetHash is null || audit.ApplicableRuleCount <= 0)
+                        throw new InvalidOperationException("Re-audit historical snapshot context is incomplete.");
+                    resolvedRules = [];
+                    resolutionLayer = "historical-clone";
                 }
                 else
                 {
-                    resolvedRules = await db.Rules
+                    var assignedRules = await db.ProfileRules
                         .AsNoTracking()
-                        .Where(rule => rule.IsImplemented)
+                        .Where(assignment => assignment.ProfileVersionId == audit.ProfileVersionId && assignment.Rule!.IsImplemented)
+                        .Select(assignment => assignment.Rule!)
                         .ToListAsync(cancellationToken);
-                    resolutionLayer = "catalog-default";
+
+                    if (assignedRules.Count > 0)
+                    {
+                        resolvedRules = assignedRules;
+                        resolutionLayer = "profile";
+                    }
+                    else
+                    {
+                        resolvedRules = await db.Rules
+                            .AsNoTracking()
+                            .Where(rule => rule.IsImplemented)
+                            .ToListAsync(cancellationToken);
+                        resolutionLayer = "catalog-default";
+                    }
                 }
             }
 
-            var proposedSnapshots = snapshotBuilder.Build(auditJobId, resolvedRules, resolutionLayer, precedence: 0);
+            var proposedSnapshots = audit.SourceFixExecutionId is null
+                ? snapshotBuilder.Build(auditJobId, resolvedRules, resolutionLayer, precedence: 0)
+                : [];
             var ownerUserId = audit.DocumentVersion!.Document!.OwnerUserId;
             var snapshots = await EnsureRuleSnapshotsAsync(auditJobId, ownerUserId, proposedSnapshots, cancellationToken);
 

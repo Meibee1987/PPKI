@@ -1,6 +1,7 @@
 using System.Buffers;
 using System.Security.Cryptography;
 using System.Text.Json;
+using Ppki.Application;
 using Ppki.Domain;
 
 namespace Ppki.RuleEngine;

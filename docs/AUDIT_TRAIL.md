@@ -36,6 +36,13 @@ catalog.
 | `audit.failed` | database trigger with worker transaction context | audit job | status and generic failure category |
 | `audit.cancelled` | database trigger | audit job | previous/new status |
 
+A re-audit creation writes the existing `audit.requested` action in the same
+transaction as its new audit and cloned snapshots. Its correlation is the new
+audit ID and its causation ID is the source fix-execution ID. The lineage IDs
+are persisted on the audit job rather than duplicated into unrestricted event
+metadata. Replay returns the existing audit and does not append another
+request event.
+
 Trigger-generated events cover mutations that must remain visible even if an
 application call site is missed. Aggregate application events prevent hundreds
 of snapshot or finding events. Each action has exactly one source of truth, so

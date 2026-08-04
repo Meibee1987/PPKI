@@ -8,6 +8,7 @@ using Ppki.Application;
 using Ppki.Domain;
 using Ppki.FixEngine;
 using Ppki.Infrastructure;
+using Ppki.RuleEngine;
 using Ppki.Api;
 
 var builder = WebApplication.CreateBuilder(args);
@@ -35,6 +36,8 @@ builder.Services.AddScoped<IFixPlanSourceReader, FixPlanSourceReader>();
 builder.Services.AddScoped<IFixPlanPreviewService, FixPlanPreviewService>();
 builder.Services.AddScoped<IFixExecutionRepository, FixExecutionRepository>();
 builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();
+builder.Services.AddScoped<IReauditService, ReauditService>();
+builder.Services.AddSingleton<IResolvedRuleSetHasher, ResolvedRuleSetHasher>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IRemediationCapabilityRegistry>(_ => ProductionFixCapabilities.CreatePreviewRegistry());
 builder.Services.AddSingleton(ProductionFixCapabilities.CreateApplyRegistry());
@@ -243,6 +246,28 @@ api.MapGet("/audits/{id:guid}/fix-executions/{executionId:guid}", async (Guid id
 }).WithName("GetAuditFixExecution")
   .WithSummary("Read the safe lifecycle status of an owned fix execution.")
   .Produces<FixExecutionStatus>(StatusCodes.Status200OK)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapPost("/fix-executions/{executionId}/re-audit", async (string executionId,
+    ClaimsPrincipal user, IReauditService reaudits, CancellationToken ct) => {
+    if(!Guid.TryParse(executionId,out var parsedExecutionId)||parsedExecutionId==Guid.Empty)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid re-audit request.",
+            extensions:new Dictionary<string,object?>{{"code","reaudit-execution-id-invalid"}});
+    try {
+        var result=await reaudits.CreateAsync(parsedExecutionId,UserId(user),ct);
+        if(result is null)return Results.NotFound();
+        return result.Replayed?Results.Ok(result):Results.Accepted($"/api/audits/{result.AuditId}",result);
+    } catch(ReauditException exception) {
+        return Results.Problem(statusCode:StatusCodes.Status409Conflict,
+            title:"Re-audit request conflicts with its historical source context.",
+            extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
+    }
+}).WithName("CreateFixExecutionReaudit")
+  .WithSummary("Queue one canonical audit of a completed fix result using the exact source audit context.")
+  .Produces<ReauditAccepted>(StatusCodes.Status202Accepted)
+  .Produces<ReauditAccepted>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .ProducesProblem(StatusCodes.Status409Conflict)
   .Produces(StatusCodes.Status404NotFound);
 
 api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IAuditTrailWriter auditTrail, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {

@@ -87,6 +87,12 @@ The golden fixture pair is `minimal-invalid-layout.docx` (before) and
 `minimal-invalid-layout-justified.docx` (expected after). No other validation
 key has production apply capability in S3-T04.
 
-Re-audit, before/after comparison, finding resolution, ignore/accepted-risk
-workflow, partial apply, rollback, preview/apply UI, export, and lecturer review
-are deliberately deferred beyond S3-T04.
+S4-T01 adds an explicit, idempotent re-audit request after a completed
+execution. It targets the execution result version while reusing the source
+audit's exact profile, document-kind snapshot, resolved hash, and cloned rule
+snapshots; see [REAUDIT_ORCHESTRATION.md](REAUDIT_ORCHESTRATION.md). Fix apply
+itself still does not create or run an audit.
+
+Before/after comparison, finding resolution, ignore/accepted-risk workflow,
+partial apply, rollback, preview/apply/re-audit UI, export, and lecturer review
+remain deferred.

@@ -13,6 +13,8 @@
     "test:audit-trail-local": "node scripts/audit-trail-smoke-test.mjs",
     "test:security-integration-local": "node scripts/security-integration-test.mjs",
     "test:fix-execution-local": "node scripts/fix-execution-smoke-test.mjs",
+    "test:reaudit": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --filter FullyQualifiedName~Reaudit",
+    "test:reaudit-local": "node scripts/reaudit-smoke-test.mjs",
     "check:secrets": "node scripts/secret-scan.mjs",
     "check:migrations": "node scripts/migration-check.mjs",
     "fixtures:generate": "dotnet run --project backend/tools/Ppki.FixtureGenerator/Ppki.FixtureGenerator.csproj -- --output backend/tests/fixtures/docx/generated",

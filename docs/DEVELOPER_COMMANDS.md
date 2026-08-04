@@ -14,6 +14,8 @@ Semua command canonical dijalankan dari root repository.
 | Stop Supabase lokal | `npm run dev:stop` |
 | Test bootstrap | `npm run test:dev-bootstrap` |
 | Test fix-plan preview | `npm run test:fix-plan-preview` |
+| Test re-audit orchestration | `npm run test:reaudit` |
+| Smoke re-audit lokal | `npm run test:reaudit-local` |
 | Verifikasi repository | `npm run verify` |
 
 Supabase CLI adalah infrastruktur development canonical. `compose.yaml` berisi
@@ -33,3 +35,10 @@ di [SUPABASE_SETUP.md](SUPABASE_SETUP.md).
 Command verifikasi/domain lain tetap tersedia di `package.json`, termasuk
 fixture, parser, validator, scoring, findings UI, migration hygiene, secret
 hygiene, serta security integration.
+
+`test:reaudit` adalah suite fokus offline. `test:reaudit-local` membutuhkan
+Supabase CLI lokal yang sudah aktif dan migration additive sudah diterapkan;
+smoke tersebut menjalankan API lokal pada port bebas, tidak membaca `.env`,
+tidak mencetak credential, tidak melakukan database reset, dan tidak menyentuh
+hosted Supabase. Detail kontraknya ada di
+[REAUDIT_ORCHESTRATION.md](REAUDIT_ORCHESTRATION.md).

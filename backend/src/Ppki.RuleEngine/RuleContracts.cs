@@ -251,8 +251,3 @@ public interface IResolvedRuleSetSnapshotBuilder
         string layer,
         int precedence);
 }
-
-public interface IResolvedRuleSetHasher
-{
-    string Hash(IEnumerable<AuditRuleSnapshot> snapshots);
-}

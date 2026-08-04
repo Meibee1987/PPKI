@@ -47,6 +47,13 @@ and creation time never change.
 for terminal states and cannot precede `started_at`; a queued cancellation may
 have no start time. Terminal rows reject every update and delete.
 
+S4-T01 re-audits add nullable `source_audit_job_id` and
+`source_fix_execution_id`. Both are null for ordinary/legacy audits and both
+are required for a re-audit. Once present, the lineage, result document
+version, source profile version, document-kind snapshot, requester, resolved
+hash/count, and creation time are immutable. A unique source fix-execution
+reference selects one canonical re-audit without rewriting historical rows.
+
 While processing, the worker may set the resolved snapshot hash/count and then
 finding counts, score, a generic failure message, and terminal state. Once a
 resolved hash exists, it and `applicable_rule_count` are immutable. Completion
@@ -94,6 +101,13 @@ the persisted snapshot rather than resolving a new historical meaning. A
 validation failure transitions a still-processing job to `Failed` with a
 generic message; partial snapshot and completion transactions roll back.
 
+For a re-audit, the API transaction clones the source audit's exact snapshot
+rows before the queued audit commits. A deferred database trigger verifies the
+complete clone, and the canonical hasher verifies the source and clone against
+the persisted source hash. The existing worker then reads those precloned rows
+and the result `DocumentVersion`; it does not resolve live rules for that job.
+Source findings are not copied and remain immutable.
+
 Findings can only be inserted for a processing audit. After their parent is
 terminal they cannot be updated or deleted. API responses use finding and rule
 snapshot fields rather than current `rules` values. Future ignore/fix/reviewer
@@ -120,3 +134,7 @@ S1-T05 now adds the separate append-only operational audit trail documented in
 they do not replace audit jobs, rule snapshots, or findings. Runtime retention,
 FixPlan, reviewer workflow, export, and the S1-T06 security integration suite
 remain out of scope. No Storage policy or old migration is changed.
+
+The S4-T01 orchestration and its non-destructive local smoke are documented in
+[REAUDIT_ORCHESTRATION.md](REAUDIT_ORCHESTRATION.md). Comparison and finding
+resolution remain out of scope.

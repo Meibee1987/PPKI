@@ -22,7 +22,7 @@ public sealed class ImmutableEntityGuardTests
 
         var error = await Assert.ThrowsAsync<InvalidOperationException>(() => db.SaveChangesAsync());
 
-        Assert.Equal("Audit job document kind snapshot is immutable.", error.Message);
+        Assert.Equal("Audit job identity and resolved context are immutable.", error.Message);
     }
 
     [Theory]

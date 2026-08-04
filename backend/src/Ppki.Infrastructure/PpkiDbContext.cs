@@ -136,6 +136,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.Property(x => x.ProfileVersionId).HasColumnName("profile_version_id");
             entity.Property(x => x.DocumentKindSnapshot).HasColumnName("document_kind_snapshot").HasConversion<string>();
             entity.Property(x => x.RequestedByUserId).HasColumnName("requested_by_user_id");
+            entity.Property(x => x.SourceAuditJobId).HasColumnName("source_audit_job_id");
+            entity.Property(x => x.SourceFixExecutionId).HasColumnName("source_fix_execution_id");
             entity.Property(x => x.Status).HasColumnName("status").HasConversion<string>();
             entity.Property(x => x.ResolvedRuleSetHash).HasColumnName("resolved_rule_set_hash").HasMaxLength(64);
             entity.Property(x => x.ApplicableRuleCount).HasColumnName("applicable_rule_count");
@@ -148,8 +150,14 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.Property(x => x.CompletedAt).HasColumnName("completed_at");
             entity.Property(x => x.ErrorMessage).HasColumnName("error_message");
             entity.HasIndex(x => x.DocumentVersionId).HasDatabaseName("ix_audit_jobs_document_version");
+            entity.HasIndex(x => x.SourceAuditJobId).HasDatabaseName("ix_audit_jobs_source_audit");
+            entity.HasIndex(x => x.SourceFixExecutionId).IsUnique()
+                .HasDatabaseName("uq_audit_jobs_source_fix_execution")
+                .HasFilter("source_fix_execution_id is not null");
             entity.HasOne(x => x.DocumentVersion).WithMany(x => x.Audits).HasForeignKey(x => x.DocumentVersionId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.ProfileVersion).WithMany().HasForeignKey(x => x.ProfileVersionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceAuditJob).WithMany().HasForeignKey(x => x.SourceAuditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceFixExecution).WithMany().HasForeignKey(x => x.SourceFixExecutionId).OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<AuditRuleSnapshot>(entity =>
@@ -289,11 +297,21 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
 
     private void RejectImmutableEntityMutations()
     {
-        if (ChangeTracker.Entries<AuditJob>().Any(entry =>
-            entry.State == EntityState.Modified
-            && entry.Property(item => item.DocumentKindSnapshot).IsModified))
+        var immutableAuditProperties = new[]
         {
-            throw new InvalidOperationException("Audit job document kind snapshot is immutable.");
+            nameof(AuditJob.DocumentVersionId), nameof(AuditJob.ProfileVersionId),
+            nameof(AuditJob.DocumentKindSnapshot), nameof(AuditJob.RequestedByUserId),
+            nameof(AuditJob.SourceAuditJobId), nameof(AuditJob.SourceFixExecutionId),
+            nameof(AuditJob.CreatedAt)
+        };
+        if (ChangeTracker.Entries<AuditJob>().Any(entry => entry.State == EntityState.Modified
+            && (immutableAuditProperties.Any(name => entry.Property(name).IsModified)
+                || entry.Property(item => item.ResolvedRuleSetHash).IsModified
+                    && entry.Property(item => item.ResolvedRuleSetHash).OriginalValue is not null
+                || entry.Property(item => item.ApplicableRuleCount).IsModified
+                    && entry.Property(item => item.ResolvedRuleSetHash).OriginalValue is not null)))
+        {
+            throw new InvalidOperationException("Audit job identity and resolved context are immutable.");
         }
 
         if (ChangeTracker.Entries<DocumentVersion>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))

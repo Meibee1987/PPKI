@@ -103,6 +103,12 @@ public sealed class AuditJob : Entity
     public DocumentKind? DocumentKindSnapshot { get; set; }
     // Nullable only for legacy rows created before S1-T01. New jobs always set this from the authenticated caller.
     public Guid? RequestedByUserId { get; set; }
+    // Both lineage fields are null for ordinary/legacy audits and immutable
+    // once set for a re-audit created from a completed fix execution.
+    public Guid? SourceAuditJobId { get; set; }
+    public AuditJob? SourceAuditJob { get; set; }
+    public Guid? SourceFixExecutionId { get; set; }
+    public FixExecutionJob? SourceFixExecution { get; set; }
     public AuditJobStatus Status { get; set; } = AuditJobStatus.Queued;
     public string? ResolvedRuleSetHash { get; set; }
     public int ApplicableRuleCount { get; set; }

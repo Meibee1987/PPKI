@@ -49,6 +49,14 @@ server-only object access; see [STORAGE_SECURITY.md](STORAGE_SECURITY.md).
 | `audit_trail_events` | Append-only operational facts for critical document, Storage, and audit mutations | Auth actor/owner references are restricted; resource IDs are historical snapshots without cascading FKs |
 | `profile_rules` | Rule assignment for one profile version | profile version cascade; rule restrict |
 
+S4-T01 adds two nullable, paired relationships on `audit_jobs`:
+`source_audit_job_id` references the completed historical audit and
+`source_fix_execution_id` references its completed fix execution, both with
+`RESTRICT`. The audit's existing `document_version_id` points to the exact
+execution result. A unique constraint on `source_fix_execution_id` permits one
+canonical re-audit per execution; ordinary and legacy audits keep both fields
+null and no backfill is performed.
+
 `formatting_profiles -> profile_versions` is restricted and version numbers are
 unique per profile. `profile_versions -> profile_rules -> rules` prevents a
 duplicate rule assignment. Rule codes remain unique and stable.
@@ -73,6 +81,11 @@ duplicate rule assignment. Rule codes remain unique and stable.
   resolved rule snapshot rows. The worker persists the full snapshot and its
   canonical SHA-256 before validation; terminal jobs cannot change or be
   deleted.
+- A lineage audit must match the source audit's profile, document-kind
+  snapshot, resolved hash/count, and exact immutable rule-snapshot set. Its
+  requester and result version must match the completed fix execution, and the
+  source/result versions must belong to one document. A deferred trigger
+  rejects partial or different clones and copied initial findings.
 - Findings retain rule-code, severity, fix-mode, and supported source-reference
   snapshots (source section, PDF page, and printed page) alongside JSON
   actual/expected/location values. JSON is an object,
@@ -99,3 +112,5 @@ cascade with operational data. See [AUDIT_TRAIL.md](AUDIT_TRAIL.md) for its
 event, actor, correlation, metadata, and source contracts. RLS policy and
 least-privilege grants are defined by S1-T02/S1-T04/S1-T05; see
 [DATABASE_SECURITY.md](DATABASE_SECURITY.md) for the access matrix.
+Re-audit lineage and worker behavior are described in
+[REAUDIT_ORCHESTRATION.md](REAUDIT_ORCHESTRATION.md).
