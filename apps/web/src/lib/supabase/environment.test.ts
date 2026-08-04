@@ -21,11 +21,64 @@ test("rejects missing, empty, and placeholder public configuration without expos
   }
 });
 
-test("rejects non-HTTPS Supabase URLs and secret public keys", () => {
-  assert.throws(
-    () => getPublicSupabaseEnvironment({ ...validEnvironment, NEXT_PUBLIC_SUPABASE_URL: "http://valid-project.supabase.co" }),
-    /NEXT_PUBLIC_SUPABASE_URL/,
+test("accepts HTTPS Supabase URLs for hosted or deployed environments", () => {
+  assert.equal(
+    getPublicSupabaseEnvironment(validEnvironment).supabaseUrl,
+    "https://valid-project.supabase.co",
   );
+});
+
+test("accepts HTTP Supabase URLs only for exact loopback hosts on any port", () => {
+  for (const supabaseUrl of [
+    "http://127.0.0.1:55321",
+    "http://localhost:55321",
+    "http://[::1]:55321",
+  ]) {
+    assert.equal(
+      getPublicSupabaseEnvironment({
+        ...validEnvironment,
+        NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
+      }).supabaseUrl,
+      supabaseUrl,
+    );
+  }
+});
+
+test("rejects HTTP non-loopback and lookalike loopback hosts", () => {
+  for (const supabaseUrl of [
+    "http://example.com",
+    "http://127.0.0.1.example.com",
+    "http://localhost.example.com",
+  ]) {
+    assert.throws(
+      () => getPublicSupabaseEnvironment({
+        ...validEnvironment,
+        NEXT_PUBLIC_SUPABASE_URL: supabaseUrl,
+      }),
+      /NEXT_PUBLIC_SUPABASE_URL/,
+    );
+  }
+
+  assert.throws(
+    () => getPublicSupabaseEnvironment({
+      ...validEnvironment,
+      NEXT_PUBLIC_SUPABASE_URL: "http://non-loopback.test:55321",
+    }),
+    /must use HTTPS, except HTTP loopback URLs/,
+  );
+});
+
+test("rejects placeholder Supabase URLs", () => {
+  assert.throws(
+    () => getPublicSupabaseEnvironment({
+      ...validEnvironment,
+      NEXT_PUBLIC_SUPABASE_URL: "https://PROJECT_REF.supabase.co",
+    }),
+    /placeholder/,
+  );
+});
+
+test("rejects secret or service-role keys without exposing their values", () => {
   assert.throws(
     () => getPublicSupabaseEnvironment({ ...validEnvironment, NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: "sb_secret_not-for-error" }),
     (error: Error) =>
@@ -34,7 +87,7 @@ test("rejects non-HTTPS Supabase URLs and secret public keys", () => {
   );
 });
 
-test("accepts valid public configuration without making a network connection", () => {
+test("returns valid public configuration without making a network connection", () => {
   assert.deepEqual(getPublicSupabaseEnvironment(validEnvironment), {
     apiBaseUrl: "http://localhost:8080",
     supabaseUrl: "https://valid-project.supabase.co",

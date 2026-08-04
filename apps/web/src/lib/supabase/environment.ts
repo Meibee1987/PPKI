@@ -60,11 +60,17 @@ function validateHttpUrl(settingName: string, value: string): void {
 function validateSupabaseUrl(value: string): void {
   try {
     const url = new URL(value);
-    if (url.protocol !== "https:" || !url.hostname.endsWith(".supabase.co")) {
+    const hostname = url.hostname.toLowerCase();
+    const isLoopback = hostname === "localhost"
+      || hostname === "127.0.0.1"
+      || hostname === "[::1]";
+    if (url.protocol !== "https:" && !(url.protocol === "http:" && isLoopback)) {
       throw new Error();
     }
   } catch {
-    throw new Error("NEXT_PUBLIC_SUPABASE_URL must be an HTTPS Supabase hosted URL.");
+    throw new Error(
+      "NEXT_PUBLIC_SUPABASE_URL must use HTTPS, except HTTP loopback URLs are allowed for local development.",
+    );
   }
 }
 

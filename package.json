@@ -4,6 +4,7 @@
   "scripts": {
     "verify": "node scripts/developer.mjs verify",
     "test:developer": "node --test scripts/developer.test.mjs",
+    "test:dev-bootstrap": "node --test scripts/dev-bootstrap.test.mjs",
     "test:secret-hygiene": "node --test scripts/secret-scan.test.mjs",
     "test:migrations": "node --test scripts/migration-check.test.mjs",
     "test:rls-local": "node scripts/rls-smoke-test.mjs",
@@ -22,18 +23,15 @@
     "test:scoring": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter FullyQualifiedName~AuditScoring",
     "test:findings-ui": "npm run --prefix apps/web test:findings-ui",
     "dev:prerequisites": "node scripts/developer.mjs prerequisites",
-    "dev:up": "docker compose up --build",
-    "dev:rebuild": "docker compose up --build --force-recreate",
-    "dev:status": "docker compose ps",
-    "dev:logs": "docker compose logs --follow",
-    "dev:logs:api": "docker compose logs --follow api",
-    "dev:logs:worker": "docker compose logs --follow worker",
-    "dev:logs:web": "docker compose logs --follow web",
-    "dev:down": "docker compose down",
-    "supabase:login": "supabase login",
-    "supabase:link": "supabase link",
-    "supabase:push": "supabase db push",
-    "supabase:status": "supabase status"
+    "dev:infra": "node scripts/dev-bootstrap.mjs infra",
+    "dev:api": "node scripts/dev-bootstrap.mjs api",
+    "dev:worker": "node scripts/dev-bootstrap.mjs worker",
+    "dev:backend": "node scripts/dev-bootstrap.mjs backend",
+    "dev:web": "node scripts/dev-bootstrap.mjs web",
+    "dev:status": "node scripts/dev-bootstrap.mjs status",
+    "dev:stop": "node scripts/dev-bootstrap.mjs stop",
+    "dev:up": "npm run dev:infra",
+    "dev:down": "npm run dev:stop"
   },
-  "devDependencies": { "supabase": "latest" }
+  "devDependencies": { "supabase": "2.111.0" }
 }

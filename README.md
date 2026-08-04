@@ -2,176 +2,117 @@
 
 PPKI IPB Smart Formatter memeriksa format DOCX secara asynchronous. Next.js
 menyediakan UI dan Supabase Auth SSR; ASP.NET Core API dan worker menangani
-ownership, storage private, serta audit DOCX.
+ownership, private storage, serta audit DOCX.
 
-## Quick Start
+## Local development quick start
 
-Jalankan seluruh perintah dari root repository.
+Jalankan semua command dari root repository pada Windows PowerShell:
 
 ```powershell
-Copy-Item .env.example .env
-# Ganti seluruh placeholder di .env dengan konfigurasi Supabase Anda.
+npm ci
 npm run dev:prerequisites
-npm run verify
-npm run dev:up
+npm run dev:infra
 ```
 
-Setelah stack sehat, buka web di `http://localhost:3000` dan API liveness di
-`http://localhost:8080/health/live`.
+Kemudian buka dua terminal:
 
-## Required Tools
+```powershell
+npm run dev:backend
+```
+
+```powershell
+npm run dev:web
+```
+
+Web tersedia di `http://localhost:3000`; API liveness di
+`http://localhost:5080/health/live`.
+
+Contract local development hanya memakai Supabase CLI. Jangan menjalankan
+`docker compose up` sebagai stack lokal kedua. Compose baseline tidak berisi
+PostgreSQL/Auth/Storage Supabase. Container Compose
+`ppki-smart-formatter-supabase-api-1`, bila masih ada, adalah aplikasi ASP.NET
+service `api`, bukan Supabase API/Kong.
+
+## Required tools
 
 - Git
-- Docker Desktop (daemon aktif) dan Docker Compose v2
-- Node.js 24 untuk menjalankan frontend atau command repository langsung
-- .NET SDK 10 untuk menjalankan backend atau verifikasi langsung
+- Docker Desktop dengan daemon aktif
+- Docker Compose v2 (untuk validasi baseline)
+- Node.js 24
+- .NET SDK 10
 
-`npm run dev:prerequisites` memeriksa tool tersebut, termasuk major version
-Node.js dan .NET. Script ini tidak memasang atau mengunduh tool apa pun.
+`npm run dev:prerequisites` memeriksa tool/major version dan tidak memasang atau
+mengunduh apa pun.
 
-Jika SDK Node.js atau .NET tidak tersedia di host, tahap backend dan frontend
-dapat diverifikasi dengan image SDK resmi di container. Mount hanya direktori
-yang diperlukan sebagai read-only, lalu salin ke filesystem sementara container
-sebelum menjalankan command. Contoh PowerShell berikut tidak memakai `.env`:
+## Development commands
+
+| Tujuan | Command |
+| --- | --- |
+| Start/reconcile Supabase lokal | `npm run dev:infra` |
+| API saja | `npm run dev:api` |
+| Worker saja | `npm run dev:worker` |
+| API + Worker | `npm run dev:backend` |
+| Web | `npm run dev:web` |
+| Status/preflight | `npm run dev:status` |
+| Stop infrastruktur | `npm run dev:stop` |
+
+`dev:backend` menjalankan API dan worker dengan environment yang sama. Ctrl+C
+menghentikan keduanya; bila salah satu gagal, sibling process ikut dihentikan dan
+exit command menjadi non-zero. Rule catalog ditemukan otomatis dari root pada
+`rules/ppki-ipb-2019/rules.json`.
+
+Supabase URL, key, dan database password lokal diambil programmatically dari
+CLI lalu hanya diteruskan melalui environment child process. Nilainya tidak
+dicetak dan tidak masuk command-line argument. Runner tidak membaca `.env`.
+Override non-secret opsional dapat dibuat dengan:
 
 ```powershell
-docker run --rm -v "${PWD}/backend:/source:ro" mcr.microsoft.com/dotnet/sdk:10.0 sh -c "cp -a /source /tmp/backend && cd /tmp/backend && dotnet restore PpkiSmartFormatter.slnx && dotnet build PpkiSmartFormatter.slnx --no-restore && dotnet test PpkiSmartFormatter.slnx --no-build"
-docker run --rm -v "${PWD}/apps/web:/source:ro" node:24-bookworm sh -c "cp -a /source /tmp/web && cd /tmp/web && npm ci && npm run test:config && npm run typecheck && NEXT_PUBLIC_API_BASE_URL=http://localhost:8080 NEXT_PUBLIC_SUPABASE_URL=https://verification.supabase.co NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY=sb_publishable_verification npm run build"
+Copy-Item .env.local.example .env.local
 ```
 
-Docker Compose validation tetap memerlukan Docker Compose di host. Image
-container di atas tidak mengubah source checkout atau memasang tool di host.
+Lihat [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md) untuk setup pertama,
+daftar variable, port, recovery stale container, serta diagnosis konflik port.
 
-## Configure .env
-
-`.env.example` adalah template, bukan konfigurasi siap pakai. Salin menjadi
-`.env`, lalu ganti semua placeholder sebelum memulai aplikasi. Jangan commit,
-membaca ke log, atau membagikan `.env`; ia berisi connection string dan secret
-Supabase. `.env` tetap dipakai Docker Compose secara lokal dan tidak dibaca
-oleh script verifikasi.
-
-Untuk membuat schema Supabase, gunakan `npm ci` lalu command `npm run
-supabase:login`, `npm run supabase:link -- --project-ref YOUR_PROJECT_REF`, dan
-`npm run supabase:push`. Lihat [docs/SUPABASE_SETUP.md](docs/SUPABASE_SETUP.md)
-untuk urutan lengkapnya.
-
-## Verify Repository
-
-Command verifikasi canonical adalah:
+## Verify repository
 
 ```powershell
+npm run test:dev-bootstrap
+npm run check:secrets
+npm run test:secret-hygiene
+npm run check:migrations
 npm run verify
 ```
 
-Ia berhenti pada kegagalan pertama dan mengembalikan exit code non-zero. Delapan
-tahap dijalankan berurutan: restore, build, dan test .NET; `npm ci`, test
-konfigurasi, typecheck, dan build web; lalu `docker compose --env-file
-.env.example config --quiet`. Build web memakai nilai publik non-secret khusus
-verifikasi sehingga tidak membutuhkan `.env`; nilai tersebut tidak dicetak.
+`npm run verify` menjalankan restore/build/test .NET, install/test/typecheck/build
+web, lalu validasi Compose dengan `.env.example`. Validasi Compose ini hanya
+memeriksa bentuk baseline dan tidak men-start stack atau mengakses hosted
+Supabase.
 
-Validasi Compose hanya memeriksa bentuk konfigurasi dengan template contoh. Ini
-tidak sama dengan startup aplikasi dan tidak memverifikasi kredensial Supabase
-atau koneksi hosted.
-
-Untuk gate keamanan Sprint 01 yang menjalankan API dan dua worker nyata pada
-Supabase lokal yang sudah aktif, gunakan `npm run
-test:security-integration-local`. Command ini tidak membaca `.env`, tidak
-menjalankan reset, dan tidak mengakses hosted Supabase. Lihat
+Untuk gate keamanan yang menjalankan API dan worker terhadap Supabase lokal yang
+sudah aktif, gunakan `npm run test:security-integration-local`. Suite itu tidak
+menjalankan reset. Detailnya ada di
 [docs/SECURITY_INTEGRATION_TESTS.md](docs/SECURITY_INTEGRATION_TESTS.md).
 
-## Health checks and troubleshooting
+## Health checks
 
-- `GET /health/live` proves only that the API process is running. It never
-  contacts PostgreSQL or Supabase Storage.
-- `GET /health/ready` checks database connectivity and validates the required
-  server-side Storage configuration. It returns `503` when a required
-  dependency is unavailable; healthy and degraded responses use `200`. The
-  dependency probe timeout defaults to three seconds and may be set from one to
-  ten seconds with `HEALTHCHECKS_TIMEOUT_SECONDS` in Compose.
-- `GET /health` remains as a documented compatibility alias for
-  `/health/live`.
+- `GET /health/live` membuktikan process API hidup tanpa menghubungi dependency.
+- `GET /health/ready` memeriksa database dan konfigurasi Storage server-side.
+- `GET /health` adalah compatibility alias untuk liveness.
 
-Each response contains only a status and check names/statuses. It deliberately
-omits configuration values, exception details, secrets, document data, and
-user data. Docker uses `/health/live` so an external database outage does not
-turn the container restart probe into a dependency probe.
+Response health tidak memuat exception, secret, isi dokumen, atau data user.
+Worker tidak mempunyai endpoint HTTP.
 
-```powershell
-Invoke-WebRequest http://localhost:8080/health/live
-Invoke-WebRequest http://localhost:8080/health/ready
-```
+## Safety
 
-If liveness succeeds but readiness is `503`, inspect database reachability and
-the three Storage bucket settings locally without copying their values into an
-issue. If fail-fast configuration validation prevents the API from starting,
-no health endpoint will be available; correct the named local setting without
-printing it. Readiness is not a replacement for monitoring or audit logs. The
-worker intentionally has no HTTP health endpoint; it emits one safe startup
-diagnostic after configuration validation and queue startup.
+- Jangan commit `.env` atau `.env.local`.
+- Jangan menaruh secret/service-role key pada variable `NEXT_PUBLIC_*`.
+- Jangan memakai `supabase db reset` atau menghapus Docker volume untuk recovery
+  biasa.
+- `dev:infra` tidak menghentikan container project lain; konflik port dilaporkan
+  dengan owner bila tersedia.
+- Bucket private lokal (`documents-original`, `documents-versions`, dan
+  `audit-reports`) dibuat oleh migration existing.
 
-## Start Development Stack
-
-```powershell
-npm run dev:up
-```
-
-Command ini menjalankan `docker compose up --build` dan menggunakan `.env`
-lokal yang sudah dikonfigurasi. Untuk membangun ulang dan mengganti container,
-gunakan `npm run dev:rebuild`.
-
-## View Logs
-
-```powershell
-npm run dev:status
-npm run dev:logs
-npm run dev:logs:api
-npm run dev:logs:worker
-npm run dev:logs:web
-```
-
-Gunakan `Ctrl+C` untuk berhenti mengikuti log; container tetap berjalan.
-
-## Stop Stack
-
-```powershell
-npm run dev:down
-```
-
-Command ini menjalankan `docker compose down` tanpa menghapus volume.
-
-## Destructive Reset Warning
-
-Jangan gunakan reset volume untuk masalah biasa. Jika Anda benar-benar ingin
-menghapus volume Docker stack dan memahami bahwa data development akan hilang,
-jalankan sendiri `docker compose down -v` setelah meninjau targetnya. Command
-tersebut sengaja tidak mempunyai npm script dan tidak pernah dijalankan oleh
-verifikasi atau command default.
-
-## Common Windows Issues
-
-- **Port sudah dipakai:** hentikan proses/container pemakai port 3000 atau 8080,
-  atau ubah `WEB_PORT` / `API_PORT` di `.env`, lalu jalankan `npm run dev:up`.
-- **Docker daemon tidak aktif:** buka Docker Desktop dan tunggu status engine
-  berjalan, lalu ulangi `npm run dev:prerequisites`.
-- **`npm` gagal dengan `EPERM`:** tutup proses Node/Next yang masih memakai
-  `node_modules`, jalankan PowerShell biasa dari folder repository, lalu ulangi
-  `npm --prefix apps/web ci`. Jangan menghapus `.env` dan jangan menjalankan
-  `npm audit fix` untuk masalah ini.
-- **PowerShell memblokir `npm.ps1`:** gunakan `npm.cmd` untuk command yang
-  sama, misalnya `npm.cmd run verify`, atau jalankan melalui Command Prompt.
-- **API atau worker menolak konfigurasi Supabase:** periksa nama setting dan
-  placeholder di `.env` tanpa membagikan nilainya. API/worker berhenti lebih
-  awal untuk URL, key, atau connection string Supabase yang invalid; gunakan
-  dashboard Supabase untuk mengambil nilai yang benar.
-
-## Active PPKI rules
-
-Starter saat ini mencakup A4, Times New Roman 12, margin PPKI, spasi tunggal,
-indentasi awal 1 cm, dan justified. Katalog 317 rule tetap di
+Starter rule aktif mencakup A4, Times New Roman 12, margin PPKI, spasi tunggal,
+indentasi awal 1 cm, dan justified. Katalog 317 rule tetap berada di
 `rules/ppki-ipb-2019/rules.json`.
-
-## Security notes
-
-- `NEXT_PUBLIC_*` hanya boleh memuat Project URL dan publishable key.
-- Secret key dan connection string hanya dipakai API/worker.
-- Bucket Supabase Storage bersifat private; akses file melewati API/worker.

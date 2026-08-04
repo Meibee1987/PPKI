@@ -1,36 +1,34 @@
 # Developer command inventory
 
-This inventory records the command sources found during S0-T03 and the
-canonical replacements. Run canonical commands from the repository root.
+Semua command canonical dijalankan dari root repository.
 
-| Need | Previous command sources | Canonical command |
-| --- | --- | --- |
-| Restore, build, test backend | Baseline docs and Dockerfiles use `dotnet`; CI previously used Release configuration | `npm run verify` (or the documented individual commands in `BASELINE_VERIFICATION.md`) |
-| Install, config test, typecheck, build web | Baseline uses `npm --prefix apps/web`; CI previously changed directory and omitted config test | `npm run verify` |
-| Validate Compose | Baseline uses example environment explicitly | `npm run verify` |
-| Check API health manually | API runtime | `Invoke-WebRequest http://localhost:8080/health/live` and `/health/ready` |
-| Generate/check synthetic DOCX fixtures | `backend/tests/fixtures/docx/README.md` | `npm run fixtures:generate`, then `npm run fixtures:check` |
-| Run parsed-document, style/numbering resolution, outline, semantic-section, systematics, and determinism tests | S2-T01/S2-T02/S2-T03/S2-T04 Open XML parser contract | `npm run test:docx-parser` |
-| Run deterministic Wave 1 layout validator, registry, finding, fixture, and audit-integration tests | S2-T05 layout validation contract | `npm run test:layout-validators` |
-| Run all Wave 1 layout and structural validator tests | S2-T05/S2-T06 validation contracts | `npm run test:wave1-validators` |
-| Run deterministic audit summary/findings query tests | S3-T01 read-model contract | `npm run test:audit-read-model` |
-| Run versioned scoring-contract tests | S3-T01 scoring contract | `npm run test:scoring` |
-| Run typed findings UI contract, URL, privacy-renderer, score-state, location, and pagination tests | S3-T02 findings UI | `npm run test:findings-ui` |
-| Run local API/worker security integration | Sprint 01 security closure | `npm run test:security-integration-local` (requires an already-running local Supabase stack; never starts or resets it) |
-| Start stack | README, Supabase setup, bootstrap scripts used `docker compose up --build` | `npm run dev:up` |
-| Rebuild stack | Not previously standardized | `npm run dev:rebuild` |
-| Status and logs | Not previously documented as root scripts | `npm run dev:status`, `npm run dev:logs[:api|:worker|:web]` |
-| Stop stack | Older documentation used `docker compose down` | `npm run dev:down` |
-| Supabase CLI install | Bootstrap and setup documentation used `npm install` | `npm ci` before the existing `supabase:*` scripts |
+| Kebutuhan | Command canonical |
+| --- | --- |
+| Prasyarat tool | `npm run dev:prerequisites` |
+| Start Supabase lokal | `npm run dev:infra` |
+| API saja | `npm run dev:api` |
+| Worker saja | `npm run dev:worker` |
+| API + Worker | `npm run dev:backend` |
+| Frontend | `npm run dev:web` |
+| Preflight/status aman | `npm run dev:status` |
+| Stop Supabase lokal | `npm run dev:stop` |
+| Test bootstrap | `npm run test:dev-bootstrap` |
+| Verifikasi repository | `npm run verify` |
 
-`npm run verify` is implemented in `scripts/developer.mjs` with no external
-task-runner dependency. The script owns the stage order and output, which avoids
-duplicating Windows and Linux shell logic. CI splits those same backend and web
-commands into readable jobs, while its offline hygiene gates use `npm run
-check:secrets` and `npm run check:migrations`. CI does not use a local `.env` or
-connect to hosted Supabase.
+Supabase CLI adalah infrastruktur development canonical. `compose.yaml` berisi
+container aplikasi dari baseline lama; service `api` menghasilkan nama Compose
+`ppki-smart-formatter-supabase-api-1` dan melayani ASP.NET pada host port 8080.
+Container tersebut bukan Kong atau API Supabase dan Compose tidak menyediakan
+PostgreSQL/Auth/Storage. Karena itu tidak ada command local-development yang
+menjalankan Compose; `docker compose --env-file .env.example config --quiet`
+tetap dipertahankan sebagai validasi deklaratif baseline.
 
-Dockerfiles remain build-image definitions rather than developer entry points:
-the API and worker restore then publish with .NET 10, and the web image runs
-`npm ci` then `npm run build`. Historical `docs/codex-prompts/` files describe
-past implementation prompts and are not command references.
+Runner `scripts/dev-bootstrap.mjs` menemukan root tanpa bergantung current drive,
+memvalidasi rule catalog, Docker, status stack, konfigurasi, dan port, kemudian
+memuat kredensial lokal dari output Supabase CLI yang ditangkap. Tidak ada nilai
+secret yang dicetak atau dimasukkan ke command line. Detail setup/recovery ada
+di [SUPABASE_SETUP.md](SUPABASE_SETUP.md).
+
+Command verifikasi/domain lain tetap tersedia di `package.json`, termasuk
+fixture, parser, validator, scoring, findings UI, migration hygiene, secret
+hygiene, serta security integration.
