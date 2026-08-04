@@ -45,3 +45,12 @@ public enum FixMode
     Manual,
     Report
 }
+
+public enum FixExecutionState
+{
+    Queued,
+    Processing,
+    Completed,
+    Failed,
+    NoChange
+}

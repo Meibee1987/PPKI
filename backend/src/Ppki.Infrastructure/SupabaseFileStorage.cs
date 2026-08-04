@@ -9,6 +9,7 @@ namespace Ppki.Infrastructure;
 
 public sealed class SupabaseFileStorage(IHttpClientFactory httpClientFactory, IOptions<SupabaseOptions> options, IStorageObjectPathBuilder pathBuilder) : IFileStorage
 {
+    private const long MaximumDocumentBytes = 50L * 1024 * 1024;
     private readonly SupabaseOptions _options = options.Value;
 
     public async Task<StoredFile> SaveAsync(Stream source, string originalFilename, string contentType, string bucket, string objectPath, CancellationToken cancellationToken)
@@ -47,10 +48,31 @@ public sealed class SupabaseFileStorage(IHttpClientFactory httpClientFactory, IO
             throw new InvalidOperationException($"Supabase Storage download failed ({(int)response.StatusCode}).");
         }
 
+        if (response.Content.Headers.ContentLength is > MaximumDocumentBytes)
+            throw new InvalidOperationException("Supabase Storage download exceeded the document size limit.");
+
         var temp = Path.Combine(Path.GetTempPath(), $"ppki-{Guid.NewGuid():N}.docx");
-        await using var output = File.Create(temp);
-        await response.Content.CopyToAsync(output, cancellationToken);
-        return temp;
+        try
+        {
+            await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
+            await using var output = File.Create(temp);
+            var buffer = new byte[81920];
+            long total = 0;
+            int read;
+            while ((read = await input.ReadAsync(buffer.AsMemory(0, buffer.Length), cancellationToken)) > 0)
+            {
+                total += read;
+                if (total > MaximumDocumentBytes)
+                    throw new InvalidOperationException("Supabase Storage download exceeded the document size limit.");
+                await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+            }
+            return temp;
+        }
+        catch
+        {
+            if (File.Exists(temp)) File.Delete(temp);
+            throw;
+        }
     }
 
     public async Task<string> CreateSignedDownloadUrlAsync(string bucket, string objectPath, TimeSpan lifetime, CancellationToken cancellationToken)

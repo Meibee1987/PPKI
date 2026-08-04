@@ -542,6 +542,17 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         22U,
         [new ParagraphDefinition("Paragraf sintetis untuk pengujian parser.", null, JustificationValues.Left, 276U, null)], FixtureKind.Basic),
     new(
+        "minimal-invalid-layout-justified.docx",
+        12240U,
+        15840U,
+        1440U,
+        1440U,
+        1440U,
+        1440U,
+        "Calibri",
+        22U,
+        [new ParagraphDefinition("Paragraf sintetis untuk pengujian parser.", null, JustificationValues.Both, 276U, null)], FixtureKind.Basic),
+    new(
         "minimal-heading-layout.docx",
         11906U,
         16838U,

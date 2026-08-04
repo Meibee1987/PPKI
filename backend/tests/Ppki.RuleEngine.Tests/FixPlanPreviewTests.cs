@@ -433,7 +433,7 @@ public sealed class FixPlanPreviewArchitectureTests
     }
 
     [Fact]
-    public void Endpoint_is_authenticated_thin_read_only_adapter_and_production_registry_is_empty()
+    public void Endpoint_is_authenticated_thin_read_only_adapter_and_production_registry_is_explicit()
     {
         var api = Source("backend", "services", "Ppki.Api", "Program.cs");
         var routeStart = api.IndexOf("api.MapPost(\"/audits/{id:guid}/fix-plan-preview\"", StringComparison.Ordinal);
@@ -448,7 +448,7 @@ public sealed class FixPlanPreviewArchitectureTests
         Assert.DoesNotContain("SaveChanges", endpoint, StringComparison.Ordinal);
         Assert.DoesNotContain("IFileStorage", endpoint, StringComparison.Ordinal);
         Assert.DoesNotContain("DeterministicFixPlanPreviewPlanner", endpoint, StringComparison.Ordinal);
-        Assert.Contains("RemediationCapabilityRegistry.Empty()", api, StringComparison.Ordinal);
+        Assert.Contains("ProductionFixCapabilities.CreatePreviewRegistry()", api, StringComparison.Ordinal);
         Assert.DoesNotContain("/fix-plan-apply", api, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("/apply-fix", api, StringComparison.OrdinalIgnoreCase);
     }
@@ -473,7 +473,7 @@ public sealed class FixPlanPreviewArchitectureTests
         var fixProject = Source("backend", "src", "Ppki.FixEngine", "Ppki.FixEngine.csproj");
         var apiProject = Source("backend", "services", "Ppki.Api", "Ppki.Api.csproj");
 
-        Assert.DoesNotContain("Ppki.DocxEngine", fixProject, StringComparison.Ordinal);
+        Assert.Contains("Ppki.DocxEngine", fixProject, StringComparison.Ordinal);
         Assert.DoesNotContain("Ppki.RuleEngine", fixProject, StringComparison.Ordinal);
         Assert.DoesNotContain("apps/web", fixProject, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("Ppki.DocxEngine", apiProject, StringComparison.Ordinal);

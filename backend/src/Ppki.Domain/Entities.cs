@@ -162,3 +162,28 @@ public sealed class AuditFinding : Entity
     public decimal? Confidence { get; set; }
     public FindingStatus Status { get; set; } = FindingStatus.Open;
 }
+
+public sealed class FixExecutionJob : Entity
+{
+    public Guid AuditJobId { get; set; }
+    public AuditJob? AuditJob { get; set; }
+    public Guid SourceDocumentVersionId { get; set; }
+    public DocumentVersion? SourceDocumentVersion { get; set; }
+    public Guid? ResultDocumentVersionId { get; set; }
+    public DocumentVersion? ResultDocumentVersion { get; set; }
+    public Guid RequestedByUserId { get; set; }
+    public Guid IdempotencyKey { get; set; }
+    public required string PlanHash { get; set; }
+    public required string PlannerVersion { get; set; }
+    public required string SelectedFindingIdsJson { get; set; }
+    public required string ApprovedPlanSnapshotJson { get; set; }
+    public FixExecutionState State { get; set; } = FixExecutionState.Queued;
+    public int PlannedOperationCount { get; set; }
+    public int CompletedOperationCount { get; set; }
+    public int FailedOperationCount { get; set; }
+    public string? ResultSha256 { get; set; }
+    public string? SafeFailureCode { get; set; }
+    public DateTimeOffset? StartedAt { get; set; }
+    public DateTimeOffset? LeaseExpiresAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+}

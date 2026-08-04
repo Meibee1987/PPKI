@@ -33,7 +33,12 @@ builder.Services.AddScoped<IFileStorage, SupabaseFileStorage>();
 builder.Services.AddScoped<IAuditReadService, AuditReadService>();
 builder.Services.AddScoped<IFixPlanSourceReader, FixPlanSourceReader>();
 builder.Services.AddScoped<IFixPlanPreviewService, FixPlanPreviewService>();
-builder.Services.AddSingleton<IRemediationCapabilityRegistry>(_ => RemediationCapabilityRegistry.Empty());
+builder.Services.AddScoped<IFixExecutionRepository, FixExecutionRepository>();
+builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();
+builder.Services.AddSingleton(TimeProvider.System);
+builder.Services.AddSingleton<IRemediationCapabilityRegistry>(_ => ProductionFixCapabilities.CreatePreviewRegistry());
+builder.Services.AddSingleton(ProductionFixCapabilities.CreateApplyRegistry());
+builder.Services.AddSingleton<IFixApplyCapabilityResolver>(provider => provider.GetRequiredService<FixApplyCapabilityRegistry>());
 builder.Services.AddSingleton<IFixPlanPreviewPlanner, DeterministicFixPlanPreviewPlanner>();
 builder.Services.AddSingleton<IStorageObjectPathBuilder, StorageObjectPathBuilder>();
 builder.Services.AddSingleton<IAuditTrailWriter, AuditTrailWriter>();
@@ -199,6 +204,45 @@ api.MapPost("/audits/{id:guid}/fix-plan-preview", async (Guid id,
   .Accepts<FixPlanPreviewRequest>("application/json")
   .Produces<FixPlanPreview>(StatusCodes.Status200OK)
   .ProducesProblem(StatusCodes.Status400BadRequest)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapPost("/audits/{id:guid}/fix-executions", async (Guid id,
+    ClaimsPrincipal user, HttpRequest httpRequest, FixExecutionRequest? request,
+    IFixExecutionService executions, CancellationToken ct) => {
+    string? selectionError=null;
+    if(request is null || !FixPlanSelection.TryCreate(request.FindingIds,out var selection,out selectionError))
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid fix execution request.",
+            extensions:new Dictionary<string,object?>{{"code",selectionError??"fix-execution-request-invalid"}});
+    var header=httpRequest.Headers["Idempotency-Key"];
+    if(header.Count!=1 || !Guid.TryParse(header[0],out var idempotencyKey) || idempotencyKey==Guid.Empty)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid Idempotency-Key.",
+            extensions:new Dictionary<string,object?>{{"code","fix-execution-idempotency-key-invalid"}});
+    try {
+        var result=await executions.AcceptAsync(id,UserId(user),idempotencyKey,selection,request.PlanHash??string.Empty,ct);
+        if(result is null)return Results.NotFound();
+        return result.Replayed?Results.Ok(result):Results.Accepted($"/api/audits/{id}/fix-executions/{result.Id}",result);
+    } catch(FixExecutionException exception) {
+        var malformed=exception.DiagnosticCode is "fix-execution-plan-hash-invalid" or "fix-execution-idempotency-key-invalid";
+        return Results.Problem(statusCode:malformed?StatusCodes.Status400BadRequest:StatusCodes.Status409Conflict,
+            title:malformed?"Invalid fix execution request.":"Fix execution request conflicts with the approved plan.",
+            extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
+    }
+}).WithName("CreateAuditFixExecution")
+  .WithSummary("Accept an exact preview plan for asynchronous execution.")
+  .Accepts<FixExecutionRequest>("application/json")
+  .Produces<FixExecutionAccepted>(StatusCodes.Status202Accepted)
+  .Produces<FixExecutionAccepted>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .ProducesProblem(StatusCodes.Status409Conflict)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapGet("/audits/{id:guid}/fix-executions/{executionId:guid}", async (Guid id,
+    Guid executionId, ClaimsPrincipal user, IFixExecutionService executions, CancellationToken ct) => {
+    var result=await executions.GetAsync(executionId,UserId(user),ct);
+    return result is null||result.AuditId!=id?Results.NotFound():Results.Ok(result);
+}).WithName("GetAuditFixExecution")
+  .WithSummary("Read the safe lifecycle status of an owned fix execution.")
+  .Produces<FixExecutionStatus>(StatusCodes.Status200OK)
   .Produces(StatusCodes.Status404NotFound);
 
 api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IAuditTrailWriter auditTrail, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {

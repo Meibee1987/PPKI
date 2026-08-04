@@ -118,7 +118,7 @@ public sealed class DocxFixtureTests
         var manifest = await DocxFixtureManifest.LoadAsync(DocxFixtureWorkspace.FixtureRoot);
 
         Assert.Equal(1, manifest.SchemaVersion);
-        Assert.Equal(8, manifest.Fixtures.Count);
+        Assert.Equal(9, manifest.Fixtures.Count);
         Assert.All(manifest.Fixtures, fixture =>
         {
             Assert.True(fixture.Synthetic);

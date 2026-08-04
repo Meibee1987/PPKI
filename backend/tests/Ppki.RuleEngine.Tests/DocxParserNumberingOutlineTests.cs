@@ -346,7 +346,7 @@ public sealed class DocxParserNumberingOutlineTests
     public async Task All_eight_fixtures_remain_parseable_and_headers_do_not_enter_outline()
     {
         var manifest = await DocxFixtureManifest.LoadAsync(DocxFixtureWorkspace.FixtureRoot);
-        Assert.Equal(8, manifest.Fixtures.Count);
+        Assert.Equal(9, manifest.Fixtures.Count);
         foreach (var definition in manifest.Fixtures)
         {
             await using var workspace = await DocxFixtureWorkspace.CreateAsync(definition.FixtureId);

@@ -16,6 +16,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
     public DbSet<AuditJob> AuditJobs => Set<AuditJob>();
     public DbSet<AuditRuleSnapshot> AuditRuleSnapshots => Set<AuditRuleSnapshot>();
     public DbSet<AuditFinding> AuditFindings => Set<AuditFinding>();
+    public DbSet<FixExecutionJob> FixExecutionJobs => Set<FixExecutionJob>();
     public DbSet<AuditTrailEvent> AuditTrailEvents => Set<AuditTrailEvent>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -202,6 +203,36 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.HasOne(x => x.Rule).WithMany().HasForeignKey(x => x.RuleId).OnDelete(DeleteBehavior.Restrict);
         });
 
+        builder.Entity<FixExecutionJob>(entity =>
+        {
+            entity.ToTable("fix_execution_jobs");
+            Common(entity);
+            entity.Property(x => x.AuditJobId).HasColumnName("audit_job_id");
+            entity.Property(x => x.SourceDocumentVersionId).HasColumnName("source_document_version_id");
+            entity.Property(x => x.ResultDocumentVersionId).HasColumnName("result_document_version_id");
+            entity.Property(x => x.RequestedByUserId).HasColumnName("requested_by_user_id");
+            entity.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key");
+            entity.Property(x => x.PlanHash).HasColumnName("plan_hash").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.PlannerVersion).HasColumnName("planner_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.SelectedFindingIdsJson).HasColumnName("selected_finding_ids").HasColumnType("jsonb").IsRequired();
+            entity.Property(x => x.ApprovedPlanSnapshotJson).HasColumnName("approved_plan_snapshot").HasColumnType("jsonb").IsRequired();
+            entity.Property(x => x.State).HasColumnName("state").HasConversion<string>();
+            entity.Property(x => x.PlannedOperationCount).HasColumnName("planned_operation_count");
+            entity.Property(x => x.CompletedOperationCount).HasColumnName("completed_operation_count");
+            entity.Property(x => x.FailedOperationCount).HasColumnName("failed_operation_count");
+            entity.Property(x => x.ResultSha256).HasColumnName("result_sha256").HasMaxLength(64);
+            entity.Property(x => x.SafeFailureCode).HasColumnName("safe_failure_code").HasMaxLength(128);
+            entity.Property(x => x.StartedAt).HasColumnName("started_at");
+            entity.Property(x => x.LeaseExpiresAt).HasColumnName("lease_expires_at");
+            entity.Property(x => x.CompletedAt).HasColumnName("completed_at");
+            entity.HasIndex(x => new { x.AuditJobId, x.IdempotencyKey }).IsUnique();
+            entity.HasIndex(x => new { x.SourceDocumentVersionId, x.PlanHash }).IsUnique();
+            entity.HasIndex(x => new { x.State, x.CreatedAt }).HasDatabaseName("ix_fix_execution_jobs_worker_queue");
+            entity.HasOne(x => x.AuditJob).WithMany().HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceDocumentVersion).WithMany().HasForeignKey(x => x.SourceDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ResultDocumentVersion).WithMany().HasForeignKey(x => x.ResultDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
         builder.Entity<AuditTrailEvent>(entity =>
         {
             entity.ToTable("audit_trail_events");
@@ -268,6 +299,20 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
         if (ChangeTracker.Entries<DocumentVersion>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
         {
             throw new InvalidOperationException("Document versions are insert-only.");
+        }
+
+        var immutableFixProperties = new[]
+        {
+            nameof(FixExecutionJob.AuditJobId), nameof(FixExecutionJob.SourceDocumentVersionId),
+            nameof(FixExecutionJob.RequestedByUserId), nameof(FixExecutionJob.IdempotencyKey),
+            nameof(FixExecutionJob.PlanHash), nameof(FixExecutionJob.PlannerVersion),
+            nameof(FixExecutionJob.SelectedFindingIdsJson), nameof(FixExecutionJob.ApprovedPlanSnapshotJson),
+            nameof(FixExecutionJob.PlannedOperationCount), nameof(FixExecutionJob.CreatedAt)
+        };
+        if (ChangeTracker.Entries<FixExecutionJob>().Any(entry => entry.State == EntityState.Deleted
+            || entry.State == EntityState.Modified && immutableFixProperties.Any(name => entry.Property(name).IsModified)))
+        {
+            throw new InvalidOperationException("Fix execution request and approved plan snapshot are immutable.");
         }
 
         if (ChangeTracker.Entries<AuditRuleSnapshot>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))

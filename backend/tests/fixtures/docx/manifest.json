@@ -45,6 +45,20 @@
       "generatorVersion": "5.0.0"
     },
     {
+      "fixtureId": "minimal-invalid-layout-justified",
+      "filename": "minimal-invalid-layout-justified.docx",
+      "description": "Golden expected-after fixture for the body.justified direct paragraph mutation.",
+      "synthetic": true,
+      "intendedProperties": ["fixer-expected-after", "direct-paragraph-justified", "all-other-invalid-layout-properties-preserved"],
+      "expectedDocumentProperties": {
+        "pageSizeCm": { "width": 21.59, "height": 27.94 },
+        "marginsCm": { "top": 2.54, "right": 2.54, "bottom": 2.54, "left": 2.54 },
+        "body": { "font": "Calibri", "fontSizePt": 11.0, "lineSpacing": 1.15, "firstLineIndentCm": null, "alignment": "Both" }
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "5.0.0"
+    },
+    {
       "fixtureId": "minimal-table-field-layout",
       "filename": "minimal-table-field-layout.docx",
       "description": "Synthetic table, numbering, field, tabs, breaks, and one-pixel drawing inventory fixture.",
