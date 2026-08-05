@@ -79,5 +79,11 @@ claim it later. It does not read environment files, print credentials, use a
 hosted Supabase project, or reset the database.
 
 The derived before/after read model is documented in
-[AUDIT_COMPARISON.md](AUDIT_COMPARISON.md). Persisted finding resolution,
-ignore/accepted-risk behavior, and all UI work remain explicitly deferred.
+[AUDIT_COMPARISON.md](AUDIT_COMPARISON.md). Ignore/accepted-risk behavior,
+approval, and all UI work remain explicitly deferred.
+
+S4-T03 observes this immutable canonical lineage through an independently
+replayable reconciliation command. Queued/processing jobs produce pending
+evidence and completed jobs are verified with the shared comparison engine.
+Neither re-audit completion nor failure is rolled back by resolution
+reconciliation. Approval, ignore, accepted risk, and UI remain deferred.

@@ -119,3 +119,9 @@ an audit-history UI are not implemented. S1-T06 now exercises this contract in
 the local process-to-process suite documented in
 [SECURITY_INTEGRATION_TESTS.md](SECURITY_INTEGRATION_TESTS.md). S1-T05 does not
 change Auth flow, existing RLS migrations, or Storage policies.
+
+S4-T03 finding-resolution events are their own canonical append-only evidence
+stream. They are not duplicated into `audit_trail_events`, avoiding two
+semantic identities for one observation. The stream stores only safe resource
+IDs, controlled state/classification values, and source timestamps; never
+finding content or comparison fingerprints.

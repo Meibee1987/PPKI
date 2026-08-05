@@ -1,3 +1,5 @@
+using System.Text.Json.Serialization;
+
 namespace Ppki.Domain;
 
 public enum DocumentKind
@@ -53,4 +55,23 @@ public enum FixExecutionState
     Completed,
     Failed,
     NoChange
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<FindingResolutionState>))]
+public enum FindingResolutionState
+{
+    Open,
+    Applied,
+    ReauditPending,
+    VerifiedResolved,
+    VerifiedStillDetected
+}
+
+[JsonConverter(typeof(JsonStringEnumConverter<FindingResolutionEventType>))]
+public enum FindingResolutionEventType
+{
+    FixAppliedObserved,
+    ReauditPendingObserved,
+    VerificationResolvedObserved,
+    VerificationStillDetectedObserved
 }

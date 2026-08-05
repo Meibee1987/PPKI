@@ -210,7 +210,7 @@ public sealed class AuditComparisonService(
         && source.Ordinal == result.Ordinal
         && source.SnapshotSchemaVersion == result.SnapshotSchemaVersion;
 
-    private static AuditComparisonFindingSnapshot ToSnapshot(AuditFindingReadRow value) => new(
+    public static AuditComparisonFindingSnapshot ToSnapshot(AuditFindingReadRow value) => new(
         value.Id, value.AuditId, value.RuleOrdinal, value.RuleCode, value.Domain,
         value.ValidationKey, value.Element, value.Severity, value.FixMode,
         value.FindingState, value.ReasonCode, value.ActualJson, value.ExpectedJson,

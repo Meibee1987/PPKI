@@ -114,3 +114,11 @@ least-privilege grants are defined by S1-T02/S1-T04/S1-T05; see
 [DATABASE_SECURITY.md](DATABASE_SECURITY.md) for the access matrix.
 Re-audit lineage and worker behavior are described in
 [REAUDIT_ORCHESTRATION.md](REAUDIT_ORCHESTRATION.md).
+
+S4-T03 adds `finding_resolution_cases` (one immutable case per source finding)
+and `finding_resolution_events` (append-only remediation facts). Every FK is
+`RESTRICT`; there is no backfill, so a legacy finding without a case reads as
+`Open`. Owner-only RLS follows case -> finding -> audit -> version -> document.
+Browser clients receive SELECT only. Unique case, sequence, and deterministic
+source-event identities plus triggers and serializable transactions enforce
+replay and concurrency safety. See [FINDING_RESOLUTION.md](FINDING_RESOLUTION.md).

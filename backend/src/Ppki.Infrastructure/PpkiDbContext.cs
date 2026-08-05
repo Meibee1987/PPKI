@@ -17,6 +17,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
     public DbSet<AuditRuleSnapshot> AuditRuleSnapshots => Set<AuditRuleSnapshot>();
     public DbSet<AuditFinding> AuditFindings => Set<AuditFinding>();
     public DbSet<FixExecutionJob> FixExecutionJobs => Set<FixExecutionJob>();
+    public DbSet<FindingResolutionCase> FindingResolutionCases => Set<FindingResolutionCase>();
+    public DbSet<FindingResolutionEvent> FindingResolutionEvents => Set<FindingResolutionEvent>();
     public DbSet<AuditTrailEvent> AuditTrailEvents => Set<AuditTrailEvent>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -241,6 +243,45 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.HasOne(x => x.ResultDocumentVersion).WithMany().HasForeignKey(x => x.ResultDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
         });
 
+        builder.Entity<FindingResolutionCase>(entity =>
+        {
+            entity.ToTable("finding_resolution_cases");
+            Common(entity);
+            entity.Property(x => x.SourceAuditFindingId).HasColumnName("source_audit_finding_id");
+            entity.Property(x => x.SourceAuditJobId).HasColumnName("source_audit_job_id");
+            entity.Property(x => x.SourceDocumentVersionId).HasColumnName("source_document_version_id");
+            entity.HasIndex(x => x.SourceAuditFindingId).IsUnique().HasDatabaseName("uq_finding_resolution_cases_finding");
+            entity.HasIndex(x => x.SourceAuditJobId).HasDatabaseName("ix_finding_resolution_cases_audit");
+            entity.HasOne(x => x.SourceAuditFinding).WithMany().HasForeignKey(x => x.SourceAuditFindingId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceAuditJob).WithMany().HasForeignKey(x => x.SourceAuditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceDocumentVersion).WithMany().HasForeignKey(x => x.SourceDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<FindingResolutionEvent>(entity =>
+        {
+            entity.ToTable("finding_resolution_events");
+            Common(entity);
+            entity.Property(x => x.ResolutionCaseId).HasColumnName("resolution_case_id");
+            entity.Property(x => x.Sequence).HasColumnName("sequence");
+            entity.Property(x => x.EventType).HasColumnName("event_type").HasConversion<string>();
+            entity.Property(x => x.SourceFixExecutionId).HasColumnName("source_fix_execution_id");
+            entity.Property(x => x.SourceReauditJobId).HasColumnName("source_reaudit_job_id");
+            entity.Property(x => x.ResultDocumentVersionId).HasColumnName("result_document_version_id");
+            entity.Property(x => x.ResultAuditFindingId).HasColumnName("result_audit_finding_id");
+            entity.Property(x => x.ComparisonStatus).HasColumnName("comparison_status").HasMaxLength(32);
+            entity.Property(x => x.SourceOccurredAt).HasColumnName("source_occurred_at");
+            entity.Property(x => x.SourceEventKey).HasColumnName("source_event_key").HasMaxLength(256).IsRequired();
+            entity.HasIndex(x => new { x.ResolutionCaseId, x.Sequence }).IsUnique();
+            entity.HasIndex(x => x.SourceEventKey).IsUnique().HasDatabaseName("uq_finding_resolution_events_source_event");
+            entity.HasIndex(x => x.SourceFixExecutionId).HasDatabaseName("ix_finding_resolution_events_fix_execution");
+            entity.HasIndex(x => x.SourceReauditJobId).HasDatabaseName("ix_finding_resolution_events_reaudit");
+            entity.HasOne(x => x.ResolutionCase).WithMany(x => x.Events).HasForeignKey(x => x.ResolutionCaseId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceFixExecution).WithMany().HasForeignKey(x => x.SourceFixExecutionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceReauditJob).WithMany().HasForeignKey(x => x.SourceReauditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ResultDocumentVersion).WithMany().HasForeignKey(x => x.ResultDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ResultAuditFinding).WithMany().HasForeignKey(x => x.ResultAuditFindingId).OnDelete(DeleteBehavior.Restrict);
+        });
+
         builder.Entity<AuditTrailEvent>(entity =>
         {
             entity.ToTable("audit_trail_events");
@@ -342,5 +383,10 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
         {
             throw new InvalidOperationException("Audit trail events are append-only.");
         }
+
+        if (ChangeTracker.Entries<FindingResolutionCase>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Finding resolution case identity is immutable.");
+        if (ChangeTracker.Entries<FindingResolutionEvent>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Finding resolution events are append-only.");
     }
 }

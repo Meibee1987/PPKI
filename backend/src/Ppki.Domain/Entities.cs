@@ -193,3 +193,33 @@ public sealed class FixExecutionJob : Entity
     public DateTimeOffset? LeaseExpiresAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
 }
+
+public sealed class FindingResolutionCase : Entity
+{
+    public Guid SourceAuditFindingId { get; set; }
+    public AuditFinding? SourceAuditFinding { get; set; }
+    public Guid SourceAuditJobId { get; set; }
+    public AuditJob? SourceAuditJob { get; set; }
+    public Guid SourceDocumentVersionId { get; set; }
+    public DocumentVersion? SourceDocumentVersion { get; set; }
+    public List<FindingResolutionEvent> Events { get; set; } = [];
+}
+
+public sealed class FindingResolutionEvent : Entity
+{
+    public Guid ResolutionCaseId { get; set; }
+    public FindingResolutionCase? ResolutionCase { get; set; }
+    public int Sequence { get; set; }
+    public FindingResolutionEventType EventType { get; set; }
+    public Guid? SourceFixExecutionId { get; set; }
+    public FixExecutionJob? SourceFixExecution { get; set; }
+    public Guid? SourceReauditJobId { get; set; }
+    public AuditJob? SourceReauditJob { get; set; }
+    public Guid? ResultDocumentVersionId { get; set; }
+    public DocumentVersion? ResultDocumentVersion { get; set; }
+    public Guid? ResultAuditFindingId { get; set; }
+    public AuditFinding? ResultAuditFinding { get; set; }
+    public string? ComparisonStatus { get; set; }
+    public DateTimeOffset SourceOccurredAt { get; set; }
+    public required string SourceEventKey { get; set; }
+}

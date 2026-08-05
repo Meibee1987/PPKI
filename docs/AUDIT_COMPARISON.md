@@ -81,3 +81,9 @@ synthetic lineage/findings and a loopback API, verifies owner/foreign behavior,
 classification, duplicates, replay/order, global pagination summary, unchanged
 row counts, and absent browser write privileges. It does not read `.env`, print
 credentials, use hosted Supabase, or reset the database.
+
+S4-T03 reuses the same public pure `AuditComparisonEngine` in-process to derive
+resolution evidence. It does not duplicate pairing or call this GET route over
+HTTP. `NoLongerDetected` maps to verified resolved; `StillDetected` and
+`Changed` map to verified still detected; `NewlyDetected` does not mutate a
+source case. The comparison endpoint remains read-only and unchanged.

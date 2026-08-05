@@ -93,6 +93,11 @@ audit's exact profile, document-kind snapshot, resolved hash, and cloned rule
 snapshots; see [REAUDIT_ORCHESTRATION.md](REAUDIT_ORCHESTRATION.md). Fix apply
 itself still does not create or run an audit.
 
-Before/after comparison, finding resolution, ignore/accepted-risk workflow,
-partial apply, rollback, preview/apply/re-audit UI, export, and lecturer review
-remain deferred.
+Ignore/accepted-risk workflow, approval, partial apply, rollback,
+preview/apply/re-audit UI, export, and lecturer review remain deferred.
+
+S4-T03 derives `Applied` evidence only from a completed execution whose exact
+finding selection matches its immutable approved-plan snapshot and which has a
+result version. It never accepts a selection from the reconciliation client.
+The observation is a separate replayable transaction, so a resolution-write
+failure cannot undo a completed fix execution.

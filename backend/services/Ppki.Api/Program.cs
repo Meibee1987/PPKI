@@ -38,6 +38,7 @@ builder.Services.AddScoped<IFixExecutionRepository, FixExecutionRepository>();
 builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();
 builder.Services.AddScoped<IReauditService, ReauditService>();
 builder.Services.AddScoped<IAuditComparisonService, AuditComparisonService>();
+builder.Services.AddScoped<IFindingResolutionService, FindingResolutionService>();
 builder.Services.AddSingleton<IResolvedRuleSetHasher, ResolvedRuleSetHasher>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IRemediationCapabilityRegistry>(_ => ProductionFixCapabilities.CreatePreviewRegistry());
@@ -293,6 +294,47 @@ api.MapGet("/fix-executions/{executionId}/comparison", async (string executionId
 }).WithName("GetFixExecutionAuditComparison")
   .WithSummary("Read a deterministic derived comparison of source and result audit findings.")
   .Produces<AuditComparisonDto>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .ProducesProblem(StatusCodes.Status409Conflict)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapGet("/audits/{auditId}/findings/{findingId}/resolution", async (string auditId,
+    string findingId, ClaimsPrincipal user, IFindingResolutionService resolutions, CancellationToken ct) => {
+    if(!Guid.TryParse(auditId,out var parsedAuditId)||parsedAuditId==Guid.Empty
+        ||!Guid.TryParse(findingId,out var parsedFindingId)||parsedFindingId==Guid.Empty)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid finding resolution request.",
+            extensions:new Dictionary<string,object?>{{"code","resolution-id-invalid"}});
+    var result=await resolutions.GetAsync(parsedAuditId,parsedFindingId,UserId(user),ct);
+    return result is null?Results.NotFound():Results.Ok(result);
+}).WithName("GetFindingResolution")
+  .WithSummary("Read the append-only remediation evidence state for one owned historical finding.")
+  .Produces<FindingResolutionDto>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapPost("/fix-executions/{executionId}/resolution-reconciliation", async (string executionId,
+    ClaimsPrincipal user, IFindingResolutionService resolutions, CancellationToken ct) => {
+    if(!Guid.TryParse(executionId,out var parsedExecutionId)||parsedExecutionId==Guid.Empty)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid finding resolution reconciliation request.",
+            extensions:new Dictionary<string,object?>{{"code","resolution-execution-id-invalid"}});
+    try {
+        var result=await resolutions.ReconcileAsync(parsedExecutionId,UserId(user),ct);
+        if(result is null)return Results.NotFound();
+        if(result.State==FindingResolutionReconciliationState.Pending)
+            return Results.Accepted($"/api/fix-executions/{parsedExecutionId}/resolution-reconciliation",result);
+        return result.EventsCreated>0
+            ?Results.Created($"/api/fix-executions/{parsedExecutionId}/resolution-reconciliation",result)
+            :Results.Ok(result);
+    } catch(FindingResolutionException exception) {
+        return Results.Problem(statusCode:StatusCodes.Status409Conflict,
+            title:"Finding resolution reconciliation conflicts with immutable remediation evidence.",
+            extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
+    }
+}).WithName("ReconcileFixExecutionResolution")
+  .WithSummary("Reconcile finding state from an owned completed fix execution and its canonical re-audit.")
+  .Produces<FindingResolutionReconciliationResult>(StatusCodes.Status200OK)
+  .Produces<FindingResolutionReconciliationResult>(StatusCodes.Status201Created)
+  .Produces<FindingResolutionReconciliationResult>(StatusCodes.Status202Accepted)
   .ProducesProblem(StatusCodes.Status400BadRequest)
   .ProducesProblem(StatusCodes.Status409Conflict)
   .Produces(StatusCodes.Status404NotFound);

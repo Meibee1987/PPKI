@@ -51,3 +51,9 @@ terkini; smoke menjalankan API loopback pada port bebas dengan fixture bounded,
 tanpa membaca `.env`, mencetak credential, memakai hosted Supabase, atau reset
 database. Detail kontraknya ada di
 [AUDIT_COMPARISON.md](AUDIT_COMPARISON.md).
+
+`npm run test:finding-resolution` menjalankan suite offline S4-T03.
+`npm run test:finding-resolution-local` memakai stack Supabase CLI lokal dan
+migration additive terkini tanpa hosted Supabase, reset database, atau delete
+volume. Detail kontraknya ada di
+[FINDING_RESOLUTION.md](FINDING_RESOLUTION.md).

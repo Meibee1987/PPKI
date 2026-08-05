@@ -136,5 +136,10 @@ FixPlan, reviewer workflow, export, and the S1-T06 security integration suite
 remain out of scope. No Storage policy or old migration is changed.
 
 The S4-T01 orchestration and its non-destructive local smoke are documented in
-[REAUDIT_ORCHESTRATION.md](REAUDIT_ORCHESTRATION.md). Comparison and finding
-resolution remain out of scope.
+[REAUDIT_ORCHESTRATION.md](REAUDIT_ORCHESTRATION.md).
+
+S4-T03 adds immutable finding-resolution case identities and append-only
+evidence events without updating findings, rule snapshots, audits, executions,
+or document versions. Database triggers reject case update/delete and event
+update/delete; current state is projected from the last sequence. See
+[FINDING_RESOLUTION.md](FINDING_RESOLUTION.md).
