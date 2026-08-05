@@ -199,7 +199,7 @@ public sealed class ReauditArchitectureTests
         var api = Source("backend", "services", "Ppki.Api", "Program.cs");
         var start = api.IndexOf("api.MapPost(\"/fix-executions/{executionId}/re-audit\"", StringComparison.Ordinal);
         Assert.True(start >= 0);
-        var route = api[start..api.IndexOf("api.MapGet(\"/document-versions", start, StringComparison.Ordinal)];
+        var route = api[start..api.IndexOf("api.MapGet(\"/fix-executions/{executionId}/comparison", start, StringComparison.Ordinal)];
         Assert.Contains("IReauditService", route, StringComparison.Ordinal);
         Assert.DoesNotContain("PpkiDbContext", route, StringComparison.Ordinal);
         Assert.DoesNotContain("HttpRequest", route, StringComparison.Ordinal);

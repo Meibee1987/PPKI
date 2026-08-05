@@ -143,3 +143,8 @@ evidence events without updating findings, rule snapshots, audits, executions,
 or document versions. Database triggers reject case update/delete and event
 update/delete; current state is projected from the last sequence. See
 [FINDING_RESOLUTION.md](FINDING_RESOLUTION.md).
+
+S4-T04 adds immutable `finding_review_cases` and append-only
+`finding_review_events`. Manual dispositions never update a finding, resolution
+event, audit, snapshot, execution, version, score, or DOCX. See
+[FINDING_REVIEW.md](FINDING_REVIEW.md).

@@ -39,6 +39,8 @@ builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();
 builder.Services.AddScoped<IReauditService, ReauditService>();
 builder.Services.AddScoped<IAuditComparisonService, AuditComparisonService>();
 builder.Services.AddScoped<IFindingResolutionService, FindingResolutionService>();
+builder.Services.AddScoped<IAdminFindingReviewAuthorizationService, AdminFindingReviewAuthorizationService>();
+builder.Services.AddScoped<IFindingReviewService, FindingReviewService>();
 builder.Services.AddSingleton<IResolvedRuleSetHasher, ResolvedRuleSetHasher>();
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IRemediationCapabilityRegistry>(_ => ProductionFixCapabilities.CreatePreviewRegistry());
@@ -339,6 +341,68 @@ api.MapPost("/fix-executions/{executionId}/resolution-reconciliation", async (st
   .ProducesProblem(StatusCodes.Status409Conflict)
   .Produces(StatusCodes.Status404NotFound);
 
+api.MapGet("/audits/{auditId}/findings/{findingId}/review", async (string auditId, string findingId,
+    ClaimsPrincipal user, IFindingReviewService reviews, CancellationToken ct) => {
+    if(!Guid.TryParse(auditId,out var parsedAuditId)||parsedAuditId==Guid.Empty
+        ||!Guid.TryParse(findingId,out var parsedFindingId)||parsedFindingId==Guid.Empty)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid finding review request.",
+            extensions:new Dictionary<string,object?>{{"code","finding-review-id-invalid"}});
+    var result=await reviews.GetAsync(parsedAuditId,parsedFindingId,UserId(user),ct);
+    return result is null?Results.NotFound():Results.Ok(result);
+}).WithName("GetFindingReview")
+  .Produces<FindingReviewDto>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapPost("/audits/{auditId}/findings/{findingId}/review-requests", async (string auditId,
+    string findingId, HttpRequest httpRequest, FindingReviewRequest? request, ClaimsPrincipal user,
+    IFindingReviewService reviews, CancellationToken ct) => {
+    if(!Guid.TryParse(auditId,out var parsedAuditId)||parsedAuditId==Guid.Empty
+        ||!Guid.TryParse(findingId,out var parsedFindingId)||parsedFindingId==Guid.Empty)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid finding review request.",
+            extensions:new Dictionary<string,object?>{{"code","finding-review-id-invalid"}});
+    if(!TryIdempotencyKey(httpRequest,out var idempotencyKey)||request is null)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid finding review command.",
+            extensions:new Dictionary<string,object?>{{"code","finding-review-idempotency-key-invalid"}});
+    try {
+        var result=await reviews.RequestAsync(parsedAuditId,parsedFindingId,UserId(user),idempotencyKey,request,ct);
+        if(result is null)return Results.NotFound();
+        return result.Replayed?Results.Ok(result):Results.Created($"/api/audits/{parsedAuditId}/findings/{parsedFindingId}/review",result);
+    } catch(FindingReviewException exception) { return FindingReviewProblem(exception); }
+}).WithName("RequestFindingReview");
+
+api.MapPost("/finding-reviews/{reviewCaseId}/decisions", async (string reviewCaseId,
+    HttpRequest httpRequest, FindingReviewDecisionRequest? request, ClaimsPrincipal user,
+    IFindingReviewService reviews, CancellationToken ct) => {
+    if(!Guid.TryParse(reviewCaseId,out var parsedCaseId)||parsedCaseId==Guid.Empty)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid finding review decision.",
+            extensions:new Dictionary<string,object?>{{"code","finding-review-id-invalid"}});
+    if(!TryIdempotencyKey(httpRequest,out var idempotencyKey)||request is null)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid finding review command.",
+            extensions:new Dictionary<string,object?>{{"code","finding-review-idempotency-key-invalid"}});
+    try {
+        var result=await reviews.DecideAsync(parsedCaseId,UserId(user),idempotencyKey,request,ct);
+        if(result is null)return Results.NotFound();
+        return result.Replayed?Results.Ok(result):Results.Created($"/api/finding-reviews/{parsedCaseId}",result);
+    } catch(FindingReviewException exception) { return FindingReviewProblem(exception); }
+}).WithName("DecideFindingReview");
+
+api.MapPost("/finding-reviews/{reviewCaseId}/manual-remediation-reports", async (string reviewCaseId,
+    HttpRequest httpRequest, ManualRemediationReportRequest? request, ClaimsPrincipal user,
+    IFindingReviewService reviews, CancellationToken ct) => {
+    if(!Guid.TryParse(reviewCaseId,out var parsedCaseId)||parsedCaseId==Guid.Empty)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid manual remediation report.",
+            extensions:new Dictionary<string,object?>{{"code","finding-review-id-invalid"}});
+    if(!TryIdempotencyKey(httpRequest,out var idempotencyKey)||request is null)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid finding review command.",
+            extensions:new Dictionary<string,object?>{{"code","finding-review-idempotency-key-invalid"}});
+    try {
+        var result=await reviews.ReportManualRemediationAsync(parsedCaseId,UserId(user),idempotencyKey,request,ct);
+        if(result is null)return Results.NotFound();
+        return result.Replayed?Results.Ok(result):Results.Created($"/api/finding-reviews/{parsedCaseId}",result);
+    } catch(FindingReviewException exception) { return FindingReviewProblem(exception); }
+}).WithName("ReportManualFindingRemediation");
+
 api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IAuditTrailWriter auditTrail, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {
     var uid=UserId(user); var version=await db.DocumentVersions.AsNoTracking().SingleOrDefaultAsync(v=>v.Id==id&&v.Document!.OwnerUserId==uid,ct); if(version is null)return Results.NotFound();
     var expected=pathBuilder.BuildOriginalPath(uid,version.DocumentId,version.Id); if(version.StorageBucket!=supabase.Value.Storage.OriginalBucket||version.StorageKey!=expected)return Results.NotFound();
@@ -353,9 +417,22 @@ api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrinci
 app.Run();
 
 static Guid UserId(ClaimsPrincipal user) => Guid.Parse(user.FindFirstValue(ClaimTypes.NameIdentifier) ?? throw new InvalidOperationException("Missing user id claim."));
+static bool TryIdempotencyKey(HttpRequest request,out Guid key) {
+    key=Guid.Empty;
+    var header=request.Headers["Idempotency-Key"];
+    return header.Count==1&&Guid.TryParse(header[0],out key)&&key!=Guid.Empty;
+}
+static IResult FindingReviewProblem(FindingReviewException exception) {
+    var status=exception.DiagnosticCode switch {
+        "finding-review-not-reviewer" or "finding-review-out-of-scope"=>StatusCodes.Status403Forbidden,
+        "finding-review-note-invalid" or "finding-review-idempotency-key-invalid" or "finding-review-not-available"=>StatusCodes.Status400BadRequest,
+        _=>StatusCodes.Status409Conflict};
+    return Results.Problem(statusCode:status,title:"Finding review command was rejected.",
+        extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
+}
 static async Task<UserProfile> EnsureProfileAsync(ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) {
     var id=UserId(user); var existing=await db.UserProfiles.SingleOrDefaultAsync(x=>x.Id==id,ct); if(existing is not null)return existing;
-    var profile=new UserProfile{Id=id,Email=user.FindFirstValue(ClaimTypes.Email)??$"{id}@unknown.local",FullName=user.Identity?.Name??"Pengguna",Role="Student"}; db.UserProfiles.Add(profile); await db.SaveChangesAsync(ct); return profile;
+    var profile=new UserProfile{Id=id,Email=user.FindFirstValue(ClaimTypes.Email)??$"{id}@unknown.local",FullName=user.Identity?.Name??"Pengguna",Role=UserRole.Student}; db.UserProfiles.Add(profile); await db.SaveChangesAsync(ct); return profile;
 }
 
 static async Task TryWriteOrphanCleanupAsync(IDbContextFactory<PpkiDbContext> dbFactory, IAuditTrailWriter auditTrail, AuditEventContext context, Guid versionId, Guid ownerUserId, CancellationToken ct) {

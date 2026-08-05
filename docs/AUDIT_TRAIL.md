@@ -125,3 +125,8 @@ stream. They are not duplicated into `audit_trail_events`, avoiding two
 semantic identities for one observation. The stream stores only safe resource
 IDs, controlled state/classification values, and source timestamps; never
 finding content or comparison fingerprints.
+
+S4-T04 follows the same single-source principle: `finding_review_events` is the
+canonical request/decision trail and is not duplicated into this generic
+operational table. It records bounded notes only in the authorized review
+stream; application logs and generic metadata never receive note content.

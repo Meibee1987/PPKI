@@ -4,6 +4,11 @@ S4-T03 persists remediation evidence separately from historical `AuditFinding`
 and `AuditRuleSnapshot` rows. It adds no approval, rejection, ignore,
 accepted-risk, manual-resolution, reviewer, or frontend workflow.
 
+S4-T04 adds a second, independent manual-review dimension. `Ignored`,
+`AcceptedRisk`, and `ManualRemediationReported` never change this automatic
+resolution state and are never projected as `VerifiedResolved`. See
+[FINDING_REVIEW.md](FINDING_REVIEW.md).
+
 ## State and evidence
 
 An owned finding with no case is returned as `Open`; the GET route is read-only

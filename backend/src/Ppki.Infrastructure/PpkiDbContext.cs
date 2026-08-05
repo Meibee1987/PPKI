@@ -19,6 +19,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
     public DbSet<FixExecutionJob> FixExecutionJobs => Set<FixExecutionJob>();
     public DbSet<FindingResolutionCase> FindingResolutionCases => Set<FindingResolutionCase>();
     public DbSet<FindingResolutionEvent> FindingResolutionEvents => Set<FindingResolutionEvent>();
+    public DbSet<FindingReviewCase> FindingReviewCases => Set<FindingReviewCase>();
+    public DbSet<FindingReviewEvent> FindingReviewEvents => Set<FindingReviewEvent>();
     public DbSet<AuditTrailEvent> AuditTrailEvents => Set<AuditTrailEvent>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -29,7 +31,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             Common(entity);
             entity.Property(x => x.Email).HasColumnName("email").IsRequired();
             entity.Property(x => x.FullName).HasColumnName("full_name").IsRequired();
-            entity.Property(x => x.Role).HasColumnName("role").IsRequired();
+            entity.Property(x => x.Role).HasColumnName("role").HasConversion(
+                value => value.ToString(), value => UserRoleDatabase.ParseExact(value)).IsRequired();
             entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
         });
 
@@ -282,6 +285,40 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.HasOne(x => x.ResultAuditFinding).WithMany().HasForeignKey(x => x.ResultAuditFindingId).OnDelete(DeleteBehavior.Restrict);
         });
 
+        builder.Entity<FindingReviewCase>(entity =>
+        {
+            entity.ToTable("finding_review_cases");
+            Common(entity);
+            entity.Property(x => x.AuditFindingId).HasColumnName("audit_finding_id");
+            entity.Property(x => x.AuditJobId).HasColumnName("audit_job_id");
+            entity.Property(x => x.SourceDocumentVersionId).HasColumnName("source_document_version_id");
+            entity.Property(x => x.RequestedByUserId).HasColumnName("requested_by_user_id");
+            entity.HasIndex(x => x.AuditFindingId).IsUnique().HasDatabaseName("uq_finding_review_cases_finding");
+            entity.HasIndex(x => x.AuditJobId).HasDatabaseName("ix_finding_review_cases_audit");
+            entity.HasOne(x => x.AuditFinding).WithMany().HasForeignKey(x => x.AuditFindingId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.AuditJob).WithMany().HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceDocumentVersion).WithMany().HasForeignKey(x => x.SourceDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<FindingReviewEvent>(entity =>
+        {
+            entity.ToTable("finding_review_events");
+            Common(entity);
+            entity.Property(x => x.ReviewCaseId).HasColumnName("review_case_id");
+            entity.Property(x => x.Sequence).HasColumnName("sequence");
+            entity.Property(x => x.EventType).HasColumnName("event_type").HasConversion<string>();
+            entity.Property(x => x.RequestedDisposition).HasColumnName("requested_disposition").HasConversion<string>();
+            entity.Property(x => x.Decision).HasColumnName("decision").HasConversion<string>();
+            entity.Property(x => x.ActorUserId).HasColumnName("actor_user_id");
+            entity.Property(x => x.Note).HasColumnName("note").HasMaxLength(1000);
+            entity.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key");
+            entity.Property(x => x.SourceEventKey).HasColumnName("source_event_key").HasMaxLength(128).IsRequired();
+            entity.HasIndex(x => new { x.ReviewCaseId, x.Sequence }).IsUnique();
+            entity.HasIndex(x => new { x.ReviewCaseId, x.IdempotencyKey }).IsUnique();
+            entity.HasIndex(x => x.SourceEventKey).IsUnique().HasDatabaseName("uq_finding_review_events_source_event");
+            entity.HasOne(x => x.ReviewCase).WithMany(x => x.Events).HasForeignKey(x => x.ReviewCaseId).OnDelete(DeleteBehavior.Restrict);
+        });
+
         builder.Entity<AuditTrailEvent>(entity =>
         {
             entity.ToTable("audit_trail_events");
@@ -388,5 +425,9 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             throw new InvalidOperationException("Finding resolution case identity is immutable.");
         if (ChangeTracker.Entries<FindingResolutionEvent>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Finding resolution events are append-only.");
+        if (ChangeTracker.Entries<FindingReviewCase>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Finding review case identity is immutable.");
+        if (ChangeTracker.Entries<FindingReviewEvent>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Finding review events are append-only.");
     }
 }

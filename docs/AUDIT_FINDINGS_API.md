@@ -106,6 +106,13 @@ The document-detail handoff uses the API's explicit per-collection ordering but
 selects the greatest audit `CreatedAt` across versions, so the latest-audit link
 does not accidentally depend on nested array insertion order.
 
+## Manual review dimension
+
+S4-T04 exposes a separate review read model and owner/admin commands documented
+in [FINDING_REVIEW.md](FINDING_REVIEW.md). Review never rewrites the historical
+finding returned by these routes, changes its severity/count/score, or hides it
+from audit and comparison results.
+
 ## Before/after comparison
 
 `GET /api/fix-executions/{executionId}/comparison` derives a deterministic,

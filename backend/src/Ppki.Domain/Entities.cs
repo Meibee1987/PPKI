@@ -10,7 +10,7 @@ public sealed class UserProfile : Entity
 {
     public required string Email { get; set; }
     public required string FullName { get; set; }
-    public string Role { get; set; } = "Student";
+    public UserRole Role { get; set; } = UserRole.Student;
     public DateTimeOffset UpdatedAt { get; set; } = DateTimeOffset.UtcNow;
 }
 
@@ -221,5 +221,31 @@ public sealed class FindingResolutionEvent : Entity
     public AuditFinding? ResultAuditFinding { get; set; }
     public string? ComparisonStatus { get; set; }
     public DateTimeOffset SourceOccurredAt { get; set; }
+    public required string SourceEventKey { get; set; }
+}
+
+public sealed class FindingReviewCase : Entity
+{
+    public Guid AuditFindingId { get; set; }
+    public AuditFinding? AuditFinding { get; set; }
+    public Guid AuditJobId { get; set; }
+    public AuditJob? AuditJob { get; set; }
+    public Guid SourceDocumentVersionId { get; set; }
+    public DocumentVersion? SourceDocumentVersion { get; set; }
+    public Guid RequestedByUserId { get; set; }
+    public List<FindingReviewEvent> Events { get; set; } = [];
+}
+
+public sealed class FindingReviewEvent : Entity
+{
+    public Guid ReviewCaseId { get; set; }
+    public FindingReviewCase? ReviewCase { get; set; }
+    public int Sequence { get; set; }
+    public FindingReviewEventType EventType { get; set; }
+    public FindingReviewRequestedDisposition? RequestedDisposition { get; set; }
+    public FindingReviewDecision? Decision { get; set; }
+    public Guid ActorUserId { get; set; }
+    public string? Note { get; set; }
+    public Guid IdempotencyKey { get; set; }
     public required string SourceEventKey { get; set; }
 }

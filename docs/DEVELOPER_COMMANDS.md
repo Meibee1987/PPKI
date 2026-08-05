@@ -1,5 +1,11 @@
 # Developer command inventory
 
+## Finding review
+
+Use `npm run test:finding-review` for the focused offline contract suite. With
+local Supabase ready and the additive migration applied, run
+`npm run test:finding-review-local` twice to verify the bounded runtime workflow.
+
 Semua command canonical dijalankan dari root repository.
 
 | Kebutuhan | Command canonical |

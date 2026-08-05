@@ -122,3 +122,11 @@ and `finding_resolution_events` (append-only remediation facts). Every FK is
 Browser clients receive SELECT only. Unique case, sequence, and deterministic
 source-event identities plus triggers and serializable transactions enforce
 replay and concurrency safety. See [FINDING_RESOLUTION.md](FINDING_RESOLUTION.md).
+
+S4-T04 adds one immutable `finding_review_cases` row per reviewed finding and
+append-only `finding_review_events`. All foreign keys are `RESTRICT`; no
+historical backfill occurs. Owner read follows the existing ownership chain.
+The only global decision scope is an exact database-authoritative `PPKIAdmin`
+reviewing another user's finding. Browser clients receive read access only and
+cannot change profile roles or review rows. See
+[FINDING_REVIEW.md](FINDING_REVIEW.md).
