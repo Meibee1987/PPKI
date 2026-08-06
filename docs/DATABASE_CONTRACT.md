@@ -136,3 +136,10 @@ chains as immutable provenance, not as an access boundary between internal
 PPKIAdmin accounts. Migration `202608060001_shared_ppki_admin_access.sql`
 provides shared read visibility without ownership transfer or assignment;
 backend business routes use the same database-authoritative admin gate.
+
+S4-T05 migration `202608060002_remediation_failure_conflict_hardening.sql`
+adds claim token, bounded attempt/backoff, typed safe failure, and result-object
+evidence to `fix_execution_jobs`. Its replacement trigger keeps request/plan
+identity immutable, locks the document while accepting a current source,
+validates claim transitions, prevents stale finalization, and requires exact
+result parent/creator/hash/size lineage. Older migrations remain unchanged.

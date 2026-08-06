@@ -224,8 +224,7 @@ public sealed class FindingResolutionService(
         if (source.SourceAuditDocumentVersionId != source.SourceDocumentVersionId || source.SourceDocumentId != source.ResultDocumentId)
             throw new FindingResolutionException("resolution-lineage-mismatch");
         if (source.ResultParentVersionId != source.SourceDocumentVersionId
-            || source.ResultVersionSha256 != source.ExecutionResultSha256
-            || source.RequestedByUserId != source.OwnerUserId)
+            || source.ResultVersionSha256 != source.ExecutionResultSha256)
             throw new FindingResolutionException("resolution-lineage-mismatch");
     }
 

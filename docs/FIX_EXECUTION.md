@@ -101,3 +101,18 @@ finding selection matches its immutable approved-plan snapshot and which has a
 result version. It never accepts a selection from the reconciliation client.
 The observation is a separate replayable transaction, so a resolution-write
 failure cannot undo a completed fix execution.
+
+## S4-T05 failure and conflict hardening
+
+`Processing -> Queued` is allowed only for typed transient infrastructure
+failure. `fix-retry/1.0` retains the exact approved snapshot and uses at most
+three attempts with fixed backoff. Each claim/reclaim receives a new UUID
+fencing token; heartbeat, retry, NoChange, failure, and completion require the
+exact active token.
+
+Acceptance and the worker require the source version to remain current. Final
+publish repeats the check while locking document and execution rows. Result
+upload is create-only at a key derived from execution ID: identical SHA/size is
+reusable, different content conflicts, and database failure deletes only an
+object created by that attempt. See
+[REMEDIATION_FAILURES.md](REMEDIATION_FAILURES.md).

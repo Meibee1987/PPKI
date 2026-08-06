@@ -13,6 +13,8 @@
     "test:audit-trail-local": "node scripts/audit-trail-smoke-test.mjs",
     "test:security-integration-local": "node scripts/security-integration-test.mjs",
     "test:fix-execution-local": "node scripts/fix-execution-smoke-test.mjs",
+    "test:remediation-hardening": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --no-restore --filter FullyQualifiedName~Remediation",
+    "test:remediation-hardening-local": "node scripts/remediation-hardening-smoke-test.mjs",
     "test:reaudit": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --filter FullyQualifiedName~Reaudit",
     "test:reaudit-local": "node scripts/reaudit-smoke-test.mjs",
     "test:audit-comparison": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --filter FullyQualifiedName~AuditComparison",

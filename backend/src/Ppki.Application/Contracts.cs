@@ -27,6 +27,21 @@ public interface IFileStorage
         CancellationToken cancellationToken);
 }
 
+public enum FileStorageFailureKind
+{
+    NotFound,
+    Conflict,
+    Transient,
+    Terminal,
+    SizeLimit
+}
+
+public sealed class FileStorageException(FileStorageFailureKind kind, Exception? innerException = null)
+    : Exception("Storage operation failed.", innerException)
+{
+    public FileStorageFailureKind Kind { get; } = kind;
+}
+
 public interface IStorageObjectPathBuilder
 {
     string BuildOriginalPath(Guid ownerUserId, Guid documentId, Guid documentVersionId);

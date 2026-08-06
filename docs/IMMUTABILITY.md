@@ -150,3 +150,11 @@ event, audit, snapshot, execution, version, score, or DOCX. See
 [FINDING_REVIEW.md](FINDING_REVIEW.md). The additive admin-only correction
 permits operational self-approval but does not weaken event immutability or make
 review evidence equivalent to S4-T03 verified resolution.
+
+S4-T05 keeps approved plan and execution identity immutable while adding
+operational lease fields guarded by an exact per-attempt fencing token.
+Attempts never decrease and are capped at three. Only typed transient failure
+may return `Processing -> Queued`; terminal executions stay immutable.
+Successful publish inserts exactly one new child `DocumentVersion` and advances
+current in the same serializable transaction. Superseded source, NoChange,
+failure, or cleanup failure creates no partial version.

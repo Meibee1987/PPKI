@@ -166,7 +166,7 @@ async function authenticate(environment) {
 function setupSql(ownerId) {
   return `
 insert into public.documents (id, owner_user_id, document_type_id, title, current_version_no)
-values ('${ids.document}', '${ownerId}', '${ids.documentType}', 'Synthetic re-audit smoke', 2)
+values ('${ids.document}', '${ownerId}', '${ids.documentType}', 'Synthetic re-audit smoke', 1)
 on conflict (id) do nothing;
 
 insert into public.document_versions
@@ -213,6 +213,7 @@ select '${ids.sourceFinding}', '${ids.sourceAudit}', rule.id, 'Error', '${ruleSn
 from public.rules as rule where rule.rule_code = '${ruleSnapshot.rule_code}'
 on conflict (id) do nothing;
 
+update public.documents set current_version_no = 1 where id = '${ids.document}';
 insert into public.fix_execution_jobs
   (id, audit_job_id, source_document_version_id, requested_by_user_id, idempotency_key,
    plan_hash, planner_version, selected_finding_ids, approved_plan_snapshot, state,
@@ -222,13 +223,15 @@ values ('${ids.execution}', '${ids.sourceAudit}', '${ids.sourceVersion}', '${own
   '{"schemaVersion":1}', 'Queued', 1)
 on conflict (id) do nothing;
 
+update public.documents set current_version_no = 2 where id = '${ids.document}';
 update public.fix_execution_jobs set state = 'Processing', started_at = now(),
-  lease_expires_at = now() + interval '10 minutes'
+  claim_token = '${ids.execution}', attempt_count = 1, lease_expires_at = now() + interval '10 minutes'
 where id = '${ids.execution}' and state = 'Queued';
 
 update public.fix_execution_jobs set state = 'Completed',
   result_document_version_id = '${ids.resultVersion}', result_sha256 = '${resultHash}',
-  completed_operation_count = 1, lease_expires_at = null, completed_at = now()
+  result_object_size = 1, completed_operation_count = 1, claim_token = null,
+  lease_expires_at = null, completed_at = now()
 where id = '${ids.execution}' and state = 'Processing';
 
 do $fixture$

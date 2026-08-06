@@ -30,8 +30,8 @@ public sealed class SupabaseFileStorage(IHttpClientFactory httpClientFactory, IO
                 ? "application/vnd.openxmlformats-officedocument.wordprocessingml.document"
                 : contentType);
 
-            using var response = await Client().SendAsync(request, cancellationToken);
-            if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Supabase Storage upload failed ({(int)response.StatusCode}).");
+            using var response = await SendAsync(request, cancellationToken);
+            if (!response.IsSuccessStatusCode) throw StorageFailure(response.StatusCode);
 
             return new StoredFile(bucket, objectPath, Path.GetFileName(originalFilename), request.Content.Headers.ContentType!.MediaType!, info.Length, sha256);
         }
@@ -42,14 +42,14 @@ public sealed class SupabaseFileStorage(IHttpClientFactory httpClientFactory, IO
     {
         pathBuilder.ValidateStoredPath(bucket, objectPath);
         using var request = CreateRequest(HttpMethod.Get, $"/storage/v1/object/authenticated/{Escape(bucket)}/{EscapePath(objectPath)}");
-        using var response = await Client().SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        using var response = await SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
         if (!response.IsSuccessStatusCode)
         {
-            throw new InvalidOperationException($"Supabase Storage download failed ({(int)response.StatusCode}).");
+            throw StorageFailure(response.StatusCode);
         }
 
         if (response.Content.Headers.ContentLength is > MaximumDocumentBytes)
-            throw new InvalidOperationException("Supabase Storage download exceeded the document size limit.");
+            throw new FileStorageException(FileStorageFailureKind.SizeLimit);
 
         var temp = Path.Combine(Path.GetTempPath(), $"ppki-{Guid.NewGuid():N}.docx");
         try
@@ -63,7 +63,7 @@ public sealed class SupabaseFileStorage(IHttpClientFactory httpClientFactory, IO
             {
                 total += read;
                 if (total > MaximumDocumentBytes)
-                    throw new InvalidOperationException("Supabase Storage download exceeded the document size limit.");
+                    throw new FileStorageException(FileStorageFailureKind.SizeLimit);
                 await output.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
             }
             return temp;
@@ -80,7 +80,7 @@ public sealed class SupabaseFileStorage(IHttpClientFactory httpClientFactory, IO
         pathBuilder.ValidateStoredPath(bucket, objectPath);
         using var request = CreateRequest(HttpMethod.Post, $"/storage/v1/object/sign/{Escape(bucket)}/{EscapePath(objectPath)}");
         request.Content = new StringContent(JsonSerializer.Serialize(new { expiresIn = Math.Max(1, (int)lifetime.TotalSeconds) }), Encoding.UTF8, "application/json");
-        using var response = await Client().SendAsync(request, cancellationToken);
+        using var response = await SendAsync(request, cancellationToken);
         var body = await response.Content.ReadAsStringAsync(cancellationToken);
         if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Signed URL creation failed ({(int)response.StatusCode}).");
         using var json = JsonDocument.Parse(body);
@@ -95,11 +95,37 @@ public sealed class SupabaseFileStorage(IHttpClientFactory httpClientFactory, IO
     {
         pathBuilder.ValidateStoredPath(bucket, objectPath);
         using var request = CreateRequest(HttpMethod.Delete, $"/storage/v1/object/{Escape(bucket)}/{EscapePath(objectPath)}");
-        using var response = await Client().SendAsync(request, cancellationToken);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"Supabase Storage delete failed ({(int)response.StatusCode}).");
+        using var response = await SendAsync(request, cancellationToken);
+        if (!response.IsSuccessStatusCode) throw StorageFailure(response.StatusCode);
     }
 
     private HttpClient Client() => httpClientFactory.CreateClient(nameof(SupabaseFileStorage));
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+    {
+        try { return await Client().SendAsync(request, cancellationToken); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        { throw new FileStorageException(FileStorageFailureKind.Transient, exception); }
+    }
+
+    private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
+        HttpCompletionOption completion, CancellationToken cancellationToken)
+    {
+        try { return await Client().SendAsync(request, completion, cancellationToken); }
+        catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested) { throw; }
+        catch (Exception exception) when (exception is HttpRequestException or TaskCanceledException)
+        { throw new FileStorageException(FileStorageFailureKind.Transient, exception); }
+    }
+
+    private static FileStorageException StorageFailure(System.Net.HttpStatusCode status) => status switch
+    {
+        System.Net.HttpStatusCode.NotFound => new(FileStorageFailureKind.NotFound),
+        System.Net.HttpStatusCode.Conflict => new(FileStorageFailureKind.Conflict),
+        System.Net.HttpStatusCode.RequestTimeout or System.Net.HttpStatusCode.TooManyRequests
+            or System.Net.HttpStatusCode.BadGateway or System.Net.HttpStatusCode.ServiceUnavailable
+            or System.Net.HttpStatusCode.GatewayTimeout => new(FileStorageFailureKind.Transient),
+        _ => new(FileStorageFailureKind.Terminal)
+    };
     private HttpRequestMessage CreateRequest(HttpMethod method, string path)
     {
         var request = new HttpRequestMessage(method, $"{_options.Url.TrimEnd('/')}{path}");

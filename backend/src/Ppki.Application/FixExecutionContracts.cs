@@ -34,9 +34,18 @@ public static class ApprovedFixExecutionPlanSerializer
     }
 }
 
-public sealed class FixExecutionException(string diagnosticCode) : Exception(diagnosticCode)
+public sealed class FixExecutionException : Exception
 {
-    public string DiagnosticCode { get; } = diagnosticCode;
+    public FixExecutionException(string diagnosticCode) : this(FixFailureCatalog.Classify(diagnosticCode), diagnosticCode) { }
+    public FixExecutionException(FixFailureCategory category, string diagnosticCode, Exception? innerException = null)
+        : base(diagnosticCode, innerException)
+    {
+        Category = category;
+        DiagnosticCode = diagnosticCode;
+    }
+    public FixFailureCategory Category { get; }
+    public string DiagnosticCode { get; }
+    public bool Retryable => Category == FixFailureCategory.TransientInfrastructure;
 }
 
 public interface IFixApplyCapabilityResolver
@@ -93,7 +102,12 @@ public sealed record FixExecutionStatus(
     int CompletedOperationCount,
     int FailedOperationCount,
     string? ResultSha256,
+    string? FailureCategory,
     string? SafeFailureCode,
+    int AttemptCount,
+    int MaxAttempts,
+    bool RetryPending,
+    string LeaseState,
     DateTimeOffset QueuedAt,
     DateTimeOffset? StartedAt,
     DateTimeOffset? CompletedAt);
@@ -148,7 +162,10 @@ public sealed class FixExecutionService(
         var job = await repository.GetOwnedAsync(executionId, ownerUserId, cancellationToken);
         return job is null ? null : new(job.Id, job.AuditJobId, job.SourceDocumentVersionId,
             job.ResultDocumentVersionId, job.PlanHash, job.State.ToString(), job.PlannedOperationCount,
-            job.CompletedOperationCount, job.FailedOperationCount, job.ResultSha256, job.SafeFailureCode,
+            job.CompletedOperationCount, job.FailedOperationCount, job.ResultSha256,
+            job.FailureCategory?.ToString(), job.SafeFailureCode, job.AttemptCount, job.MaxAttempts,
+            job.State == FixExecutionState.Queued && job.AttemptCount > 0,
+            job.State == FixExecutionState.Processing ? "active" : job.State == FixExecutionState.Queued && job.AttemptCount > 0 ? "retry-pending" : "none",
             job.CreatedAt, job.StartedAt, job.CompletedAt);
     }
 

@@ -458,7 +458,8 @@ public sealed class FixExecutionAcceptanceTests
                     PlanHash = candidate.PlanHash, PlannerVersion = candidate.PlannerVersion,
                     SelectedFindingIdsJson = candidate.SelectedFindingIdsJson,
                     ApprovedPlanSnapshotJson = candidate.ApprovedPlanSnapshotJson,
-                    PlannedOperationCount = candidate.PlannedOperationCount, CreatedAt = candidate.CreatedAt
+                    PlannedOperationCount = candidate.PlannedOperationCount, CreatedAt = candidate.CreatedAt,
+                    MaxAttempts = FixRetryPolicy.MaximumAttempts
                 };
                 jobs.Add(job);
                 return Task.FromResult(new FixExecutionEnqueueResult(job, false));

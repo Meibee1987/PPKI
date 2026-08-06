@@ -130,3 +130,10 @@ S4-T04 follows the same single-source principle: `finding_review_events` is the
 canonical request/decision trail and is not duplicated into this generic
 operational table. It records bounded notes only in the authorized review
 stream; application logs and generic metadata never receive note content.
+
+S4-T05 stores remediation attempt/category/safe-code/result evidence on the Fix
+execution. Normal worker logs may include IDs, attempt, category/code, and
+transition only. They never include the full claim token, approved plan,
+document content, filename, Storage path/URL, raw exception, or stack trace.
+Storage/DB compensation is documented in
+[REMEDIATION_FAILURES.md](REMEDIATION_FAILURES.md).

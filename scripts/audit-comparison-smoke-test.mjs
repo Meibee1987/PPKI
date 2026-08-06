@@ -171,7 +171,7 @@ function fixtureSql(ownerId) {
     from public.rules as rule where rule.rule_code = '${rule.rule_code}'`;
   return `
 insert into public.documents (id, owner_user_id, document_type_id, title, current_version_no)
-values ('${ids.document}', '${ownerId}', '${ids.documentType}', 'Synthetic comparison smoke', 2)
+values ('${ids.document}', '${ownerId}', '${ids.documentType}', 'Synthetic comparison smoke', 1)
 on conflict (id) do nothing;
 insert into public.document_versions
   (id, document_id, version_no, storage_bucket, storage_key, original_filename, mime_type,
@@ -193,6 +193,7 @@ insert into public.audit_findings
   (id, audit_job_id, rule_id, severity, rule_code_snapshot, fix_mode_snapshot,
    source_section_snapshot, message, actual_value, expected_value, location, status)
 ${findingsSql(ids.sourceAudit, true)} on conflict (id) do nothing;
+update public.documents set current_version_no = 1 where id = '${ids.document}';
 insert into public.fix_execution_jobs
   (id, audit_job_id, source_document_version_id, requested_by_user_id, idempotency_key,
    plan_hash, planner_version, selected_finding_ids, approved_plan_snapshot, state, planned_operation_count)
@@ -200,10 +201,13 @@ values ('${ids.execution}', '${ids.sourceAudit}', '${ids.sourceVersion}', '${own
   '${"c".repeat(64)}', 'fix-plan-v1', '["97000000-0000-0000-0001-000000000005"]',
   '{"schemaVersion":1}', 'Queued', 1)
 on conflict (id) do nothing;
+update public.documents set current_version_no = 2 where id = '${ids.document}';
 update public.fix_execution_jobs set state = 'Processing', started_at = now(),
+  claim_token = '${ids.execution}', attempt_count = 1,
   lease_expires_at = now() + interval '10 minutes' where id = '${ids.execution}' and state = 'Queued';
 update public.fix_execution_jobs set state = 'Completed', result_document_version_id = '${ids.resultVersion}',
-  result_sha256 = '${"b".repeat(64)}', completed_operation_count = 1, lease_expires_at = null,
+  result_sha256 = '${"b".repeat(64)}', result_object_size = 1, completed_operation_count = 1,
+  claim_token = null, lease_expires_at = null,
   completed_at = now() where id = '${ids.execution}' and state = 'Processing';
 begin;
 insert into public.audit_jobs

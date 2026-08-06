@@ -69,3 +69,11 @@ database. Detail kontraknya ada di
 migration additive terkini tanpa hosted Supabase, reset database, atau delete
 volume. Detail kontraknya ada di
 [FINDING_RESOLUTION.md](FINDING_RESOLUTION.md).
+
+`npm run test:remediation-hardening` menjalankan typed failure, fencing/retry,
+fault-injection, publish, downstream, dan privacy contract secara offline.
+`npm run test:remediation-hardening-local` memakai Supabase lokal untuk claim
+takeover, stale-worker denial, retry bound, source superseded, Storage orphan,
+compensating cleanup, canonical publish, safe DTO, shared-admin RLS, serta
+checksum historis. Jalankan smoke lokal dua kali; command tidak melakukan reset
+database atau menghapus volume.

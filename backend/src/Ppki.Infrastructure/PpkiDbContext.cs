@@ -235,6 +235,13 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.Property(x => x.FailedOperationCount).HasColumnName("failed_operation_count");
             entity.Property(x => x.ResultSha256).HasColumnName("result_sha256").HasMaxLength(64);
             entity.Property(x => x.SafeFailureCode).HasColumnName("safe_failure_code").HasMaxLength(128);
+            entity.Property(x => x.FailureCategory).HasColumnName("failure_category").HasConversion<string>();
+            entity.Property(x => x.ClaimToken).HasColumnName("claim_token");
+            entity.Property(x => x.AttemptCount).HasColumnName("attempt_count");
+            entity.Property(x => x.MaxAttempts).HasColumnName("max_attempts");
+            entity.Property(x => x.NextAttemptAt).HasColumnName("next_attempt_at");
+            entity.Property(x => x.ResultObjectSize).HasColumnName("result_object_size");
+            entity.Property(x => x.ObjectCreatedByAttempt).HasColumnName("object_created_by_attempt");
             entity.Property(x => x.StartedAt).HasColumnName("started_at");
             entity.Property(x => x.LeaseExpiresAt).HasColumnName("lease_expires_at");
             entity.Property(x => x.CompletedAt).HasColumnName("completed_at");

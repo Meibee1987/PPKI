@@ -12,6 +12,10 @@ public sealed class FixExecutionRepository(IDbContextFactory<PpkiDbContext> dbFa
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var existing = await ExistingAsync(db, candidate, cancellationToken);
         if (existing is not null) return Compare(existing, candidate);
+        var sourceIsCurrent = await db.DocumentVersions.AsNoTracking()
+            .Where(value => value.Id == candidate.SourceDocumentVersionId)
+            .AnyAsync(value => value.Document!.CurrentVersionNo == value.VersionNo, cancellationToken);
+        if (!sourceIsCurrent) return new(null, false, "fix-source-version-superseded");
 
         var job = new FixExecutionJob
         {
@@ -26,7 +30,8 @@ public sealed class FixExecutionRepository(IDbContextFactory<PpkiDbContext> dbFa
             ApprovedPlanSnapshotJson = candidate.ApprovedPlanSnapshotJson,
             PlannedOperationCount = candidate.PlannedOperationCount,
             CreatedAt = candidate.CreatedAt,
-            State = FixExecutionState.Queued
+            State = FixExecutionState.Queued,
+            MaxAttempts = FixRetryPolicy.MaximumAttempts
         };
         db.FixExecutionJobs.Add(job);
         try
@@ -41,6 +46,10 @@ public sealed class FixExecutionRepository(IDbContextFactory<PpkiDbContext> dbFa
             return existing is null
                 ? new(null, false, "fix-execution-idempotency-conflict")
                 : Compare(existing, candidate);
+        }
+        catch (DbUpdateException exception) when (exception.InnerException is PostgresException { SqlState: PostgresErrorCodes.CheckViolation })
+        {
+            return new(null, false, "fix-source-version-superseded");
         }
     }
 

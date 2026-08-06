@@ -189,6 +189,13 @@ public sealed class FixExecutionJob : Entity
     public int FailedOperationCount { get; set; }
     public string? ResultSha256 { get; set; }
     public string? SafeFailureCode { get; set; }
+    public FixFailureCategory? FailureCategory { get; set; }
+    public Guid? ClaimToken { get; set; }
+    public int AttemptCount { get; set; }
+    public int MaxAttempts { get; set; } = 3;
+    public DateTimeOffset? NextAttemptAt { get; set; }
+    public long? ResultObjectSize { get; set; }
+    public int? ObjectCreatedByAttempt { get; set; }
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? LeaseExpiresAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }

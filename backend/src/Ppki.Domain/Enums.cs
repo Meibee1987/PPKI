@@ -85,6 +85,18 @@ public enum FixExecutionState
     NoChange
 }
 
+[JsonConverter(typeof(JsonStringEnumConverter<FixFailureCategory>))]
+public enum FixFailureCategory
+{
+    Conflict,
+    InvalidInput,
+    InvalidSource,
+    InvalidPlan,
+    CapabilityUnavailable,
+    TransientInfrastructure,
+    TerminalInfrastructure
+}
+
 [JsonConverter(typeof(JsonStringEnumConverter<FindingResolutionState>))]
 public enum FindingResolutionState
 {

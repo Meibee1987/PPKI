@@ -87,3 +87,8 @@ replayable reconciliation command. Queued/processing jobs produce pending
 evidence and completed jobs are verified with the shared comparison engine.
 Neither re-audit completion nor failure is rolled back by resolution
 reconciliation. Approval, ignore, accepted risk, and UI remain deferred.
+
+S4-T05 does not change re-audit semantics. `Failed`, retry-pending, `NoChange`,
+result-less, and mismatched Fix executions remain controlled conflicts and
+create no audit. Retry/publish must first converge on one immutable completed
+result version.

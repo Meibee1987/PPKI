@@ -57,6 +57,7 @@ builder.Services.AddSingleton<AuditRunner>();
 builder.Services.AddSingleton(ProductionFixCapabilities.CreateApplyRegistry());
 builder.Services.AddSingleton<IFixApplyCapabilityResolver>(provider => provider.GetRequiredService<FixApplyCapabilityRegistry>());
 builder.Services.AddSingleton<FixExecutionProcessor>();
+builder.Services.AddSingleton<IRemediationFaultInjector, NoopRemediationFaultInjector>();
 builder.Services.AddHostedService<QueuedAuditWorker>();
 builder.Services.AddHostedService<QueuedFixExecutionWorker>();
 var host = builder.Build();

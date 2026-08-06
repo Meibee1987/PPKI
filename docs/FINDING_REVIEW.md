@@ -98,3 +98,7 @@ grant browser writes, or alter an older migration.
 Run `npm run test:finding-review` offline and
 `npm run test:finding-review-local` twice against local Supabase. The smoke is
 deterministic, bounded, and non-destructive.
+
+S4-T05 adds no review UI or transition. Ignore, accepted risk, and manual
+disposition neither hide nor mutate a Fix-execution failure and remain
+independent of automatic resolution evidence.

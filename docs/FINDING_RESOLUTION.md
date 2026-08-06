@@ -75,3 +75,8 @@ Run `npm run test:finding-resolution` for the offline suite and
 `npm run test:finding-resolution-local` against the local Supabase CLI stack.
 The smoke is bounded and rerunnable, uses deterministic fixtures, does not
 reset the database or delete volumes, and never connects to hosted Supabase.
+
+S4-T05 preserves this projection: failed, retry-pending, NoChange, or
+result-less execution cannot produce `FixAppliedObserved`; incomplete or
+failed re-audit cannot produce verification. Failure remains visible on the
+separate Fix-execution status and reconciliation replay remains idempotent.
