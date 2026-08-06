@@ -213,13 +213,14 @@ public sealed class ReauditArchitectureTests
     }
 
     [Fact]
-    public void Ownership_is_filtered_before_materialization_and_no_live_catalog_or_findings_are_read()
+    public void Shared_admin_resource_is_filtered_by_identity_and_no_live_catalog_or_findings_are_read()
     {
         var source = Source("backend", "src", "Ppki.Infrastructure", "ReauditService.cs");
         var ownedQuery = source[source.IndexOf("public static IQueryable<ReauditSourceContext> OwnedSource", StringComparison.Ordinal)..];
-        var ownerFilter = ownedQuery.IndexOf("OwnerUserId == ownerUserId", StringComparison.Ordinal);
+        var identityFilter = ownedQuery.IndexOf("value.Id == executionId", StringComparison.Ordinal);
         var projection = ownedQuery.IndexOf(".Select(value => new ReauditSourceContext", StringComparison.Ordinal);
-        Assert.True(ownerFilter >= 0 && projection > ownerFilter);
+        Assert.True(identityFilter >= 0 && projection > identityFilter);
+        Assert.DoesNotContain("OwnerUserId == ownerUserId", ownedQuery, StringComparison.Ordinal);
         Assert.Contains("OwnedSource(db, sourceFixExecutionId, ownerUserId)\n            .SingleOrDefaultAsync", source, StringComparison.Ordinal);
         Assert.DoesNotContain("db.Rules", source, StringComparison.Ordinal);
         Assert.DoesNotContain("db.ProfileRules", source, StringComparison.Ordinal);

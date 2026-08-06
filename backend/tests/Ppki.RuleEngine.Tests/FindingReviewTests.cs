@@ -76,6 +76,13 @@ public sealed class FindingReviewStateTests
     }
 
     [Fact]
+    public void User_role_serialization_is_an_explicit_string()
+    {
+        Assert.Equal("\"PPKIAdmin\"", JsonSerializer.Serialize(UserRole.PPKIAdmin));
+        Assert.Equal("\"Student\"", JsonSerializer.Serialize(UserRole.Student));
+    }
+
+    [Fact]
     public void Note_is_trimmed_bounded_and_control_free()
     {
         Assert.Equal("safe note", FindingReviewService.NormalizeNote("  safe note  "));
@@ -120,13 +127,15 @@ public sealed class FindingReviewArchitectureTests
     }
 
     [Fact]
-    public void Authorization_is_database_role_based_ppki_admin_only_and_no_self_review()
+    public void Authorization_is_database_role_based_ppki_admin_only_and_allows_self_review()
     {
         var source = Source("backend", "src", "Ppki.Infrastructure", "FindingReviewService.cs");
         Assert.Contains("select role as", source, StringComparison.Ordinal);
         Assert.Contains("UserRoleDatabase.TryParseExact", source, StringComparison.Ordinal);
         Assert.Contains("UserRole.PPKIAdmin", source, StringComparison.Ordinal);
-        Assert.Contains("OwnerUserId != actorUserId", source, StringComparison.Ordinal);
+        Assert.Contains("RequirePpkiAdminAsync", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("OwnerUserId != actorUserId", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("OwnerUserId == actorUserId", source, StringComparison.Ordinal);
         Assert.DoesNotContain("ClaimTypes.Role", source, StringComparison.Ordinal);
         Assert.DoesNotContain("UserRole.Reviewer", source, StringComparison.Ordinal);
         Assert.DoesNotContain("UserRole.UnitAdmin", source, StringComparison.Ordinal);
@@ -144,25 +153,50 @@ public sealed class FindingReviewArchitectureTests
     }
 
     [Fact]
-    public void Migration_is_additive_scoped_append_only_and_browser_read_only()
+    public void Correction_migration_is_additive_admin_only_self_review_and_browser_read_only()
     {
-        var sql = Source("supabase", "migrations", "202608050002_finding_review_workflow.sql");
+        var sql = Source("supabase", "migrations", "202608050003_admin_only_internal_access.sql");
+        Assert.Contains("create or replace function public.is_ppki_admin()", sql, StringComparison.Ordinal);
         Assert.Contains("role = 'PPKIAdmin'", sql, StringComparison.Ordinal);
-        Assert.Contains("document.owner_user_id <> auth.uid()", sql, StringComparison.Ordinal);
-        Assert.Contains("on delete restrict", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("uq_finding_review_cases_finding", sql, StringComparison.Ordinal);
-        Assert.Contains("uq_finding_review_events_idempotency", sql, StringComparison.Ordinal);
-        Assert.Contains("events are append-only", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("protect_user_profile_role_from_browser", sql, StringComparison.Ordinal);
+        Assert.Contains("operational self-approval", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("new.actor_user_id = review_case.requested_by_user_id", sql, StringComparison.Ordinal);
+        Assert.Contains("protect_user_profile_delete_from_browser", sql, StringComparison.Ordinal);
         Assert.Contains("VerificationResolvedObserved", sql, StringComparison.Ordinal);
-        Assert.Contains("grant select", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("grant insert on table public.finding_review", sql.Replace(
-            "grant insert on table public.finding_review_cases to service_role;", string.Empty).Replace(
-            "grant insert on table public.finding_review_events to service_role;", string.Empty),
-            StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("alter table public.audit_findings", sql, StringComparison.OrdinalIgnoreCase);
-        Assert.DoesNotContain("alter table public.finding_resolution", sql, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("finding_review_events_select_internal_admin", sql, StringComparison.Ordinal);
+        Assert.DoesNotContain("grant insert", sql, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("public.rules", sql, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Entire_business_api_uses_one_database_authoritative_admin_filter()
+    {
+        var api = Source("backend", "services", "Ppki.Api", "Program.cs");
+        var filter = Source("backend", "services", "Ppki.Api", "InternalAdminEndpointFilter.cs");
+        Assert.Contains("MapGroup(\"/api\").RequireAuthorization().AddEndpointFilter<InternalAdminEndpointFilter>()", api, StringComparison.Ordinal);
+        Assert.Contains("IInternalAdminAuthorizationService", filter, StringComparison.Ordinal);
+        Assert.Contains("RequirePpkiAdminAsync", filter, StringComparison.Ordinal);
+        Assert.DoesNotContain("ClaimTypes.Role", filter, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Shared_internal_resources_are_not_filtered_by_actor_ownership()
+    {
+        var files = new[]
+        {
+            Source("backend", "src", "Ppki.Infrastructure", "AuditReadService.cs"),
+            Source("backend", "src", "Ppki.Infrastructure", "FixPlanSourceReader.cs"),
+            Source("backend", "src", "Ppki.Infrastructure", "FixExecutionRepository.cs"),
+            Source("backend", "src", "Ppki.Infrastructure", "ReauditService.cs"),
+            Source("backend", "src", "Ppki.Infrastructure", "AuditComparisonService.cs"),
+            Source("backend", "src", "Ppki.Infrastructure", "FindingResolutionService.cs")
+        };
+        Assert.All(files, source => Assert.DoesNotContain("OwnerUserId == ownerUserId", source, StringComparison.Ordinal));
+
+        var migration = Source("supabase", "migrations", "202608060001_shared_ppki_admin_access.sql");
+        Assert.Contains("owner_user_id remains provenance", migration, StringComparison.Ordinal);
+        Assert.DoesNotContain("owner_user_id = (select auth.uid())", migration, StringComparison.Ordinal);
+        Assert.Equal(8, System.Text.RegularExpressions.Regex.Matches(migration,
+            @"using \(public\.is_ppki_admin\(\)\);").Count);
     }
 
     [Fact]
@@ -202,7 +236,7 @@ public sealed class FindingReviewArchitectureTests
         Assert.Contains("/audits/{auditId}/findings/{findingId}/review-requests", api, StringComparison.Ordinal);
         Assert.Contains("/finding-reviews/{reviewCaseId}/decisions", api, StringComparison.Ordinal);
         Assert.Contains("/finding-reviews/{reviewCaseId}/manual-remediation-reports", api, StringComparison.Ordinal);
-        Assert.Contains("finding-review-not-reviewer", api, StringComparison.Ordinal);
+        Assert.Contains("InternalAdminEndpointFilter", api, StringComparison.Ordinal);
         Assert.DoesNotContain("reviewerId", api, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("roleClaim", api, StringComparison.OrdinalIgnoreCase);
     }

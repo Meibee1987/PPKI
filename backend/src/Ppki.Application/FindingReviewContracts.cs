@@ -43,10 +43,15 @@ public sealed record FindingReviewDto(
 
 public sealed record FindingReviewCommandResult(FindingReviewDto Review, bool Replayed);
 
-public interface IAdminFindingReviewAuthorizationService
+public sealed class InternalAdminAuthorizationException : Exception
+{
+}
+
+public interface IInternalAdminAuthorizationService
 {
     Task<UserRole?> GetAuthoritativeRoleAsync(Guid actorUserId, CancellationToken cancellationToken);
-    Task<bool> CanDecideFindingAsync(Guid actorUserId, Guid auditId, Guid findingId, CancellationToken cancellationToken);
+    Task RequirePpkiAdminAsync(Guid actorUserId, CancellationToken cancellationToken);
+    Task<bool> IsPpkiAdminAsync(Guid actorUserId, CancellationToken cancellationToken);
 }
 
 public interface IFindingReviewService

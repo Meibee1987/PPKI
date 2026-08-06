@@ -20,7 +20,7 @@
     "test:finding-resolution": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --no-restore --filter FullyQualifiedName~FindingResolution",
     "test:finding-resolution-local": "node scripts/finding-resolution-smoke-test.mjs",
     "test:finding-review": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --no-restore --filter FullyQualifiedName~FindingReview",
-    "test:finding-review-local": "node scripts/finding-review-smoke-test.mjs",
+    "test:finding-review-local": "node scripts/finding-review-smoke-test.mjs && node scripts/finding-resolution-smoke-test.mjs",
     "check:secrets": "node scripts/secret-scan.mjs",
     "check:migrations": "node scripts/migration-check.mjs",
     "fixtures:generate": "dotnet run --project backend/tools/Ppki.FixtureGenerator/Ppki.FixtureGenerator.csproj -- --output backend/tests/fixtures/docx/generated",

@@ -17,6 +17,12 @@ const sourceFindingIds = [1, 2, 3, 4, 5].map((value) => `98700000-0000-0000-0001
 const unselectedFindingId = "98700000-0000-0000-0001-000000000006";
 const allSourceFindingIds = [...sourceFindingIds, unselectedFindingId];
 const resultFindingIds = [11, 12, 13, 14].map((value) => `98700000-0000-0000-0002-${String(value).padStart(12, "0")}`);
+const reviewKeys = Object.freeze({
+  adminBRequest: "98700000-0000-0000-0010-000000000001",
+  adminBDecision: "98700000-0000-0000-0010-000000000002",
+  adminARequest: "98700000-0000-0000-0010-000000000003",
+  adminADecision: "98700000-0000-0000-0010-000000000004",
+});
 const rule = { rule_code: "PPKI-LAY-019", domain: "LAY", subdomain: "Paragraf", applies_to: "Semua",
   element: "Perataan paragraf", requirement: { expected: "justified" }, validation_key: "body.justified",
   validation: { alignment: "both" }, severity: "Error", fix_mode: "Auto", source_reference: { sourceSection: "synthetic" },
@@ -46,15 +52,15 @@ async function databaseContainer() {
 }
 async function sql(container, statement) { return (await run("docker", ["exec", container, "psql", "-X", "-q", "-A", "-t", "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", statement], { timeoutMs: 60000 })).trim(); }
 function localFetch(url, options = {}) { const parsed = new URL(url); if (parsed.protocol !== "http:" || !["localhost", "127.0.0.1", "::1"].includes(parsed.hostname)) throw new Error("non-local request rejected"); return fetch(url, options); }
-function headers(apiKey, token, json = false) { return { apikey: apiKey, ...(token ? { authorization: `Bearer ${token}` } : {}), ...(json ? { "content-type": "application/json" } : {}) }; }
+function headers(apiKey, token, json = false, idempotencyKey) { return { apikey: apiKey, ...(token ? { authorization: `Bearer ${token}` } : {}), ...(json ? { "content-type": "application/json" } : {}), ...(idempotencyKey ? { "Idempotency-Key": idempotencyKey } : {}) }; }
 async function body(response) { const text = await response.text(); try { return text ? JSON.parse(text) : null; } catch { return null; } }
-async function authenticate(environment, identity) {
+async function authenticate(environment, identity, claimedRole = "PPKIAdmin") {
   const email = `finding-resolution-${identity}@example.invalid`; const password = `${randomUUID()}-Aa9!`;
   const admin = headers(environment.SERVICE_ROLE_KEY, environment.SERVICE_ROLE_KEY, true);
   const listed = await localFetch(`${environment.API_URL}/auth/v1/admin/users?page=1&per_page=1000`, { headers: admin });
   const existing = ((await listed.json()).users ?? []).find((value) => value.email === email);
   const saved = await localFetch(`${environment.API_URL}/auth/v1/admin/users${existing ? `/${existing.id}` : ""}`, { method: existing ? "PUT" : "POST", headers: admin,
-    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: "Synthetic Resolution User" } }) });
+    body: JSON.stringify({ email, password, email_confirm: true, user_metadata: { full_name: "Synthetic Resolution User", role: claimedRole } }) });
   const user = await body(saved); if (!saved.ok || !user?.id) throw new Error("local auth fixture failed");
   const signed = await localFetch(`${environment.API_URL}/auth/v1/token?grant_type=password`, { method: "POST", headers: headers(environment.ANON_KEY, undefined, true), body: JSON.stringify({ email, password }) });
   const session = await body(signed); if (!signed.ok || !session?.access_token) throw new Error("local sign-in failed"); return { id: user.id, token: session.access_token };
@@ -120,6 +126,8 @@ async function startApi(environment) { const settings = localSettings({ API_PORT
 async function stopApi() { if (!apiProcess || apiProcess.exitCode !== null) return; apiProcess.kill("SIGTERM"); await Promise.race([new Promise((resolve) => apiProcess.once("close", resolve)), new Promise((resolve) => setTimeout(resolve, 3000))]); if (apiProcess.exitCode === null) apiProcess.kill("SIGKILL"); }
 async function reconcile(apiUrl, environment, token, executionId = ids.execution) { const response = await localFetch(`${apiUrl}/api/fix-executions/${executionId}/resolution-reconciliation`, { method: "POST", headers: headers(environment.ANON_KEY, token) }); return { status: response.status, body: await body(response) }; }
 async function resolution(apiUrl, environment, token, findingId, auditId = ids.sourceAudit) { const response = await localFetch(`${apiUrl}/api/audits/${auditId}/findings/${findingId}/resolution`, { headers: headers(environment.ANON_KEY, token) }); return { status: response.status, body: await body(response) }; }
+async function requestReview(apiUrl, environment, token, auditId, findingId, key, disposition) { const response = await localFetch(`${apiUrl}/api/audits/${auditId}/findings/${findingId}/review-requests`, { method: "POST", headers: headers(environment.ANON_KEY, token, true, key), body: JSON.stringify({ requestedDisposition: disposition, note: "shared admin closure" }) }); return { status: response.status, body: await body(response) }; }
+async function decideReview(apiUrl, environment, token, caseId, key, decision) { const response = await localFetch(`${apiUrl}/api/finding-reviews/${caseId}/decisions`, { method: "POST", headers: headers(environment.ANON_KEY, token, true, key), body: JSON.stringify({ decision, note: "shared admin decision" }) }); return { status: response.status, body: await body(response) }; }
 function evidenceSql() { return `select concat_ws(',',(select count(*) from public.finding_resolution_cases where source_audit_job_id='${ids.sourceAudit}'),(select count(*) from public.finding_resolution_events where source_fix_execution_id='${ids.execution}'));`; }
 function historySql() { return `select concat_ws(',',(select md5(string_agg(row_to_json(a)::text,'' order by a.id)) from public.audit_jobs a where id in ('${ids.sourceAudit}','${ids.resultAudit}')),(select md5(row_to_json(e)::text) from public.fix_execution_jobs e where id='${ids.execution}'),(select md5(string_agg(row_to_json(v)::text,'' order by v.id)) from public.document_versions v where id in ('${ids.sourceVersion}','${ids.resultVersion}')),(select coalesce(md5(string_agg(row_to_json(f)::text,'' order by f.id)),'none') from public.audit_findings f where audit_job_id in ('${ids.sourceAudit}','${ids.resultAudit}')),(select md5(string_agg(row_to_json(s)::text,'' order by s.id)) from public.audit_rule_snapshots s where audit_job_id in ('${ids.sourceAudit}','${ids.resultAudit}')));`; }
 function safeResponse(value) { return !Object.keys(value ?? {}).some((key) => /actual|expected|fingerprint|semantic.?key|text|filename|storage|path|url|xml|secret/i.test(key)) && (typeof value !== "object" || value === null || Object.values(value).every(safeResponse)); }
@@ -133,7 +141,11 @@ async function main() {
   console.log("SUITE finding-resolution-local"); let originalSeverity;
   try {
     const environment = await getSupabaseEnvironment(process.cwd()); const container = await databaseContainer(); report("local-only-infrastructure-ready", true);
-    const owner = await authenticate(environment, "owner"); const foreign = await authenticate(environment, "foreign"); const apiUrl = await startApi(environment);
+    const owner = await authenticate(environment, "owner", "PPKIAdmin");
+    const adminB = await authenticate(environment, "admin-b", "PPKIAdmin");
+    const foreign = await authenticate(environment, "foreign", "PPKIAdmin");
+    await sql(container, `update public.user_profiles set role=case id when '${owner.id}' then 'PPKIAdmin' when '${adminB.id}' then 'PPKIAdmin' when '${foreign.id}' then 'Student' else role end where id in ('${owner.id}','${adminB.id}','${foreign.id}');`);
+    const apiUrl = await startApi(environment);
     await sql(container, fixtureSql(owner.id)); const before = await sql(container, evidenceSql());
     const open = await resolution(apiUrl, environment, owner.token, unselectedFindingId);
     report("get-is-read-only-and-open-without-a-case", open.status === 200 && open.body?.currentState === "Open" && open.body?.resolutionCaseId === null
@@ -167,7 +179,7 @@ async function main() {
     report("event-sequences-are-contiguous-and-unique", sequenceValid === "t");
     const foreignRead = await resolution(apiUrl, environment, foreign.token, sourceFindingIds[0]); const foreignPost = await reconcile(apiUrl, environment, foreign.token);
     const unknownId = "98700000-0000-0000-0003-000000000099"; const unknownRead = await resolution(apiUrl, environment, owner.token, unknownId); const unknownPost = await reconcile(apiUrl, environment, owner.token, unknownId);
-    report("foreign-and-unknown-share-safe-not-found", foreignRead.status === 404 && foreignPost.status === 404 && unknownRead.status === 404 && unknownPost.status === 404 && safeResponse(foreignRead.body) && safeResponse(unknownRead.body));
+    report("non-admin-is-forbidden-before-resource-load-and-unknown-is-safe", foreignRead.status === 403 && foreignPost.status === 403 && unknownRead.status === 404 && unknownPost.status === 404 && safeResponse(foreignRead.body) && safeResponse(unknownRead.body));
     const unauth = await localFetch(`${apiUrl}/api/audits/${ids.sourceAudit}/findings/${sourceFindingIds[0]}/resolution`); report("unauthenticated-is-rejected", unauth.status === 401);
     const malformedRead = await resolution(apiUrl, environment, owner.token, "not-a-guid", "not-a-guid"); const malformedPost = await reconcile(apiUrl, environment, owner.token, "not-a-guid");
     report("malformed-identifiers-return-safe-bad-request", malformedRead.status === 400 && malformedRead.body?.code === "resolution-id-invalid" && malformedPost.status === 400 && malformedPost.body?.code === "resolution-execution-id-invalid" && safeResponse(malformedRead.body) && safeResponse(malformedPost.body));
@@ -193,6 +205,56 @@ async function main() {
     await expectConflict(apiUrl, environment, owner.token, container, "failed-reaudit-is-safe", `update public.audit_jobs set status='Failed' where id='${ids.resultAudit}'`, `update public.audit_jobs set status='Completed' where id='${ids.resultAudit}'`, "resolution-comparison-invalid");
     await expectConflict(apiUrl, environment, owner.token, container, "lineage-mismatch-is-safe", `update public.fix_execution_jobs set requested_by_user_id='${foreign.id}' where id='${ids.execution}'`, `update public.fix_execution_jobs set requested_by_user_id='${owner.id}' where id='${ids.execution}'`, "resolution-lineage-mismatch");
     await expectConflict(apiUrl, environment, owner.token, container, "historical-context-mismatch-is-safe", `update public.audit_jobs set resolved_rule_set_hash='${"d".repeat(64)}' where id='${ids.resultAudit}'`, `update public.audit_jobs set resolved_rule_set_hash='${resolvedHash}' where id='${ids.resultAudit}'`, "resolution-historical-context-mismatch");
+
+    const sharedHistory = await sql(container, historySql());
+    const adminADocuments = await localFetch(`${apiUrl}/api/documents`, { headers: headers(environment.ANON_KEY, owner.token) });
+    const adminADetail = await localFetch(`${apiUrl}/api/documents/${ids.document}`, { headers: headers(environment.ANON_KEY, owner.token) });
+    const adminAAudit = await localFetch(`${apiUrl}/api/audits/${ids.sourceAudit}`, { headers: headers(environment.ANON_KEY, owner.token) });
+    report("admin-a-manages-own-document-version-audit-and-findings", adminADocuments.status === 200 && adminADetail.status === 200 && adminAAudit.status === 200);
+
+    const adminBDocuments = await localFetch(`${apiUrl}/api/documents`, { headers: headers(environment.ANON_KEY, adminB.token) });
+    const adminBDetail = await localFetch(`${apiUrl}/api/documents/${ids.document}`, { headers: headers(environment.ANON_KEY, adminB.token) });
+    const adminBAudit = await localFetch(`${apiUrl}/api/audits/${ids.sourceAudit}`, { headers: headers(environment.ANON_KEY, adminB.token) });
+    const adminBFindings = await localFetch(`${apiUrl}/api/audits/${ids.sourceAudit}/findings`, { headers: headers(environment.ANON_KEY, adminB.token) });
+    const adminBFixPlan = await localFetch(`${apiUrl}/api/audits/${ids.sourceAudit}/fix-plan-preview`, { method: "POST", headers: headers(environment.ANON_KEY, adminB.token, true), body: JSON.stringify({ findingIds: [sourceFindingIds[0]] }) });
+    const adminBFixStatus = await localFetch(`${apiUrl}/api/audits/${ids.sourceAudit}/fix-executions/${ids.execution}`, { headers: headers(environment.ANON_KEY, adminB.token) });
+    const adminBReaudit = await localFetch(`${apiUrl}/api/fix-executions/${ids.execution}/re-audit`, { method: "POST", headers: headers(environment.ANON_KEY, adminB.token) });
+    const adminBComparison = await localFetch(`${apiUrl}/api/fix-executions/${ids.execution}/comparison`, { headers: headers(environment.ANON_KEY, adminB.token) });
+    const adminBResolution = await resolution(apiUrl, environment, adminB.token, sourceFindingIds[0]);
+    const detailBody = await body(adminBDetail);
+    report("admin-b-shares-admin-a-document-version-audit-findings-and-fixplan", adminBDocuments.status === 200 && adminBDetail.status === 200 && detailBody?.versions?.some(value => value.id === ids.sourceVersion) && adminBAudit.status === 200 && adminBFindings.status === 200 && adminBFixPlan.status === 200 && adminBFixStatus.status === 200);
+    report("admin-b-reads-admin-a-reaudit-comparison-and-resolution-without-assignment", adminBReaudit.status === 200 && adminBComparison.status === 200 && adminBResolution.status === 200);
+
+    const adminBRequest = await requestReview(apiUrl, environment, adminB.token, ids.sourceAudit, unselectedFindingId, reviewKeys.adminBRequest, "Ignore");
+    const adminBDecision = await decideReview(apiUrl, environment, adminB.token, adminBRequest.body?.review?.reviewCaseId, reviewKeys.adminBDecision, "Ignore");
+    report("admin-b-decides-admin-a-finding-with-authenticated-actor", [200,201].includes(adminBRequest.status) && [200,201].includes(adminBDecision.status) && adminBDecision.body?.review?.reviewState === "Ignored" && adminBDecision.body?.review?.events?.every(event => event.actorUserId === adminB.id));
+
+    const adminARequest = await requestReview(apiUrl, environment, owner.token, ids.resultAudit, resultFindingIds[3], reviewKeys.adminARequest, "AcceptedRisk");
+    const adminADecision = await decideReview(apiUrl, environment, owner.token, adminARequest.body?.review?.reviewCaseId, reviewKeys.adminADecision, "AcceptRisk");
+    report("admin-a-self-review-remains-available", [200,201].includes(adminARequest.status) && [200,201].includes(adminADecision.status) && adminADecision.body?.review?.reviewState === "AcceptedRisk" && adminADecision.body?.review?.events?.every(event => event.actorUserId === owner.id));
+
+    const rlsUrl = `${environment.API_URL}/rest/v1/documents?id=eq.${ids.document}&select=id,owner_user_id`;
+    const rlsA = await localFetch(rlsUrl, { headers: headers(environment.ANON_KEY, owner.token) });
+    const rlsB = await localFetch(rlsUrl, { headers: headers(environment.ANON_KEY, adminB.token) });
+    const rlsForeign = await localFetch(rlsUrl, { headers: headers(environment.ANON_KEY, foreign.token) });
+    const [rlsABody, rlsBBody, rlsForeignBody] = await Promise.all([body(rlsA), body(rlsB), body(rlsForeign)]);
+    report("api-and-rls-share-exact-admin-decision", rlsA.status === 200 && rlsB.status === 200 && rlsABody?.length === 1 && rlsBBody?.length === 1 && (rlsForeign.status === 200 ? rlsForeignBody?.length === 0 : [401,403].includes(rlsForeign.status)));
+
+    await sql(container, `update public.user_profiles set role='Student' where id='${adminB.id}';`);
+    try {
+      const downgradedApi = await localFetch(`${apiUrl}/api/documents/${ids.document}`, { headers: headers(environment.ANON_KEY, adminB.token) });
+      const downgradedRls = await localFetch(rlsUrl, { headers: headers(environment.ANON_KEY, adminB.token) });
+      const downgradedBody = await body(downgradedRls);
+      report("admin-b-database-downgrade-immediately-overrides-ppkiadmin-token-claim", downgradedApi.status === 403 && (downgradedRls.status === 200 ? downgradedBody?.length === 0 : [401,403].includes(downgradedRls.status)));
+    } finally {
+      await sql(container, `update public.user_profiles set role='PPKIAdmin' where id='${adminB.id}';`);
+    }
+
+    const publicHealth = await localFetch(`${apiUrl}/health/live`);
+    const signup = await localFetch(`${environment.API_URL}/auth/v1/signup`, { method: "POST", headers: headers(environment.ANON_KEY, undefined, true), body: JSON.stringify({ email: `closed-${randomUUID()}@example.invalid`, password: `${randomUUID()}-Aa9!` }) });
+    report("existing-login-public-health-and-closed-signup-remain-correct", publicHealth.status === 200 && signup.status >= 400);
+    report("shared-admin-closure-is-historically-immutable-and-bounded", sharedHistory === await sql(container, historySql()) && await sql(container, `select concat_ws(',',count(distinct review_case.id),count(event.id)) from public.finding_review_cases review_case join public.finding_review_events event on event.review_case_id=review_case.id where review_case.audit_finding_id in ('${unselectedFindingId}','${resultFindingIds[3]}');`) === "2,4");
+
     originalSeverity = await sql(container, `select severity from public.rules where rule_code='${rule.rule_code}';`); await sql(container, `update public.rules set severity='Warning' where rule_code='${rule.rule_code}';`);
     const liveRuleReplay = await reconcile(apiUrl, environment, owner.token); report("live-rules-mutation-does-not-change-historical-state", liveRuleReplay.status === 200 && replayBefore === await sql(container, evidenceSql()));
     await sql(container, `update public.rules set severity='${originalSeverity}' where rule_code='${rule.rule_code}';`); originalSeverity = undefined;

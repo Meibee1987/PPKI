@@ -39,7 +39,8 @@ builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();
 builder.Services.AddScoped<IReauditService, ReauditService>();
 builder.Services.AddScoped<IAuditComparisonService, AuditComparisonService>();
 builder.Services.AddScoped<IFindingResolutionService, FindingResolutionService>();
-builder.Services.AddScoped<IAdminFindingReviewAuthorizationService, AdminFindingReviewAuthorizationService>();
+builder.Services.AddScoped<IInternalAdminAuthorizationService, InternalAdminAuthorizationService>();
+builder.Services.AddScoped<InternalAdminEndpointFilter>();
 builder.Services.AddScoped<IFindingReviewService, FindingReviewService>();
 builder.Services.AddSingleton<IResolvedRuleSetHasher, ResolvedRuleSetHasher>();
 builder.Services.AddSingleton(TimeProvider.System);
@@ -99,10 +100,10 @@ var readyHealthOptions = new HealthCheckOptions
 app.MapHealthChecks("/health/live", liveHealthOptions);
 app.MapHealthChecks("/health/ready", readyHealthOptions);
 app.MapHealthChecks("/health", liveHealthOptions);
-var api = app.MapGroup("/api").RequireAuthorization();
+var api = app.MapGroup("/api").RequireAuthorization().AddEndpointFilter<InternalAdminEndpointFilter>();
 
 api.MapGet("/me", async (ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) => {
-    var id = UserId(user); var profile = await EnsureProfileAsync(user, db, ct);
+    var id = UserId(user); var profile = await db.UserProfiles.AsNoTracking().SingleAsync(x=>x.Id==id,ct);
     return Results.Ok(new { id, profile.Email, profile.FullName, profile.Role });
 });
 
@@ -111,8 +112,8 @@ api.MapGet("/rules/summary", async (PpkiDbContext db, CancellationToken ct) => R
 }));
 
 api.MapGet("/documents", async (ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) => {
-    var uid = UserId(user);
-    var rows = await db.Documents.AsNoTracking().Where(x=>x.OwnerUserId==uid).Include(x=>x.DocumentType).Include(x=>x.Versions).ThenInclude(x=>x.Audits).OrderByDescending(x=>x.UpdatedAt).ToListAsync(ct);
+    _ = UserId(user);
+    var rows = await db.Documents.AsNoTracking().Include(x=>x.DocumentType).Include(x=>x.Versions).ThenInclude(x=>x.Audits).OrderByDescending(x=>x.UpdatedAt).ToListAsync(ct);
     return Results.Ok(rows.Select(x=>new { x.Id, x.Title, DocumentType=x.DocumentType!.Name, x.CurrentVersionNo, x.UpdatedAt,
         LatestAudit=x.Versions.SelectMany(v=>v.Audits).OrderByDescending(a=>a.CreatedAt).Select(a=>new {a.Id,Status=a.Status.ToString(),a.Score,a.ErrorCount,a.WarningCount,a.InfoCount}).FirstOrDefault() }));
 });
@@ -125,7 +126,7 @@ api.MapPost("/documents", async (ClaimsPrincipal user, HttpRequest request, Ppki
     if (!string.Equals(file.ContentType, "application/vnd.openxmlformats-officedocument.wordprocessingml.document", StringComparison.OrdinalIgnoreCase)) return Results.BadRequest(new {error="DOCX MIME type is required."});
     if (file.Length is <=0 or >50*1024*1024) return Results.BadRequest(new {error="File must be between 1 byte and 50 MB."});
     var type=await db.DocumentTypes.SingleOrDefaultAsync(x=>x.Code==code,ct); if(type is null) return Results.BadRequest(new{error="Unknown document type."});
-    var uid=UserId(user); await EnsureProfileAsync(user,db,ct);
+    var uid=UserId(user);
     var createdAt=DateTimeOffset.UtcNow;
     var document=new DocumentRecord{OwnerUserId=uid,DocumentTypeId=type.Id,Title=title,CurrentVersionNo=1,CreatedAt=createdAt,UpdatedAt=createdAt};
     var versionId=Guid.NewGuid();
@@ -152,14 +153,14 @@ api.MapPost("/documents", async (ClaimsPrincipal user, HttpRequest request, Ppki
 }).DisableAntiforgery();
 
 api.MapGet("/documents/{id:guid}", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) => {
-    var uid=UserId(user); var doc=await db.Documents.AsNoTracking().Where(x=>x.Id==id&&x.OwnerUserId==uid).Include(x=>x.DocumentType).Include(x=>x.Versions).ThenInclude(x=>x.Audits).SingleOrDefaultAsync(ct);
+    _=UserId(user); var doc=await db.Documents.AsNoTracking().Where(x=>x.Id==id).Include(x=>x.DocumentType).Include(x=>x.Versions).ThenInclude(x=>x.Audits).SingleOrDefaultAsync(ct);
     if(doc is null) return Results.NotFound();
     return Results.Ok(new{doc.Id,doc.Title,DocumentType=doc.DocumentType!.Name,doc.CurrentVersionNo,doc.CreatedAt,doc.UpdatedAt,
         Versions=doc.Versions.OrderByDescending(v=>v.VersionNo).Select(v=>new{v.Id,v.VersionNo,v.OriginalFilename,v.SizeBytes,v.Sha256,v.CreatedAt,Audits=v.Audits.OrderByDescending(a=>a.CreatedAt).Select(a=>new{a.Id,Status=a.Status.ToString(),a.Score,a.ErrorCount,a.WarningCount,a.InfoCount,a.CreatedAt})})});
 });
 
 api.MapPost("/document-versions/{versionId:guid}/audits", async (Guid versionId, ClaimsPrincipal user, PpkiDbContext db, IAuditTrailWriter auditTrail, CancellationToken ct) => {
-    var uid=UserId(user); var documentKind=await db.DocumentVersions.Where(v=>v.Id==versionId&&v.Document!.OwnerUserId==uid).Select(v=>(DocumentKind?)v.Document!.DocumentType!.Kind).SingleOrDefaultAsync(ct); if(documentKind is null)return Results.NotFound();
+    var uid=UserId(user); var documentKind=await db.DocumentVersions.Where(v=>v.Id==versionId).Select(v=>(DocumentKind?)v.Document!.DocumentType!.Kind).SingleOrDefaultAsync(ct); if(documentKind is null)return Results.NotFound();
     var active=await db.ProfileVersions.OrderByDescending(x=>x.VersionNo).FirstAsync(x=>x.Status=="Active",ct);
     var audit=new AuditJob{DocumentVersionId=versionId,ProfileVersionId=active.Id,DocumentKindSnapshot=documentKind,RequestedByUserId=uid,Status=AuditJobStatus.Queued};
     var eventContext=AuditEventContext.User(uid,audit.Id);
@@ -404,13 +405,13 @@ api.MapPost("/finding-reviews/{reviewCaseId}/manual-remediation-reports", async 
 }).WithName("ReportManualFindingRemediation");
 
 api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IAuditTrailWriter auditTrail, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {
-    var uid=UserId(user); var version=await db.DocumentVersions.AsNoTracking().SingleOrDefaultAsync(v=>v.Id==id&&v.Document!.OwnerUserId==uid,ct); if(version is null)return Results.NotFound();
-    var expected=pathBuilder.BuildOriginalPath(uid,version.DocumentId,version.Id); if(version.StorageBucket!=supabase.Value.Storage.OriginalBucket||version.StorageKey!=expected)return Results.NotFound();
+    var uid=UserId(user); var version=await db.DocumentVersions.AsNoTracking().Where(v=>v.Id==id).Select(v=>new{Version=v,OwnerUserId=v.Document!.OwnerUserId}).SingleOrDefaultAsync(ct); if(version is null)return Results.NotFound();
+    var expected=pathBuilder.BuildOriginalPath(version.OwnerUserId,version.Version.DocumentId,version.Version.Id); if(version.Version.StorageBucket!=supabase.Value.Storage.OriginalBucket||version.Version.StorageKey!=expected)return Results.NotFound();
     var lifetime=TimeSpan.FromSeconds(supabase.Value.Storage.SignedUrlLifetimeSeconds); string url;
-    try { url=await storage.CreateSignedDownloadUrlAsync(version.StorageBucket,version.StorageKey,lifetime,ct); }
+    try { url=await storage.CreateSignedDownloadUrlAsync(version.Version.StorageBucket,version.Version.StorageKey,lifetime,ct); }
     catch { return Results.Problem(statusCode:StatusCodes.Status502BadGateway,title:"Document download authorization failed."); }
     var eventContext=AuditEventContext.User(uid,Guid.NewGuid()); await using var transaction=await db.Database.BeginTransactionAsync(ct); await auditTrail.SetTransactionContextAsync(db,eventContext,ct);
-    auditTrail.Add(db,eventContext,new AuditEventData(AuditActions.DocumentDownloadAuthorized,AuditResourceTypes.DocumentVersion,version.Id,uid,AuditEventMetadata.Create(("download_kind","original")))); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
+    auditTrail.Add(db,eventContext,new AuditEventData(AuditActions.DocumentDownloadAuthorized,AuditResourceTypes.DocumentVersion,version.Version.Id,version.OwnerUserId,AuditEventMetadata.Create(("download_kind","original")))); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
     return Results.Ok(new{url,expiresInSeconds=(int)lifetime.TotalSeconds});
 });
 
@@ -424,15 +425,10 @@ static bool TryIdempotencyKey(HttpRequest request,out Guid key) {
 }
 static IResult FindingReviewProblem(FindingReviewException exception) {
     var status=exception.DiagnosticCode switch {
-        "finding-review-not-reviewer" or "finding-review-out-of-scope"=>StatusCodes.Status403Forbidden,
         "finding-review-note-invalid" or "finding-review-idempotency-key-invalid" or "finding-review-not-available"=>StatusCodes.Status400BadRequest,
         _=>StatusCodes.Status409Conflict};
     return Results.Problem(statusCode:status,title:"Finding review command was rejected.",
         extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
-}
-static async Task<UserProfile> EnsureProfileAsync(ClaimsPrincipal user, PpkiDbContext db, CancellationToken ct) {
-    var id=UserId(user); var existing=await db.UserProfiles.SingleOrDefaultAsync(x=>x.Id==id,ct); if(existing is not null)return existing;
-    var profile=new UserProfile{Id=id,Email=user.FindFirstValue(ClaimTypes.Email)??$"{id}@unknown.local",FullName=user.Identity?.Name??"Pengguna",Role=UserRole.Student}; db.UserProfiles.Add(profile); await db.SaveChangesAsync(ct); return profile;
 }
 
 static async Task TryWriteOrphanCleanupAsync(IDbContextFactory<PpkiDbContext> dbFactory, IAuditTrailWriter auditTrail, AuditEventContext context, Guid versionId, Guid ownerUserId, CancellationToken ct) {

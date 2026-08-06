@@ -1,5 +1,24 @@
 # Database security contract
 
+## Current internal-application override (S4-T04)
+
+Migration `202608050003_admin_only_internal_access.sql` supersedes the older
+authenticated ownership predicates for the deployed internal application. The
+fixed-search-path, security-definer helper `public.is_ppki_admin()` reads
+`auth.uid()` and accepts only exact `public.user_profiles.role = 'PPKIAdmin'`.
+All browser-readable business tables require that predicate. The final additive
+shared-access migration removes owner scoping between PPKIAdmin accounts:
+ownership remains provenance, while Admin A and Admin B see the same internal
+documents, versions, audits, findings, snapshots, fix executions, resolution,
+and review rows. `Student`, `Reviewer`, `UnitAdmin`, absent, and invalid roles
+see no rows.
+
+Authenticated still receives no direct business-table INSERT, UPDATE, or DELETE
+grant. Profile role changes, profile deletion, and direct review writes are
+denied; provisioning is an operator-only action. The historical sections below
+describe the earlier migrations, not an access grant that bypasses this final
+admin predicate.
+
 S1-T02 applies a least-privilege Data API boundary. All application tables in
 `public` have RLS enabled. `anon` receives no table privileges. The
 `authenticated` role has only the SELECT grants and policies below; it has no

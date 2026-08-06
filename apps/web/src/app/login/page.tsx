@@ -1,6 +1,5 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import { createClient } from "../../lib/supabase/client";
@@ -35,7 +34,7 @@ export default function LoginPage() {
         <label>Kata sandi<input name="password" type="password" minLength={8} required /></label>
         {error && <p className="error-box">{error}</p>}
         <button className="button" disabled={busy}>{busy ? "Memproses..." : "Masuk"}</button>
-        <p>Belum punya akun? <Link href="/signup">Daftar</Link></p>
+        <p>Akun internal dibuat oleh operator PPKI yang terpercaya.</p>
       </form>
     </main>
   );

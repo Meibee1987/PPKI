@@ -125,8 +125,14 @@ replay and concurrency safety. See [FINDING_RESOLUTION.md](FINDING_RESOLUTION.md
 
 S4-T04 adds one immutable `finding_review_cases` row per reviewed finding and
 append-only `finding_review_events`. All foreign keys are `RESTRICT`; no
-historical backfill occurs. Owner read follows the existing ownership chain.
-The only global decision scope is an exact database-authoritative `PPKIAdmin`
-reviewing another user's finding. Browser clients receive read access only and
-cannot change profile roles or review rows. See
+historical backfill occurs. The additive admin-only correction admits only an
+exact database-authoritative `PPKIAdmin` and intentionally permits operational
+self-approval. Browser clients receive admin-gated read access only and cannot
+change profile roles or review rows. See
 [FINDING_REVIEW.md](FINDING_REVIEW.md).
+
+The S4-T04 final closure keeps `documents.owner_user_id` and derived ownership
+chains as immutable provenance, not as an access boundary between internal
+PPKIAdmin accounts. Migration `202608060001_shared_ppki_admin_access.sql`
+provides shared read visibility without ownership transfer or assignment;
+backend business routes use the same database-authoritative admin gate.

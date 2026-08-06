@@ -5,6 +5,12 @@
 Use `npm run test:finding-review` for the focused offline contract suite. With
 local Supabase ready and the additive migration applied, run
 `npm run test:finding-review-local` twice to verify the bounded runtime workflow.
+The smoke proves the global database-role gate, token-claim spoof resistance,
+operational self-review, admin-only RLS, role protection, immutable history, and
+rerunnable bounded cardinality without resetting the database. It also runs the
+shared Admin A/Admin B closure over documents, nested versions, audits,
+findings, FixPlan, fix status, re-audit, comparison, resolution, and finding
+review; a database-role downgrade is always restored in `finally`.
 
 Semua command canonical dijalankan dari root repository.
 

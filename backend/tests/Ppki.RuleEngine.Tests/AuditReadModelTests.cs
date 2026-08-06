@@ -293,7 +293,7 @@ public sealed class AuditReadModelTests
     }
 
     [Fact]
-    public void Owned_findings_query_enforces_full_owner_chain_and_uses_snapshots()
+    public void Shared_admin_findings_query_uses_immutable_snapshots_without_owner_filter()
     {
         using var db = Context();
         var sql = AuditReadQueries.OwnedFindings(db, Guid.NewGuid(), Guid.NewGuid())
@@ -301,10 +301,7 @@ public sealed class AuditReadModelTests
 
         Assert.Contains("audit_findings", sql);
         Assert.Contains("audit_rule_snapshots", sql);
-        Assert.Contains("audit_jobs", sql);
-        Assert.Contains("document_versions", sql);
-        Assert.Contains("documents", sql);
-        Assert.Contains("owner_user_id", sql);
+        Assert.DoesNotContain("owner_user_id", sql);
         Assert.DoesNotContain("rule_definitions", sql);
     }
 
@@ -324,9 +321,9 @@ public sealed class AuditReadModelTests
             .ToLowerInvariant();
 
         Assert.Contains("group by", summarySql);
-        Assert.Contains("owner_user_id", summarySql);
+        Assert.DoesNotContain("owner_user_id", summarySql);
         Assert.Contains("limit", pageSql);
-        Assert.Contains("owner_user_id", pageSql);
+        Assert.DoesNotContain("owner_user_id", pageSql);
         Assert.DoesNotContain("order by", pageSql);
     }
 

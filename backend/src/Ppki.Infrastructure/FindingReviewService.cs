@@ -6,8 +6,8 @@ using Ppki.Domain;
 
 namespace Ppki.Infrastructure;
 
-public sealed class AdminFindingReviewAuthorizationService(IDbContextFactory<PpkiDbContext> dbFactory)
-    : IAdminFindingReviewAuthorizationService
+public sealed class InternalAdminAuthorizationService(IDbContextFactory<PpkiDbContext> dbFactory)
+    : IInternalAdminAuthorizationService
 {
     public async Task<UserRole?> GetAuthoritativeRoleAsync(Guid actorUserId, CancellationToken cancellationToken)
     {
@@ -18,24 +18,23 @@ public sealed class AdminFindingReviewAuthorizationService(IDbContextFactory<Ppk
         return UserRoleDatabase.TryParseExact(value, out var role) ? role : null;
     }
 
-    public async Task<bool> CanDecideFindingAsync(Guid actorUserId, Guid auditId, Guid findingId,
-        CancellationToken cancellationToken)
+    public async Task RequirePpkiAdminAsync(Guid actorUserId, CancellationToken cancellationToken)
     {
-        if (await GetAuthoritativeRoleAsync(actorUserId, cancellationToken) != UserRole.PPKIAdmin) return false;
-        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        return await db.AuditFindings.AsNoTracking().AnyAsync(value => value.Id == findingId
-            && value.AuditJobId == auditId
-            && value.AuditJob!.DocumentVersion!.Document!.OwnerUserId != actorUserId, cancellationToken);
+        if (!await IsPpkiAdminAsync(actorUserId, cancellationToken))
+            throw new InternalAdminAuthorizationException();
     }
+
+    public async Task<bool> IsPpkiAdminAsync(Guid actorUserId, CancellationToken cancellationToken) =>
+        await GetAuthoritativeRoleAsync(actorUserId, cancellationToken) == UserRole.PPKIAdmin;
 }
 
-internal sealed record FindingReviewResource(Guid FindingId, Guid AuditId, Guid DocumentVersionId, Guid OwnerUserId);
+internal sealed record FindingReviewResource(Guid FindingId, Guid AuditId, Guid DocumentVersionId);
 internal sealed record FindingReviewWriteResult(Guid AuditId, Guid FindingId, bool Replayed);
 internal enum FindingReviewCommandKind { Request, Decision, ManualReport }
 
 public sealed class FindingReviewService(
     IDbContextFactory<PpkiDbContext> dbFactory,
-    IAdminFindingReviewAuthorizationService authorization,
+    IInternalAdminAuthorizationService authorization,
     TimeProvider timeProvider) : IFindingReviewService
 {
     private const int MaximumEvents = 100;
@@ -44,13 +43,10 @@ public sealed class FindingReviewService(
     public async Task<FindingReviewDto?> GetAsync(Guid auditId, Guid findingId, Guid actorUserId,
         CancellationToken cancellationToken)
     {
+        await authorization.RequirePpkiAdminAsync(actorUserId, cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var resource = await ResourceQuery(db, auditId, findingId).SingleOrDefaultAsync(cancellationToken);
         if (resource is null) return null;
-        var owner = resource.OwnerUserId == actorUserId;
-        var canAdminDecide = !owner && await authorization.CanDecideFindingAsync(
-            actorUserId, auditId, findingId, cancellationToken);
-        if (!owner && !canAdminDecide) return null;
 
         var resolutionState = await ResolutionStateAsync(db, findingId, cancellationToken);
         var reviewCase = await db.FindingReviewCases.AsNoTracking()
@@ -58,7 +54,7 @@ public sealed class FindingReviewService(
         if (reviewCase is null)
             return new(null, findingId, auditId, resource.DocumentVersionId, resolutionState,
                 FindingReviewState.NoReview, null, null, null, 0, null,
-                new(owner && resolutionState != FindingResolutionState.VerifiedResolved, false, false), [], []);
+                new(resolutionState != FindingResolutionState.VerifiedResolved, false, false), [], []);
 
         var eventCount = await db.FindingReviewEvents.AsNoTracking()
             .CountAsync(value => value.ReviewCaseId == reviewCase.Id, cancellationToken);
@@ -68,10 +64,10 @@ public sealed class FindingReviewService(
         var reviewState = FindingReviewProjection.State(latest?.EventType);
         var requested = events.LastOrDefault(value => value.EventType == FindingReviewEventType.ReviewRequested)
             ?.RequestedDisposition;
-        var canRequest = owner && resolutionState != FindingResolutionState.VerifiedResolved
+        var canRequest = resolutionState != FindingResolutionState.VerifiedResolved
             && reviewState is FindingReviewState.NoReview or FindingReviewState.NeedsRevision;
-        var canReport = owner && reviewState == FindingReviewState.ManualRemediationApproved;
-        var canDecide = canAdminDecide && reviewState == FindingReviewState.PendingReview;
+        var canReport = reviewState == FindingReviewState.ManualRemediationApproved;
+        var canDecide = reviewState == FindingReviewState.PendingReview;
         var allowed = canDecide && requested is not null ? FindingReviewProjection.Allowed(requested.Value) : [];
         return new(reviewCase.Id, findingId, auditId, resource.DocumentVersionId, resolutionState, reviewState,
             requested, reviewCase.RequestedByUserId, events.LastOrDefault(value => value.Decision is not null)?.Decision,
@@ -108,6 +104,7 @@ public sealed class FindingReviewService(
         CancellationToken cancellationToken)
     {
         if (idempotencyKey == Guid.Empty) throw new FindingReviewException("finding-review-idempotency-key-invalid");
+        await authorization.RequirePpkiAdminAsync(actorUserId, cancellationToken);
         var note = NormalizeNote(suppliedNote);
         for (var attempt = 0; attempt < MaximumAttempts; attempt++)
         {
@@ -140,7 +137,7 @@ public sealed class FindingReviewService(
         FindingReviewCase? reviewCase;
         if (kind == FindingReviewCommandKind.Request)
         {
-            resource = await ResourceQuery(db, auditId!.Value, findingId!.Value, actorUserId)
+            resource = await ResourceQuery(db, auditId!.Value, findingId!.Value)
                 .SingleOrDefaultAsync(cancellationToken);
             if (resource is null) { await transaction.CommitAsync(cancellationToken); return null; }
             if (await ResolutionStateAsync(db, resource.FindingId, cancellationToken) == FindingResolutionState.VerifiedResolved)
@@ -166,21 +163,9 @@ public sealed class FindingReviewService(
         {
             var joined = await db.FindingReviewCases.AsNoTracking().Where(value => value.Id == reviewCaseId)
                 .Select(value => new { Case = value, Resource = new FindingReviewResource(value.AuditFindingId,
-                    value.AuditJobId, value.SourceDocumentVersionId,
-                    value.AuditJob!.DocumentVersion!.Document!.OwnerUserId) }).SingleOrDefaultAsync(cancellationToken);
+                    value.AuditJobId, value.SourceDocumentVersionId) }).SingleOrDefaultAsync(cancellationToken);
             if (joined is null) { await transaction.CommitAsync(cancellationToken); return null; }
             reviewCase = joined.Case; resource = joined.Resource;
-            if (kind == FindingReviewCommandKind.ManualReport && resource.OwnerUserId != actorUserId)
-            { await transaction.CommitAsync(cancellationToken); return null; }
-            if (kind == FindingReviewCommandKind.Decision)
-            {
-                if (await authorization.GetAuthoritativeRoleAsync(actorUserId, cancellationToken) != UserRole.PPKIAdmin)
-                    throw new FindingReviewException("finding-review-not-reviewer");
-                if (resource.OwnerUserId == actorUserId
-                    || !await authorization.CanDecideFindingAsync(actorUserId, resource.AuditId,
-                        resource.FindingId, cancellationToken))
-                    throw new FindingReviewException("finding-review-out-of-scope");
-            }
         }
 
         var events = await db.FindingReviewEvents.AsNoTracking().Where(value => value.ReviewCaseId == reviewCase.Id)
@@ -236,14 +221,12 @@ public sealed class FindingReviewService(
     }
 
     private static IQueryable<FindingReviewResource> ResourceQuery(PpkiDbContext db, Guid auditId,
-        Guid findingId, Guid? ownerUserId = null)
+        Guid findingId)
     {
         var query = db.AuditFindings.AsNoTracking().Where(value => value.Id == findingId
             && value.AuditJobId == auditId);
-        if (ownerUserId is not null)
-            query = query.Where(value => value.AuditJob!.DocumentVersion!.Document!.OwnerUserId == ownerUserId);
         return query.Select(value => new FindingReviewResource(value.Id, value.AuditJobId,
-            value.AuditJob!.DocumentVersionId, value.AuditJob.DocumentVersion!.Document!.OwnerUserId));
+            value.AuditJob!.DocumentVersionId));
     }
 
     private static async Task<FindingResolutionState> ResolutionStateAsync(PpkiDbContext db, Guid findingId,

@@ -201,7 +201,7 @@ public sealed class FindingResolutionService(
 
     public static IQueryable<FindingResolutionSourceContext> OwnedExecution(PpkiDbContext db,
         Guid executionId, Guid ownerUserId) => db.FixExecutionJobs.AsNoTracking()
-        .Where(value => value.Id == executionId && value.AuditJob!.DocumentVersion!.Document!.OwnerUserId == ownerUserId)
+        .Where(value => value.Id == executionId)
         .Select(value => new FindingResolutionSourceContext(value.Id, value.State, value.AuditJobId,
             value.AuditJob!.Status, value.AuditJob.DocumentVersionId, value.SourceDocumentVersionId,
             value.SourceDocumentVersion!.DocumentId, value.ResultDocumentVersionId,

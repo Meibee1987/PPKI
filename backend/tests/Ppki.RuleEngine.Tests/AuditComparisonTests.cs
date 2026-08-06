@@ -303,12 +303,13 @@ public sealed class AuditComparisonTests
     }
 
     [Fact]
-    public void Service_and_endpoint_are_owned_historical_read_only_adapters()
+    public void Service_and_endpoint_are_shared_admin_historical_read_only_adapters()
     {
         var service = Source("backend", "src", "Ppki.Infrastructure", "AuditComparisonService.cs");
         var api = Source("backend", "services", "Ppki.Api", "Program.cs");
 
-        Assert.Contains("OwnerUserId == ownerUserId", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("OwnerUserId == ownerUserId", service, StringComparison.Ordinal);
+        Assert.Contains("AddEndpointFilter<InternalAdminEndpointFilter>()", api, StringComparison.Ordinal);
         Assert.Contains("AsNoTracking()", service, StringComparison.Ordinal);
         Assert.Contains("AuditRuleSnapshots", service, StringComparison.Ordinal);
         Assert.Contains("policy: null", service, StringComparison.Ordinal);
@@ -325,7 +326,7 @@ public sealed class AuditComparisonTests
     }
 
     [Fact]
-    public void Ownership_is_in_both_database_queries_before_materialization()
+    public void Shared_admin_queries_select_by_resource_identity_without_owner_filter()
     {
         using var db = new PpkiDbContext(new DbContextOptionsBuilder<PpkiDbContext>()
             .UseNpgsql("Host=localhost;Database=audit_comparison_offline_test").Options);
@@ -335,8 +336,8 @@ public sealed class AuditComparisonTests
         var resultSql = AuditComparisonService.OwnedResultAudit(db, Guid.NewGuid(), Guid.NewGuid())
             .ToQueryString().ToLowerInvariant();
 
-        Assert.Contains("owner_user_id", sourceSql, StringComparison.Ordinal);
-        Assert.Contains("owner_user_id", resultSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("owner_user_id", sourceSql, StringComparison.Ordinal);
+        Assert.DoesNotContain("owner_user_id", resultSql, StringComparison.Ordinal);
         Assert.Contains("fix_execution_jobs", sourceSql, StringComparison.Ordinal);
         Assert.Contains("source_fix_execution_id", resultSql, StringComparison.Ordinal);
     }

@@ -108,7 +108,7 @@ does not accidentally depend on nested array insertion order.
 
 ## Manual review dimension
 
-S4-T04 exposes a separate review read model and owner/admin commands documented
+S4-T04 exposes a separate review read model and PPKIAdmin-only commands documented
 in [FINDING_REVIEW.md](FINDING_REVIEW.md). Review never rewrites the historical
 finding returned by these routes, changes its severity/count/score, or hides it
 from audit and comparison results.

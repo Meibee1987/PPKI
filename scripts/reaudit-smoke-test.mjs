@@ -299,6 +299,7 @@ async function main() {
     requireResult("local-only-infrastructure-ready", true);
     auth = await authenticate(environment);
     requireResult("synthetic-owner-authenticated", true);
+    await sql(container, `update public.user_profiles set role='PPKIAdmin' where id='${auth.userId}';`);
     apiUrl = await startApi(environment);
     requireResult("local-api-ready", true);
     await sql(container, setupSql(auth.userId));

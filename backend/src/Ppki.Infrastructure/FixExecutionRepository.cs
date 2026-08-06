@@ -54,8 +54,7 @@ public sealed class FixExecutionRepository(IDbContextFactory<PpkiDbContext> dbFa
     {
         await using var db = await factory.CreateDbContextAsync(cancellationToken);
         return await db.FixExecutionJobs.AsNoTracking()
-            .SingleOrDefaultAsync(value => value.Id == executionId
-                && value.AuditJob!.DocumentVersion!.Document!.OwnerUserId == ownerUserId, cancellationToken);
+            .SingleOrDefaultAsync(value => value.Id == executionId, cancellationToken);
     }
 
     private static Task<FixExecutionJob?> ExistingAsync(PpkiDbContext db, FixExecutionCandidate candidate,

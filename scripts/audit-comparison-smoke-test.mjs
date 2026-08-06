@@ -310,6 +310,7 @@ async function main() {
     report("local-only-infrastructure-ready", true);
     const owner = await authenticate(environment, "owner");
     const foreign = await authenticate(environment, "foreign");
+    await sql(container, `update public.user_profiles set role=case id when '${owner.id}' then 'PPKIAdmin' when '${foreign.id}' then 'Student' else role end where id in ('${owner.id}','${foreign.id}');`);
     const apiUrl = await startApi(environment);
     await sql(container, fixtureSql(owner.id));
     report("bounded-historical-fixture-ready", true);
@@ -343,10 +344,10 @@ async function main() {
       && changed.body?.totalCount === 1 && changed.body?.items?.[0]?.status === "Changed"
       && JSON.stringify(changed.body?.summary) === JSON.stringify(ownerResult.body?.summary));
     const foreignResult = await comparison(apiUrl, environment, foreign.token);
-    report("foreign-execution-is-safe-not-found", foreignResult.status === 404);
+    report("non-admin-is-forbidden-before-resource-load", foreignResult.status === 403);
     const unknown = await localFetch(`${apiUrl}/api/fix-executions/97000000-0000-0000-0000-999999999999/comparison`,
       { headers: headers(environment.ANON_KEY, owner.token) });
-    report("unknown-and-foreign-have-the-same-safe-status", unknown.status === foreignResult.status);
+    report("unknown-admin-resource-is-safe-not-found", unknown.status === 404);
     const unauthenticated = await localFetch(`${apiUrl}/api/fix-executions/${ids.execution}/comparison`);
     report("unauthenticated-request-is-rejected", unauthenticated.status === 401);
 

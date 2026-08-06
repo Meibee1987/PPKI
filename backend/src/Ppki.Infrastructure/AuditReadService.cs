@@ -17,8 +17,7 @@ public sealed class AuditReadService(
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var audit = await db.AuditJobs
             .AsNoTracking()
-            .Where(value => value.Id == auditId
-                && value.DocumentVersion!.Document!.OwnerUserId == ownerUserId)
+            .Where(value => value.Id == auditId)
             .Select(value => new AuditSummaryRow(
                 value.Id,
                 value.Status,
@@ -81,8 +80,7 @@ public sealed class AuditReadService(
         ArgumentNullException.ThrowIfNull(query);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var owned = await db.AuditJobs.AsNoTracking().AnyAsync(value =>
-            value.Id == auditId
-            && value.DocumentVersion!.Document!.OwnerUserId == ownerUserId,
+            value.Id == auditId,
             cancellationToken);
         if (!owned) return null;
 
@@ -189,7 +187,6 @@ public static class AuditReadQueries
             on new { finding.AuditJobId, RuleCode = finding.RuleCodeSnapshot }
             equals new { snapshot.AuditJobId, RuleCode = snapshot.RuleCode }
         where finding.AuditJobId == auditId
-            && finding.AuditJob!.DocumentVersion!.Document!.OwnerUserId == ownerUserId
         group finding by new
         {
             snapshot.Domain,
@@ -221,7 +218,6 @@ public static class AuditReadQueries
             on new { finding.AuditJobId, RuleCode = finding.RuleCodeSnapshot }
             equals new { snapshot.AuditJobId, RuleCode = snapshot.RuleCode }
         where finding.AuditJobId == auditId
-            && finding.AuditJob!.DocumentVersion!.Document!.OwnerUserId == ownerUserId
             && (findingId == null || finding.Id == findingId)
             && (severity == null || finding.Severity == severity)
             && (fixMode == null || finding.FixModeSnapshot == fixMode)

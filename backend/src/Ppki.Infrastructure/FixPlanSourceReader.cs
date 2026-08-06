@@ -47,8 +47,7 @@ public static class FixPlanSourceQueries
         Guid ownerUserId) =>
         db.AuditJobs
             .AsNoTracking()
-            .Where(value => value.Id == auditId
-                && value.DocumentVersion!.Document!.OwnerUserId == ownerUserId)
+            .Where(value => value.Id == auditId)
             .Select(value => new FixPlanAuditSourceRow(
                 value.Id,
                 value.Status,
@@ -67,7 +66,6 @@ public static class FixPlanSourceQueries
             on new { finding.AuditJobId, RuleCode = finding.RuleCodeSnapshot }
             equals new { snapshot.AuditJobId, RuleCode = snapshot.RuleCode }
         where finding.AuditJobId == auditId
-            && finding.AuditJob!.DocumentVersion!.Document!.OwnerUserId == ownerUserId
             && findingIds.Contains(finding.Id)
         select new FixPlanFindingSnapshot(
             finding.Id,

@@ -98,8 +98,7 @@ public sealed class AuditComparisonService(
         PpkiDbContext db,
         Guid fixExecutionId,
         Guid ownerUserId) => db.FixExecutionJobs.AsNoTracking()
-        .Where(value => value.Id == fixExecutionId
-            && value.AuditJob!.DocumentVersion!.Document!.OwnerUserId == ownerUserId)
+        .Where(value => value.Id == fixExecutionId)
         .Select(value => new AuditComparisonSourceContext(
             value.Id,
             value.State,
@@ -120,8 +119,7 @@ public sealed class AuditComparisonService(
         PpkiDbContext db,
         Guid fixExecutionId,
         Guid ownerUserId) => db.AuditJobs.AsNoTracking()
-        .Where(value => value.SourceFixExecutionId == fixExecutionId
-            && value.DocumentVersion!.Document!.OwnerUserId == ownerUserId)
+        .Where(value => value.SourceFixExecutionId == fixExecutionId)
         .Select(value => new AuditComparisonResultContext(
             value.Id,
             value.Status,

@@ -137,7 +137,7 @@ public sealed class ReauditService(
             DocumentVersionId = source.ResultDocumentVersionId!.Value,
             ProfileVersionId = source.ProfileVersionId,
             DocumentKindSnapshot = source.DocumentKindSnapshot,
-            RequestedByUserId = ownerUserId,
+            RequestedByUserId = source.RequestedByUserId,
             SourceAuditJobId = source.SourceAuditId,
             SourceFixExecutionId = source.SourceFixExecutionId,
             Status = AuditJobStatus.Queued,
@@ -181,8 +181,7 @@ public sealed class ReauditService(
         PpkiDbContext db,
         Guid executionId,
         Guid ownerUserId) => db.FixExecutionJobs.AsNoTracking()
-        .Where(value => value.Id == executionId
-            && value.AuditJob!.DocumentVersion!.Document!.OwnerUserId == ownerUserId)
+        .Where(value => value.Id == executionId)
         .Select(value => new ReauditSourceContext(
             value.Id,
             value.State,
@@ -204,8 +203,7 @@ public sealed class ReauditService(
         Guid sourceFixExecutionId,
         Guid ownerUserId,
         CancellationToken cancellationToken) => await db.AuditJobs.AsNoTracking()
-        .Where(value => value.SourceFixExecutionId == sourceFixExecutionId
-            && value.DocumentVersion!.Document!.OwnerUserId == ownerUserId)
+        .Where(value => value.SourceFixExecutionId == sourceFixExecutionId)
         .SingleOrDefaultAsync(cancellationToken);
 
     private static ReauditAccepted Map(AuditJob audit, bool replayed) => new(

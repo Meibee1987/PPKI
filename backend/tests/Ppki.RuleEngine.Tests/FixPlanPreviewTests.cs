@@ -395,7 +395,7 @@ public sealed class FixPlanPreviewServiceTests
 public sealed class FixPlanPreviewArchitectureTests
 {
     [Fact]
-    public void Queries_apply_ownership_and_selection_before_materialization()
+    public void Queries_apply_shared_resource_identity_and_selection_before_materialization()
     {
         var options = new DbContextOptionsBuilder<PpkiDbContext>()
             .UseNpgsql("Host=localhost;Database=contract_only;Username=contract;Password=contract")
@@ -407,9 +407,8 @@ public sealed class FixPlanPreviewArchitectureTests
             FixPlanPreviewTestData.Id(1), FixPlanPreviewTestData.Id(2), [FixPlanPreviewTestData.Id(3)])
             .ToQueryString();
 
-        Assert.Contains("owner_user_id", auditSql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("document_versions", auditSql, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("owner_user_id", findingsSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("owner_user_id", auditSql, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("owner_user_id", findingsSql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("audit_rule_snapshots", findingsSql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("audit_findings", findingsSql, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("ANY", findingsSql, StringComparison.OrdinalIgnoreCase);
@@ -422,7 +421,7 @@ public sealed class FixPlanPreviewArchitectureTests
         var source = Source("backend", "src", "Ppki.Infrastructure", "FixPlanSourceReader.cs");
 
         Assert.Contains("AsNoTracking()", source, StringComparison.Ordinal);
-        Assert.Contains("OwnerUserId == ownerUserId", source, StringComparison.Ordinal);
+        Assert.DoesNotContain("OwnerUserId == ownerUserId", source, StringComparison.Ordinal);
         Assert.Contains("findingIds.Contains(finding.Id)", source, StringComparison.Ordinal);
         Assert.Contains("snapshot.ValidationKey", source, StringComparison.Ordinal);
         Assert.Contains("DocumentKindSnapshot", source, StringComparison.Ordinal);

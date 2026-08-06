@@ -27,7 +27,8 @@ public sealed class AuditReadArchitectureTests
         Assert.DoesNotContain("RuleDefinition", service, StringComparison.Ordinal);
         Assert.DoesNotContain("IFileStorage", service, StringComparison.Ordinal);
         Assert.DoesNotContain("IDocxParser", service, StringComparison.Ordinal);
-        Assert.Contains("OwnerUserId == ownerUserId", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("OwnerUserId == ownerUserId", service, StringComparison.Ordinal);
+        Assert.Contains("AddEndpointFilter<InternalAdminEndpointFilter>()", Source("backend", "services", "Ppki.Api", "Program.cs"), StringComparison.Ordinal);
         Assert.Contains("AsNoTracking()", service, StringComparison.Ordinal);
     }
 

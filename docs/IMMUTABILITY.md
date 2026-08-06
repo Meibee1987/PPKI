@@ -147,4 +147,6 @@ update/delete; current state is projected from the last sequence. See
 S4-T04 adds immutable `finding_review_cases` and append-only
 `finding_review_events`. Manual dispositions never update a finding, resolution
 event, audit, snapshot, execution, version, score, or DOCX. See
-[FINDING_REVIEW.md](FINDING_REVIEW.md).
+[FINDING_REVIEW.md](FINDING_REVIEW.md). The additive admin-only correction
+permits operational self-approval but does not weaken event immutability or make
+review evidence equivalent to S4-T03 verified resolution.
