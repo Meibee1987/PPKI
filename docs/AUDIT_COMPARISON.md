@@ -87,3 +87,7 @@ resolution evidence. It does not duplicate pairing or call this GET route over
 HTTP. `NoLongerDetected` maps to verified resolved; `StillDetected` and
 `Changed` map to verified still detected; `NewlyDetected` does not mutate a
 source case. The comparison endpoint remains read-only and unchanged.
+
+S4-T06 menampilkan empat classification server sebagai group berlabel teks.
+Browser tidak melakukan matching atau menghitung resolution dan hanya membuat
+link dari ID yang dikirim DTO. Lihat [REMEDIATION_UI.md](REMEDIATION_UI.md).

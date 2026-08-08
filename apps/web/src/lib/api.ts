@@ -38,6 +38,10 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
       const payload: unknown = await response.json();
       code = safeProblemCode(payload);
     } catch { /* Malformed error bodies are deliberately not surfaced. */ }
+    if (response.status === 401 && typeof window !== "undefined") {
+      const next = `${window.location.pathname}${window.location.search}`;
+      window.location.assign(`/login?next=${encodeURIComponent(next)}`);
+    }
     throw new ApiRequestError(response.status, code);
   }
   if (response.status === 204) return undefined as T;

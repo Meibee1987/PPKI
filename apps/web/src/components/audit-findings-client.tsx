@@ -9,6 +9,7 @@ import { formatTimestamp, pageRange, scorePresentation } from "../lib/findings-p
 import { FindingLocation } from "./finding-location";
 import { FindingPayload } from "./finding-payload";
 import { StatusBadge } from "./status-badge";
+import { RemediationSelection, RemediationWorkflow } from "./remediation-workflow";
 
 type DraftFilters = { severity: string; fixMode: string; domain: string; ruleCode: string; validationKey: string; pageSize: string };
 
@@ -27,8 +28,10 @@ export function AuditFindingsClient() {
   const [reload, setReload] = useState(0);
   const [copyStatus, setCopyStatus] = useState("");
   const [draft, setDraft] = useState<DraftFilters>(() => draftFrom(filters));
+  const [selectedFindingIds, setSelectedFindingIds] = useState<string[]>([]);
 
   useEffect(() => setDraft(draftFrom(filters)), [filters]);
+  useEffect(() => setSelectedFindingIds([]), [auditId]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -101,7 +104,7 @@ export function AuditFindingsClient() {
         </dl>
         {summary.domains.length > 0 && <div className="domain-summary" aria-label="Jumlah temuan per domain">{summary.domains.map(item => <span className="count-chip" key={item.domain}>{item.domain}: <strong>{item.findingCount}</strong></span>)}</div>}
       </section>
-      {summary.status === "Completed" ? <><FindingFiltersPanel draft={draft} setDraft={setDraft} domains={summary.domains.map(item => item.domain)} onSubmit={applyFilters} onClear={() => navigate({ page: 1, pageSize: 25 })} /><FindingsSection auditId={auditId} filters={filters} page={page} loading={findingsLoading} error={findingsError} retry={() => setReload(value => value + 1)} navigate={navigate} /></> : <AuditNonCompleted summary={summary} />}
+      {summary.status === "Completed" ? <><FindingFiltersPanel draft={draft} setDraft={setDraft} domains={summary.domains.map(item => item.domain)} onSubmit={applyFilters} onClear={() => navigate({ page: 1, pageSize: 25 })} />{page?.items.length ? <section className="panel" aria-labelledby="remediation-selection-title"><h2 id="remediation-selection-title">Selection remediation</h2><RemediationSelection auditId={auditId} items={page.items} selected={selectedFindingIds} onSelectedChange={setSelectedFindingIds} /></section> : null}<FindingsSection auditId={auditId} filters={filters} page={page} loading={findingsLoading} error={findingsError} retry={() => setReload(value => value + 1)} navigate={navigate} /><RemediationWorkflow auditId={auditId} selected={selectedFindingIds} clearSelection={() => setSelectedFindingIds([])} /></> : <AuditNonCompleted summary={summary} />}
     </main>
   );
 }

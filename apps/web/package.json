@@ -8,7 +8,8 @@
     "start": "next start",
     "typecheck": "tsc --noEmit",
     "test:config": "node --test --experimental-strip-types src/lib/supabase/environment.test.ts",
-    "test:findings-ui": "node --test --experimental-strip-types src/lib/audit-contract.test.ts src/lib/api-errors.test.ts src/lib/document-audit-selection.test.ts src/lib/findings-presentation.test.ts src/lib/findings-ui-architecture.test.ts src/lib/route-access.test.ts"
+    "test:findings-ui": "node --test --experimental-strip-types src/lib/audit-contract.test.ts src/lib/api-errors.test.ts src/lib/document-audit-selection.test.ts src/lib/findings-presentation.test.ts src/lib/findings-ui-architecture.test.ts src/lib/route-access.test.ts",
+    "test:remediation-ui": "node --test --experimental-strip-types src/lib/remediation-contract.test.ts src/lib/remediation-ui-architecture.test.ts"
   },
   "dependencies": {
     "@supabase/ssr": "^0.12.0",

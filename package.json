@@ -35,6 +35,8 @@
     "test:fix-plan-preview": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --filter FullyQualifiedName~FixPlanPreview",
     "test:fix-apply": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --filter \"FullyQualifiedName~FixApply|FullyQualifiedName~FixExecution|FullyQualifiedName~BodyJustified\"",
     "test:findings-ui": "npm run --prefix apps/web test:findings-ui",
+    "test:remediation-ui": "npm run --prefix apps/web test:remediation-ui",
+    "test:remediation-ui-local": "node scripts/remediation-ui-smoke-test.mjs",
     "dev:prerequisites": "node scripts/developer.mjs prerequisites",
     "dev:infra": "node scripts/dev-bootstrap.mjs infra",
     "dev:api": "node scripts/dev-bootstrap.mjs api",

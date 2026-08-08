@@ -220,11 +220,22 @@ public sealed class FindingResolutionArchitectureTests
     }
 
     [Fact]
-    public void No_frontend_file_mentions_resolution_workflow()
+    public void Frontend_resolution_workflow_uses_bodyless_existing_reconciliation_route()
     {
-        var web = Path.Combine(Root(), "apps", "web", "src");
-        Assert.DoesNotContain(Directory.EnumerateFiles(web, "*", SearchOption.AllDirectories), file =>
-            File.ReadAllText(file).Contains("resolution-reconciliation", StringComparison.Ordinal));
+        var client = File.ReadAllText(Path.Combine(Root(), "apps", "web", "src", "lib", "remediation-api.ts"));
+        var workflow = File.ReadAllText(Path.Combine(Root(), "apps", "web", "src", "components", "remediation-workflow.tsx"));
+        Assert.Contains("/resolution-reconciliation", client, StringComparison.Ordinal);
+        Assert.Contains("{ method: \"POST\" }", client, StringComparison.Ordinal);
+        Assert.DoesNotContain("FindingResolutionRequest", client, StringComparison.Ordinal);
+        Assert.Contains("getComparison(execution.id", workflow, StringComparison.Ordinal);
+        Assert.Contains("reconcileResolution(execution.id)", workflow, StringComparison.Ordinal);
+        Assert.DoesNotContain("fingerprint", workflow, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("levenshtein", workflow, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("approvedPlan", workflow, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("operation.provider", workflow, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("operation.target", workflow, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("storage/v1", client, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("supabase.from", client, StringComparison.OrdinalIgnoreCase);
     }
 
     private static string Root()

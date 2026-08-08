@@ -116,3 +116,9 @@ upload is create-only at a key derived from execution ID: identical SHA/size is
 reusable, different content conflicts, and database failure deletes only an
 object created by that attempt. See
 [REMEDIATION_FAILURES.md](REMEDIATION_FAILURES.md).
+
+S4-T06 menambahkan monitor client tanpa mengubah lifecycle. Apply memerlukan
+confirmation dan UUID idempotency per intent. Satu poller bounded membaca state
+canonical dan berhenti pada Completed, Failed, atau NoChange. Tidak ada
+optimistic completion, manual retry, cancel, rollback, atau partial apply.
+Lihat [REMEDIATION_UI.md](REMEDIATION_UI.md).

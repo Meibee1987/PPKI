@@ -111,3 +111,8 @@ Run `npm run test:fix-plan-preview` for focused verification.
 Still deferred: preview UI, Confirm workflow, Apply Fix, DOCX mutation, new
 document version, re-audit, rollback, export, manual/ignore workflow, and
 lecturer review.
+
+S4-T06 mengonsumsi exact preview ini pada halaman audit. Eligibility berasal
+dari disposition item server, bukan FixMode. Perubahan selection membatalkan
+preview, dan parser browser menyimpan count/hash/state tetapi membuang payload
+operation. Lihat [REMEDIATION_UI.md](REMEDIATION_UI.md).

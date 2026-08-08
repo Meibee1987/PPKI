@@ -92,3 +92,8 @@ S4-T05 does not change re-audit semantics. `Failed`, retry-pending, `NoChange`,
 result-less, and mismatched Fix executions remain controlled conflicts and
 create no audit. Retry/publish must first converge on one immutable completed
 result version.
+
+S4-T06 mengaktifkan command existing hanya untuk Completed execution dengan
+result version, mencegah submit ganda, memantau audit canonical, lalu membaca
+comparison/reconciliation. Audit tidak pernah dijalankan sinkron di browser.
+Lihat [REMEDIATION_UI.md](REMEDIATION_UI.md).

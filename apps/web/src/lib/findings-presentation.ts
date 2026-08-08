@@ -90,7 +90,7 @@ function nonNegativeIndex(data: Record<string, JsonValue>, expected: string): nu
 }
 
 function fallbackLocation(): LocationPresentation {
-  return { primary: "Lokasi tidak tersedia", compact: null, details: [], accessibleLabel: "Lokasi tidak tersedia" };
+  return { primary: "Lokasi rinci tidak tersedia", compact: null, details: [], accessibleLabel: "Lokasi rinci tidak tersedia" };
 }
 
 export function scorePresentation(state: ScoreState, score: number | null, policyVersion: string | null): { title: string; detail: string } {

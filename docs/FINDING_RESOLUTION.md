@@ -80,3 +80,8 @@ S4-T05 preserves this projection: failed, retry-pending, NoChange, or
 result-less execution cannot produce `FixAppliedObserved`; incomplete or
 failed re-audit cannot produce verification. Failure remains visible on the
 separate Fix-execution status and reconciliation replay remains idempotent.
+
+S4-T06 merender state ini terpisah dari review disposition. Applied secara
+eksplisit belum verified; hanya state berbasis comparison yang disebut
+terverifikasi. UI memuat ulang read model canonical setelah reconciliation atau
+review command. Lihat [REMEDIATION_UI.md](REMEDIATION_UI.md).

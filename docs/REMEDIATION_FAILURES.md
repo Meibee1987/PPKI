@@ -62,3 +62,8 @@ Run `npm run test:remediation-hardening` and then
 `npm run test:remediation-hardening-local` twice. The local smoke is bounded,
 uses only local PostgreSQL/RLS/API/Storage, does not reset the database, and
 does not delete a volume.
+
+S4-T06 memetakan kategori/kode aman ke pesan Bahasa Indonesia. Retry otomatis
+ditampilkan sebagai pekerjaan sistem; UI tidak menawarkan Apply ulang atau
+manual retry. Kode tidak dikenal tetap generik dan detail dependency mentah
+tidak dirender. Lihat [REMEDIATION_UI.md](REMEDIATION_UI.md).

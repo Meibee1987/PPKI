@@ -77,3 +77,9 @@ takeover, stale-worker denial, retry bound, source superseded, Storage orphan,
 compensating cleanup, canonical publish, safe DTO, shared-admin RLS, serta
 checksum historis. Jalankan smoke lokal dua kali; command tidak melakukan reset
 database atau menghapus volume.
+
+`npm run test:remediation-ui` menjalankan focused typed-contract,
+presentation, polling/idempotency, privacy, accessibility, dan architecture
+suite S4-T06. `npm run test:remediation-ui-local` adalah agregat API-backed
+lokal yang bounded dan rerunnable, bukan browser E2E. Checklist browser manual
+ada di `docs/REMEDIATION_UI.md`.

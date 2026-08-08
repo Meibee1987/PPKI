@@ -102,3 +102,9 @@ deterministic, bounded, and non-destructive.
 S4-T05 adds no review UI or transition. Ignore, accepted risk, and manual
 disposition neither hide nor mutate a Fix-execution failure and remain
 independent of automatic resolution evidence.
+
+S4-T06 mengekspos transition existing pada detail finding. Permission dan
+allowed decision berasal dari read model server, self-review tetap didukung,
+note berupa plain text maksimum 1.000 karakter, dan Ignore/AcceptedRisk memakai
+confirmation bahwa keduanya bukan VerifiedResolved. Client tidak membuat role
+atau transition baru. Lihat [REMEDIATION_UI.md](REMEDIATION_UI.md).

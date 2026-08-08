@@ -242,11 +242,23 @@ public sealed class FindingReviewArchitectureTests
     }
 
     [Fact]
-    public void No_frontend_source_contains_finding_review_workflow()
+    public void Frontend_review_workflow_uses_existing_routes_without_actor_or_role_input()
     {
-        var web = Path.Combine(Root(), "apps", "web", "src");
-        Assert.DoesNotContain(Directory.EnumerateFiles(web, "*", SearchOption.AllDirectories), file =>
-            File.ReadAllText(file).Contains("finding-reviews", StringComparison.Ordinal));
+        var client = Source("apps", "web", "src", "lib", "remediation-api.ts");
+        var panel = Source("apps", "web", "src", "components", "finding-governance-panel.tsx");
+        var api = Source("backend", "services", "Ppki.Api", "Program.cs");
+        Assert.Contains("/finding-reviews/${encodeURIComponent(caseId)}/decisions", client, StringComparison.Ordinal);
+        Assert.Contains("review.allowedDecisions.map", panel, StringComparison.Ordinal);
+        Assert.Contains("InternalAdminEndpointFilter", api, StringComparison.Ordinal);
+        Assert.DoesNotContain("allowedDecisions =", panel, StringComparison.Ordinal);
+        Assert.DoesNotContain("actorUserId", client, StringComparison.Ordinal);
+        Assert.DoesNotContain("role", client, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("supabase.from", client, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("storage/v1", client, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("AuditFinding", client, StringComparison.Ordinal);
+        Assert.DoesNotContain("method: \"PUT\"", client, StringComparison.Ordinal);
+        Assert.DoesNotContain("method: \"PATCH\"", client, StringComparison.Ordinal);
+        Assert.DoesNotContain("method: \"DELETE\"", client, StringComparison.Ordinal);
     }
 
     private static string Source(params string[] path) => File.ReadAllText(Path.Combine([Root(), .. path]));
