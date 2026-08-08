@@ -119,6 +119,19 @@ public sealed class AuditReadModelTests
     }
 
     [Fact]
+    public void Findings_query_accepts_explicit_page_and_maximum_page_size()
+    {
+        var valid = AuditFindingQuery.TryCreate(
+            null, null, null, null, null, "default", 2, 100,
+            out var query, out var error);
+
+        Assert.True(valid);
+        Assert.Null(error);
+        Assert.Equal(2, query.Page);
+        Assert.Equal(100, query.PageSize);
+    }
+
+    [Fact]
     public void Combined_filters_are_applied_together()
     {
         var wanted = Row(1, "RULE-A", "Layout", "page.size",
@@ -306,7 +319,7 @@ public sealed class AuditReadModelTests
     }
 
     [Fact]
-    public void Summary_grouping_and_filtered_page_are_database_translatable()
+    public void Summary_filter_order_projection_and_page_are_database_translatable()
     {
         using var db = Context();
         var auditId = Guid.NewGuid();
@@ -315,16 +328,57 @@ public sealed class AuditReadModelTests
             .ToQueryString().ToLowerInvariant();
         var query = new AuditFindingQuery(
             RuleSeverity.Error, FixMode.Manual, "Layout", "RULE-A", "page.size", 2, 25);
-        var pageSql = AuditReadQueries.OwnedFindings(db, auditId, ownerId, query)
-            .Take(AuditFindingQuery.MaximumFindingCount)
+        var pageSql = AuditReadQueries.ApplyDatabaseOrdering(
+                AuditReadQueries.DatabaseFindings(db, auditId, query))
+            .Skip((query.Page - 1) * query.PageSize)
+            .Take(query.PageSize)
+            .Select(value => new { value.Id, value.RuleCode, value.LocationJson })
             .ToQueryString()
             .ToLowerInvariant();
 
         Assert.Contains("group by", summarySql);
         Assert.DoesNotContain("owner_user_id", summarySql);
         Assert.Contains("limit", pageSql);
+        Assert.Contains("offset", pageSql);
+        Assert.Contains("order by", pageSql);
+        Assert.Contains("collate \"c\"", pageSql);
+        Assert.Contains("location_sort", pageSql);
+        Assert.Contains("severity", pageSql);
+        Assert.Contains("fixmode", pageSql);
+        Assert.Contains("domain", pageSql);
+        Assert.Contains("rulecode", pageSql);
+        Assert.Contains("validationkey", pageSql);
         Assert.DoesNotContain("owner_user_id", pageSql);
-        Assert.DoesNotContain("order by", pageSql);
+        Assert.DoesNotContain($"limit {AuditFindingQuery.MaximumFindingCount}", pageSql);
+    }
+
+    [Fact]
+    public void Two_thousand_rows_have_repeatable_complete_bounded_pages()
+    {
+        var rows = Enumerable.Range(1, 2_037)
+            .Select(value => Row(value, $"RULE-{value % 7:00}",
+                value % 2 == 0 ? "Layout" : "Structure", "page.size",
+                (RuleSeverity)(value % 3), (FixMode)(value % 4),
+                Location($"paragraph-{value}", value / 500, value, value % 500, null),
+                value % 11))
+            .Reverse()
+            .ToArray();
+        var ordered = AuditReadQueries.ApplyDefaultOrdering(rows).ToArray();
+        var firstRun = Enumerable.Range(0, 21)
+            .SelectMany(page => ordered.Skip(page * 100).Take(100))
+            .Select(value => value.Id).ToArray();
+        var secondRun = Enumerable.Range(0, 21)
+            .SelectMany(page => AuditReadQueries.ApplyDefaultOrdering(rows)
+                .Skip(page * 100).Take(100))
+            .Select(value => value.Id).ToArray();
+
+        Assert.Equal(2_037, firstRun.Length);
+        Assert.Equal(2_037, firstRun.Distinct().Count());
+        Assert.Equal(firstRun, secondRun);
+        Assert.All(Enumerable.Range(0, 20), page =>
+            Assert.Equal(100, firstRun.Skip(page * 100).Take(100).Count()));
+        Assert.Equal(37, firstRun.Skip(2_000).Count());
+        Assert.Empty(firstRun.Skip(2_100));
     }
 
     [Fact]

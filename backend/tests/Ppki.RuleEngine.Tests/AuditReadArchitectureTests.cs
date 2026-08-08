@@ -30,6 +30,12 @@ public sealed class AuditReadArchitectureTests
         Assert.DoesNotContain("OwnerUserId == ownerUserId", service, StringComparison.Ordinal);
         Assert.Contains("AddEndpointFilter<InternalAdminEndpointFilter>()", Source("backend", "services", "Ppki.Api", "Program.cs"), StringComparison.Ordinal);
         Assert.Contains("AsNoTracking()", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("ApplyDefaultOrdering(boundedRows)", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("Take(AuditFindingQuery.MaximumFindingCount)\n            .ToListAsync",
+            service.Replace("\r\n", "\n", StringComparison.Ordinal), StringComparison.Ordinal);
+        Assert.Contains("ApplyDatabaseOrdering(filtered)", service, StringComparison.Ordinal);
+        Assert.Contains(".Skip(offset)", service, StringComparison.Ordinal);
+        Assert.Contains(".Take(query.PageSize)", service, StringComparison.Ordinal);
     }
 
     [Fact]

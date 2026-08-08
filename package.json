@@ -31,6 +31,7 @@
     "test:layout-validators": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter FullyQualifiedName~LayoutValidator",
     "test:wave1-validators": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter \"FullyQualifiedName~LayoutValidator|FullyQualifiedName~Wave1\"",
     "test:audit-read-model": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter FullyQualifiedName~AuditRead",
+    "test:audit-read-model-local": "node scripts/audit-read-pagination-smoke-test.mjs",
     "test:scoring": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --filter FullyQualifiedName~AuditScoring",
     "test:fix-plan-preview": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --filter FullyQualifiedName~FixPlanPreview",
     "test:fix-apply": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj -c Release --filter \"FullyQualifiedName~FixApply|FullyQualifiedName~FixExecution|FullyQualifiedName~BodyJustified\"",

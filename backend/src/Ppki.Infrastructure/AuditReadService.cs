@@ -84,18 +84,36 @@ public sealed class AuditReadService(
             cancellationToken);
         if (!owned) return null;
 
-        var filtered = AuditReadQueries.OwnedFindings(db, auditId, ownerUserId, query);
+        var filtered = AuditReadQueries.DatabaseFindings(db, auditId, query);
         var totalCount = await filtered.CountAsync(cancellationToken);
         if (totalCount > AuditFindingQuery.MaximumFindingCount)
             throw new InvalidOperationException("Persisted finding count exceeds the supported limit.");
 
         var offset = (query.Page - 1) * query.PageSize;
-        var boundedRows = await filtered
-            .Take(AuditFindingQuery.MaximumFindingCount)
-            .ToListAsync(cancellationToken);
-        var rows = AuditReadQueries.ApplyDefaultOrdering(boundedRows)
+        var rows = await AuditReadQueries.ApplyDatabaseOrdering(filtered)
             .Skip(offset)
-            .Take(query.PageSize);
+            .Take(query.PageSize)
+            .Select(value => new AuditFindingReadRow(
+                value.Id,
+                value.AuditId,
+                value.DocumentVersionId,
+                value.RuleOrdinal,
+                value.RuleCode,
+                value.Domain,
+                value.ValidationKey,
+                value.Element,
+                value.Severity,
+                value.FixMode,
+                value.FindingState,
+                value.ReasonCode,
+                value.ActualJson,
+                value.ExpectedJson,
+                value.LocationJson,
+                value.Confidence,
+                value.SourceSection,
+                value.PdfPage,
+                value.PrintedPage))
+            .ToListAsync(cancellationToken);
 
         return new(query.Page, query.PageSize, totalCount, rows.Select(ToListItem).ToArray());
     }
@@ -178,6 +196,112 @@ public sealed class AuditReadService(
 
 public static class AuditReadQueries
 {
+    private const string DatabaseFindingSql = """
+        select
+            finding.id as "Id",
+            finding.audit_job_id as "AuditId",
+            audit.document_version_id as "DocumentVersionId",
+            snapshot.ordinal as "RuleOrdinal",
+            finding.rule_code_snapshot as "RuleCode",
+            snapshot.domain as "Domain",
+            snapshot.validation_key as "ValidationKey",
+            snapshot.element as "Element",
+            case finding.severity when 'Error' then 0 when 'Warning' then 1 when 'Info' then 2 else 3 end as "Severity",
+            case finding.fix_mode_snapshot when 'Auto' then 0 when 'Confirm' then 1 when 'Manual' then 2 when 'Report' then 3 else 4 end as "FixMode",
+            case finding.status when 'Open' then 0 when 'Fixed' then 1 when 'Ignored' then 2 when 'ManualReview' then 3 else 4 end as "FindingState",
+            finding.message as "ReasonCode",
+            finding.actual_value::text as "ActualJson",
+            finding.expected_value::text as "ExpectedJson",
+            finding.location::text as "LocationJson",
+            finding.confidence as "Confidence",
+            finding.source_section_snapshot as "SourceSection",
+            finding.pdf_page_snapshot as "PdfPage",
+            finding.printed_page_snapshot as "PrintedPage",
+            case when location_sort.body is null
+                   and location_sort.section is null
+                   and location_sort.paragraph is null
+                   and location_sort.run is null
+                 then 0 else 1 end as "LocationCategory",
+            location_sort.body as "BodyElementIndex",
+            location_sort.section as "SectionIndex",
+            location_sort.paragraph as "ParagraphIndex",
+            location_sort.run as "RunIndex",
+            case
+                when jsonb_typeof(coalesce(finding.location -> 'CompactLocation', finding.location -> 'compactLocation')) = 'string'
+                then coalesce(finding.location ->> 'CompactLocation', finding.location ->> 'compactLocation')
+                else ''
+            end as "CompactLocation"
+        from public.audit_findings as finding
+        join public.audit_jobs as audit on audit.id = finding.audit_job_id
+        join public.audit_rule_snapshots as snapshot
+          on snapshot.audit_job_id = finding.audit_job_id
+         and snapshot.rule_code = finding.rule_code_snapshot
+        cross join lateral (
+            select
+                coalesce(finding.location -> 'BodyElementIndex', finding.location -> 'bodyElementIndex') as body,
+                coalesce(finding.location -> 'SectionIndex', finding.location -> 'sectionIndex') as section,
+                coalesce(finding.location -> 'ParagraphIndex', finding.location -> 'paragraphIndex') as paragraph,
+                coalesce(finding.location -> 'RunIndex', finding.location -> 'runIndex') as run
+        ) as location_value
+        cross join lateral (
+            select
+                case when jsonb_typeof(location_value.body) = 'number'
+                           and (location_value.body #>> '{{}}') ~ '^-?[0-9]+$'
+                           and length(ltrim(location_value.body #>> '{{}}', '-')) <= 10
+                      then case when (location_value.body #>> '{{}}')::bigint between -2147483648 and 2147483647
+                                then (location_value.body #>> '{{}}')::integer end end as body,
+                case when jsonb_typeof(location_value.section) = 'number'
+                           and (location_value.section #>> '{{}}') ~ '^-?[0-9]+$'
+                           and length(ltrim(location_value.section #>> '{{}}', '-')) <= 10
+                      then case when (location_value.section #>> '{{}}')::bigint between -2147483648 and 2147483647
+                                then (location_value.section #>> '{{}}')::integer end end as section,
+                case when jsonb_typeof(location_value.paragraph) = 'number'
+                           and (location_value.paragraph #>> '{{}}') ~ '^-?[0-9]+$'
+                           and length(ltrim(location_value.paragraph #>> '{{}}', '-')) <= 10
+                      then case when (location_value.paragraph #>> '{{}}')::bigint between -2147483648 and 2147483647
+                                then (location_value.paragraph #>> '{{}}')::integer end end as paragraph,
+                case when jsonb_typeof(location_value.run) = 'number'
+                           and (location_value.run #>> '{{}}') ~ '^-?[0-9]+$'
+                           and length(ltrim(location_value.run #>> '{{}}', '-')) <= 10
+                      then case when (location_value.run #>> '{{}}')::bigint between -2147483648 and 2147483647
+                                then (location_value.run #>> '{{}}')::integer end end as run
+        ) as location_sort
+        """;
+
+    public static IQueryable<AuditFindingDatabaseRow> DatabaseFindings(
+        PpkiDbContext db,
+        Guid auditId,
+        AuditFindingQuery query)
+    {
+        var values = db.Database.SqlQueryRaw<AuditFindingDatabaseRow>(DatabaseFindingSql)
+            .Where(value => value.AuditId == auditId);
+        if (query.Severity is not null)
+            values = values.Where(value => value.Severity == query.Severity);
+        if (query.FixMode is not null)
+            values = values.Where(value => value.FixMode == query.FixMode);
+        if (query.Domain is not null)
+            values = values.Where(value => value.Domain == query.Domain);
+        if (query.RuleCode is not null)
+            values = values.Where(value => value.RuleCode == query.RuleCode);
+        if (query.ValidationKey is not null)
+            values = values.Where(value => value.ValidationKey == query.ValidationKey);
+        return values;
+    }
+
+    public static IOrderedQueryable<AuditFindingDatabaseRow> ApplyDatabaseOrdering(
+        IQueryable<AuditFindingDatabaseRow> values) => values
+            .OrderBy(value => value.RuleOrdinal)
+            .ThenBy(value => value.Severity)
+            .ThenBy(value => EF.Functions.Collate(value.Domain, "C"))
+            .ThenBy(value => value.LocationCategory)
+            .ThenBy(value => value.BodyElementIndex ?? int.MinValue)
+            .ThenBy(value => value.SectionIndex ?? int.MinValue)
+            .ThenBy(value => value.ParagraphIndex ?? int.MinValue)
+            .ThenBy(value => value.RunIndex ?? int.MinValue)
+            .ThenBy(value => EF.Functions.Collate(value.CompactLocation, "C"))
+            .ThenBy(value => EF.Functions.Collate(value.RuleCode, "C"))
+            .ThenBy(value => value.Id);
+
     public static IQueryable<AuditFindingSummaryBucket> OwnedSummaryBuckets(
         PpkiDbContext db,
         Guid auditId,
@@ -357,3 +481,32 @@ public sealed record AuditFindingReadRow(
     string? SourceSection,
     int? PdfPage,
     string? PrintedPage);
+
+public sealed class AuditFindingDatabaseRow
+{
+    public Guid Id { get; init; }
+    public Guid AuditId { get; init; }
+    public Guid DocumentVersionId { get; init; }
+    public int RuleOrdinal { get; init; }
+    public string RuleCode { get; init; } = string.Empty;
+    public string Domain { get; init; } = string.Empty;
+    public string ValidationKey { get; init; } = string.Empty;
+    public string Element { get; init; } = string.Empty;
+    public RuleSeverity Severity { get; init; }
+    public FixMode FixMode { get; init; }
+    public FindingStatus FindingState { get; init; }
+    public string ReasonCode { get; init; } = string.Empty;
+    public string ActualJson { get; init; } = string.Empty;
+    public string ExpectedJson { get; init; } = string.Empty;
+    public string LocationJson { get; init; } = string.Empty;
+    public decimal? Confidence { get; init; }
+    public string? SourceSection { get; init; }
+    public int? PdfPage { get; init; }
+    public string? PrintedPage { get; init; }
+    public int LocationCategory { get; init; }
+    public int? BodyElementIndex { get; init; }
+    public int? SectionIndex { get; init; }
+    public int? ParagraphIndex { get; init; }
+    public int? RunIndex { get; init; }
+    public string CompactLocation { get; init; } = string.Empty;
+}
