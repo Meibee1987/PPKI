@@ -49,6 +49,29 @@ public sealed record ExactTextTargetResult(
     public static ExactTextTargetResult Stale(string reason) => new(ExactTextTargetStatus.Stale, reason, null, []);
 }
 
+public sealed class ExactTextTransientExcerpt
+{
+    internal ExactTextTransientExcerpt(ExactTextTargetStatus status, string? safeReason,
+        string? targetText, string? context, bool prefixTruncated, bool suffixTruncated)
+    {
+        Status = status;
+        SafeReason = safeReason;
+        TargetText = targetText;
+        Context = context;
+        PrefixTruncated = prefixTruncated;
+        SuffixTruncated = suffixTruncated;
+    }
+
+    public ExactTextTargetStatus Status { get; }
+    public string? SafeReason { get; }
+    public string? TargetText { get; }
+    public string? Context { get; }
+    public bool PrefixTruncated { get; }
+    public bool SuffixTruncated { get; }
+
+    public override string ToString() => $"ExactTextTransientExcerpt(Status={Status},Content=[REDACTED])";
+}
+
 /// <summary>
 /// Read-only exact targeting over WordprocessingML. Coordinates count Unicode scalar values.
 /// The model preserves source Unicode without normalization (NormalizationForm=None), preserves
@@ -141,6 +164,42 @@ public sealed class ExactTextAnchorMaterializer
         if (!candidate.Spans.SequenceEqual(anchor.Spans))
             return ExactTextTargetResult.Stale("source-span-mismatch");
         return new ExactTextTargetResult(ExactTextTargetStatus.Exact, null, anchor, candidate.Spans);
+    }
+
+    public async Task<ExactTextTransientExcerpt> MaterializeExcerptAsync(
+        string sourceDocxPath,
+        Guid currentDocumentVersionId,
+        ExactTextAnchor anchor,
+        int maximumTargetScalars,
+        int maximumContextScalars,
+        CancellationToken cancellationToken = default)
+    {
+        if (maximumTargetScalars <= 0) throw new ArgumentOutOfRangeException(nameof(maximumTargetScalars));
+        if (maximumContextScalars < 0) throw new ArgumentOutOfRangeException(nameof(maximumContextScalars));
+        var resolved = await ResolveAsync(sourceDocxPath, currentDocumentVersionId, anchor, cancellationToken);
+        if (resolved.Status != ExactTextTargetStatus.Exact)
+            return new(resolved.Status, resolved.SafeReason, null, null, false, false);
+        if (anchor.Length > maximumTargetScalars)
+            return new(ExactTextTargetStatus.Unsupported, "target-excerpt-too-large", null, null, false, false);
+
+        using var document = WordprocessingDocument.Open(sourceDocxPath, false, new OpenSettings { AutoSave = false });
+        var paragraph = LocateParagraph(document, anchor.ParagraphLocation.ParagraphIndex ?? -1);
+        if (paragraph is null)
+            return new(ExactTextTargetStatus.Stale, "paragraph-location-missing", null, null, false, false);
+        var model = BuildParagraphModel(paragraph.Source, paragraph.Location);
+        var prefixBudget = maximumContextScalars / 2;
+        var suffixBudget = maximumContextScalars - prefixBudget;
+        var prefixLength = Math.Min(anchor.Start, prefixBudget);
+        var targetEnd = anchor.Start + anchor.Length;
+        var suffixAvailable = model.ScalarLength - targetEnd;
+        var suffixLength = Math.Min(suffixAvailable, suffixBudget);
+        var target = ScalarSlice(model.Text, anchor.Start, anchor.Length);
+        var context = ScalarSlice(model.Text, anchor.Start - prefixLength,
+            prefixLength + anchor.Length + suffixLength);
+        if (!string.Equals(anchor.SourceSha256, ComputeSha(sourceDocxPath), StringComparison.Ordinal))
+            return new(ExactTextTargetStatus.Stale, "source-changed-during-inspection", null, null, false, false);
+        return new(ExactTextTargetStatus.Exact, null, target, context,
+            anchor.Start > prefixLength, suffixAvailable > suffixLength);
     }
 
     private static LocatedParagraph? LocateParagraph(WordprocessingDocument document, int requestedIndex)

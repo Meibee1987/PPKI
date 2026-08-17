@@ -1,5 +1,6 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <ItemGroup>
+    <ProjectReference Include="../Ppki.DocxEngine/Ppki.DocxEngine.csproj" />
     <ProjectReference Include="../Ppki.Domain/Ppki.Domain.csproj" />
   </ItemGroup>
 </Project>
