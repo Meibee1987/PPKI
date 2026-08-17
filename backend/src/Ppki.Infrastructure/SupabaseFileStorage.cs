@@ -108,6 +108,30 @@ public sealed class SupabaseFileStorage(IHttpClientFactory httpClientFactory, IO
         { throw new FileStorageException(FileStorageFailureKind.Transient, exception); }
     }
 
+    public async Task<byte[]> ReadBytesAsync(
+        string bucket,
+        string objectPath,
+        long maximumBytes,
+        CancellationToken cancellationToken)
+    {
+        pathBuilder.ValidateStoredPath(bucket, objectPath);
+        if (maximumBytes is <= 0 or > MaximumDocumentBytes) throw new ArgumentOutOfRangeException(nameof(maximumBytes));
+        using var request = CreateRequest(HttpMethod.Get, $"/storage/v1/object/authenticated/{Escape(bucket)}/{EscapePath(objectPath)}");
+        using var response = await SendAsync(request, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+        if (!response.IsSuccessStatusCode) throw StorageFailure(response.StatusCode);
+        if (response.Content.Headers.ContentLength > maximumBytes) throw new FileStorageException(FileStorageFailureKind.SizeLimit);
+        await using var source = await response.Content.ReadAsStreamAsync(cancellationToken);
+        using var destination = new MemoryStream();
+        var buffer = new byte[81920];
+        int read;
+        while ((read = await source.ReadAsync(buffer, cancellationToken)) > 0)
+        {
+            if (destination.Length + read > maximumBytes) throw new FileStorageException(FileStorageFailureKind.SizeLimit);
+            await destination.WriteAsync(buffer.AsMemory(0, read), cancellationToken);
+        }
+        return destination.ToArray();
+    }
+
     private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request,
         HttpCompletionOption completion, CancellationToken cancellationToken)
     {

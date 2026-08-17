@@ -7,6 +7,9 @@ using PIC = DocumentFormat.OpenXml.Drawing.Pictures;
 
 var outputDirectory = GetOutputDirectory(args);
 var fixtures = CreateFixtures();
+var onlyIndex = Array.IndexOf(args, "--only");
+if (onlyIndex >= 0 && onlyIndex + 1 < args.Length)
+    fixtures = fixtures.Where(value => StringComparer.Ordinal.Equals(value.FileName, args[onlyIndex + 1])).ToArray();
 Directory.CreateDirectory(outputDirectory);
 
 foreach (var fixture in fixtures)
@@ -57,6 +60,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
     if (fixture.Kind == FixtureKind.AutoFormatProviders)
     {
         CreateAutoFormatProviderDocument(mainPart);
+        return;
+    }
+    if (fixture.Kind == FixtureKind.DocumentPageMap)
+    {
+        CreateDocumentPageMapDocument(mainPart);
         return;
     }
     AddStyles(mainPart);
@@ -230,6 +238,55 @@ static void CreateAutoFormatProviderDocument(MainDocumentPart mainPart)
         abstractParagraph,
         chapterHeading,
         StandardSection()));
+    mainPart.Document.Save();
+}
+
+static void CreateDocumentPageMapDocument(MainDocumentPart mainPart)
+{
+    AddStyles(mainPart);
+    var hyperlink = mainPart.AddHyperlinkRelationship(new Uri("https://example.invalid/page-map-fixture"), true);
+    static ParagraphProperties CompliantParagraphProperties() => new(
+        new Justification { Val = JustificationValues.Both },
+        new SpacingBetweenLines { Before = "0", After = "0", Line = "240", LineRule = LineSpacingRuleValues.Auto },
+        new Indentation { FirstLine = "567" });
+    static Run CompliantRun(string text, bool bold = false)
+    {
+        var properties = new RunProperties(new RunFonts { Ascii = "Times New Roman", HighAnsi = "Times New Roman" },
+            new FontSize { Val = "24" });
+        if (bold) properties.Append(new Bold());
+        return new Run(properties, new Text(text));
+    }
+    static Paragraph PageBreak() => new(CompliantParagraphProperties(), new Run(new RunProperties(
+        new RunFonts { Ascii = "Times New Roman", HighAnsi = "Times New Roman" }, new FontSize { Val = "24" }),
+        new Break { Type = BreakValues.Page }));
+    static Paragraph TextParagraph(string text) => new(CompliantParagraphProperties(), CompliantRun(text));
+    var duplicate = "Penelitian ini dilakukan pada lokasi sintetis yang sama.";
+    var abstractBody = new Paragraph(
+        new ParagraphProperties(new SpacingBetweenLines { Before = "120", After = "80", Line = "276", LineRule = LineSpacingRuleValues.Auto }),
+        new Run(new RunProperties(new RunFonts { Ascii = "Times New Roman", HighAnsi = "Times New Roman" }, new FontSize { Val = "24" }), new Text("Ringkasan sintetis dengan ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(new RunProperties(new RunFonts { Ascii = "Times New Roman", HighAnsi = "Times New Roman" }, new FontSize { Val = "24" }, new Bold()), new Text("format campuran")),
+        new Hyperlink(new Run(new RunProperties(new RunFonts { Ascii = "Times New Roman", HighAnsi = "Times New Roman" }, new FontSize { Val = "24" }, new Italic()), new Text(" dan tautan"))) { Id = hyperlink.Id });
+    var sectionBoundary = TextParagraph("Batas bagian sintetis.");
+    sectionBoundary.ParagraphProperties!.Append(
+        new SectionProperties(new SectionType { Val = SectionMarkValues.NextPage },
+            new PageSize { Width = 11906U, Height = 16838U },
+            new PageMargin { Top = 1701, Right = 1701U, Bottom = 1701, Left = 2268U }));
+    var table = new Table(
+        new TableProperties(new TableWidth { Width = "5000", Type = TableWidthUnitValues.Dxa }),
+        new TableRow(new TableCell(TextParagraph("Sel tabel sintetis untuk pemetaan struktural."))));
+    var boundaryRuns = new Paragraph(CompliantParagraphProperties(),
+        CompliantRun(string.Join(' ', Enumerable.Repeat("Paragraf panjang sintetis mendekati batas halaman.", 180))),
+        CompliantRun(" RUN-BATAS-SINTETIS", bold: true));
+    var body = new Body(
+        StyledParagraph("ABSTRAK", "Heading1"), abstractBody,
+        PageBreak(), TextParagraph(duplicate),
+        PageBreak(), StyledParagraph("BAB I PENDAHULUAN", "Heading1"), TextParagraph("Isi bab sintetis."),
+        sectionBoundary, TextParagraph("Isi setelah section break sintetis."),
+        PageBreak(), table,
+        PageBreak(), boundaryRuns,
+        PageBreak(), TextParagraph(duplicate),
+        StandardSection());
+    mainPart.Document = new Document(body);
     mainPart.Document.Save();
 }
 
@@ -627,6 +684,10 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         "auto-format-provider-mixed.docx",
         11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
         "Times New Roman", 24U, [], FixtureKind.AutoFormatProviders)
+    ,new(
+        "document-page-map-multipage.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.DocumentPageMap)
 ];
 
 internal sealed record FixtureDefinition(
@@ -649,4 +710,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap }

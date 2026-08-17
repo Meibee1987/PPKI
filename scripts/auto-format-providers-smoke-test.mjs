@@ -77,10 +77,11 @@ async function authenticate(environment, identity) {
   const session = await body(signed); if (!signed.ok || !session?.access_token) throw new Error("local sign-in failed");
   return { id: user.id, token: session.access_token };
 }
-async function startServices(environment) {
+async function startServices(environment, overrides = {}) {
   await run("dotnet", ["build", "backend/PpkiSmartFormatter.slnx", "-c", "Release", "--no-restore", "--nologo"], { timeoutMs: 240_000 });
-  const settings = localSettings({ API_PORT: String(await freePort()), WORKER_POLL_SECONDS: "1" });
+  const settings = localSettings({ API_PORT: String(await freePort()), WORKER_POLL_SECONDS: "1", ...overrides });
   const catalog = await resolveRuleCatalog(process.cwd()); const childEnvironment = buildChildEnvironment(process.env, environment, settings, catalog);
+  if (overrides.DOCUMENT_RENDERER_BASE_URL) childEnvironment.DocumentRenderer__BaseUrl = overrides.DOCUMENT_RENDERER_BASE_URL;
   const capture = chunk => { diagnostics = `${diagnostics}${chunk}`.slice(-65_536); };
   apiProcess = spawn("dotnet", ["backend/services/Ppki.Api/bin/Release/net10.0/Ppki.Api.dll"], { cwd: process.cwd(), env: childEnvironment, shell: false, stdio: ["ignore", "pipe", "pipe"] });
   workerProcess = spawn("dotnet", ["backend/services/Ppki.Worker/bin/Release/net10.0/Ppki.Worker.dll"], { cwd: process.cwd(), env: childEnvironment, shell: false, stdio: ["ignore", "pipe", "pipe"] });
@@ -101,6 +102,11 @@ async function api(apiUrl, environment, token, route, { method = "GET", json, fo
   const headers = authHeaders(environment.ANON_KEY, token, json !== undefined); if (idempotencyKey) headers["Idempotency-Key"] = idempotencyKey;
   const response = await localFetch(`${apiUrl}/api${route}`, { method, headers, ...(json !== undefined ? { body: JSON.stringify(json) } : {}), ...(form ? { body: form } : {}) });
   return { status: response.status, body: await body(response) };
+}
+async function apiBytes(apiUrl, environment, token, route) {
+  const response = await localFetch(`${apiUrl}/api${route}`, { headers: authHeaders(environment.ANON_KEY, token) });
+  return { status: response.status, contentType: response.headers.get("content-type")?.split(";", 1)[0] ?? null,
+    bytes: Buffer.from(await response.arrayBuffer()) };
 }
 async function waitAudit(apiUrl, environment, token, auditId) {
   for (let attempt = 0; attempt < 180; attempt += 1) {
@@ -263,7 +269,7 @@ async function main() {
 }
 export {
   FIXTURE, DOCX_MIME, report, run, databaseContainer, sql, authenticate,
-  startServices, api, waitAudit, allFindings, download
+  startServices, api, apiBytes, waitAudit, allFindings, download
 };
 export async function stopServices() {
   await Promise.all([stopProcess(apiProcess), stopProcess(workerProcess)]);

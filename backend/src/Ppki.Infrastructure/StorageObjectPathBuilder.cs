@@ -25,6 +25,9 @@ public sealed class StorageObjectPathBuilder : IStorageObjectPathBuilder
         return $"{Canonical(ownerUserId)}/{Canonical(documentId)}/{Canonical(auditJobId)}.{normalizedExtension}";
     }
 
+    public string BuildDocumentPreviewPath(Guid ownerUserId, Guid documentId, Guid renderJobId) =>
+        $"{Canonical(ownerUserId)}/{Canonical(documentId)}/{Canonical(renderJobId)}.pdf";
+
     public void ValidateStoredPath(string bucket, string objectPath)
     {
         if (string.IsNullOrWhiteSpace(bucket) || string.IsNullOrWhiteSpace(objectPath)

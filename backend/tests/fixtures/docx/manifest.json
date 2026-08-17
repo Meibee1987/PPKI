@@ -150,6 +150,21 @@
       },
       "containsPersonalData": false,
       "generatorVersion": "5.0.0"
+    },
+    {
+      "fixtureId": "document-page-map-multipage",
+      "filename": "document-page-map-multipage.docx",
+      "description": "Synthetic multi-page canonical renderer and structural anchor fixture with duplicate text on separate pages.",
+      "synthetic": true,
+      "intendedProperties": ["multiple-pages", "explicit-page-break", "section-break", "duplicate-text", "heading", "abstract", "mixed-runs", "hyperlink", "table", "page-boundary-paragraph", "run-boundary"],
+      "expectedDocumentProperties": {
+        "minimumPageCount": 7,
+        "duplicateParagraphCount": 2,
+        "hyperlinkCount": 1,
+        "tableCount": 1
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "5.1.0"
     }
   ]
 }

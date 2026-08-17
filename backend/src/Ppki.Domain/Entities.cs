@@ -66,6 +66,68 @@ public sealed class DocumentVersion : Entity
     public List<AuditJob> Audits { get; set; } = [];
 }
 
+public sealed class DocumentRenderJob : Entity
+{
+    public Guid DocumentVersionId { get; set; }
+    public DocumentVersion? DocumentVersion { get; set; }
+    public required string SourceSha256 { get; set; }
+    public required string RendererId { get; set; }
+    public required string RendererVersion { get; set; }
+    public required string RendererContractVersion { get; set; }
+    public required string FontProfileVersion { get; set; }
+    public required string PageMapSchemaVersion { get; set; }
+    public required string RenderIdentity { get; set; }
+    public DocumentRenderState State { get; set; } = DocumentRenderState.Pending;
+    public int Priority { get; set; } = 100;
+    public Guid? ClaimToken { get; set; }
+    public int AttemptCount { get; set; }
+    public int MaxAttempts { get; set; } = 3;
+    public DateTimeOffset? NextAttemptAt { get; set; }
+    public DateTimeOffset? StartedAt { get; set; }
+    public DateTimeOffset? LeaseExpiresAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+    public string? SafeFailureCode { get; set; }
+    public DocumentRenderArtifact? Artifact { get; set; }
+}
+
+public sealed class DocumentRenderArtifact : Entity
+{
+    public Guid RenderJobId { get; set; }
+    public DocumentRenderJob? RenderJob { get; set; }
+    public Guid DocumentVersionId { get; set; }
+    public DocumentVersion? DocumentVersion { get; set; }
+    public required string StorageBucket { get; set; }
+    public required string StorageKey { get; set; }
+    public required string PdfSha256 { get; set; }
+    public long SizeBytes { get; set; }
+    public int PageCount { get; set; }
+    public required string RendererId { get; set; }
+    public required string RendererVersion { get; set; }
+    public required string RendererContractVersion { get; set; }
+    public required string FontProfileVersion { get; set; }
+    public required string PageMapSchemaVersion { get; set; }
+    public required string SourceSha256 { get; set; }
+    public required string SourceTextFingerprint { get; set; }
+    public List<DocumentPageMapEntry> PageMapEntries { get; set; } = [];
+}
+
+public sealed class DocumentPageMapEntry : Entity
+{
+    public Guid RenderArtifactId { get; set; }
+    public DocumentRenderArtifact? RenderArtifact { get; set; }
+    public required string StructuralLocation { get; set; }
+    public int? SectionIndex { get; set; }
+    public int? BodyElementIndex { get; set; }
+    public int? ParagraphIndex { get; set; }
+    public int? RunIndex { get; set; }
+    public int? TableIndex { get; set; }
+    public int? RowIndex { get; set; }
+    public int? CellIndex { get; set; }
+    public PageMapConfidence Confidence { get; set; }
+    public int? PageNumber { get; set; }
+    public string? SafeReason { get; set; }
+}
+
 public sealed class RuleDefinition : Entity
 {
     public required string RuleCode { get; set; }

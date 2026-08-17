@@ -254,7 +254,7 @@ public sealed class DocxParserStyleResolutionTests
     public async Task All_synthetic_fixtures_remain_parseable()
     {
         var manifest = await DocxFixtureManifest.LoadAsync(DocxFixtureWorkspace.FixtureRoot);
-        Assert.Equal(10, manifest.Fixtures.Count);
+        Assert.Equal(11, manifest.Fixtures.Count);
         foreach (var fixture in manifest.Fixtures)
         {
             await using var workspace = await DocxFixtureWorkspace.CreateAsync(fixture.FixtureId);

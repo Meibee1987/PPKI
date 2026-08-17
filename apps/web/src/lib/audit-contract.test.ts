@@ -16,6 +16,7 @@ const summary = {
   scorePolicyVersion: null, scoreBreakdown: null, scoreDiagnosticCode: "scoring-policy-not-configured",
   startedAt: "2026-08-04T10:00:00Z", completedAt: "2026-08-04T10:01:00Z", failureCode: null, errorMessage: null,
   automaticRemediation: null,
+  documentRender: { state: "Completed", pageCount: 7, rendererVersion: "8.34.0+libreoffice-26.2.4.2", rendererContractVersion: "docx-pdf/1.0", fontProfileVersion: "ppki-liberation-noto/1.0", pageMapVersion: "page-map/1.0", safeFailureCode: null, previewAvailable: true },
 };
 
 const finding = {
@@ -24,6 +25,7 @@ const finding = {
   message: "page-size-invalid", actual: { Property: "width", RawValue: "200" }, expected: { Property: "width", AcceptedValues: ["210"] },
   location: { CompactLocation: "document", SectionIndex: null, BodyElementIndex: null, ParagraphIndex: null, RunIndex: null },
   confidence: 1, source: { sourceSection: "Format", pdfPage: 12, printedPage: "9" }, actionAvailability: "None",
+  pageLocation: { pageNumber: 2, confidence: "Exact", state: "Completed" },
 };
 
 test("parses a valid audit summary without calculating score", () => {
@@ -117,6 +119,14 @@ test("parses finding detail snapshot fields", () => {
   const parsed = parseAuditFindingDetail({ ...finding, documentVersionId: versionId });
   assert.equal(parsed.validationKey, "page.size"); assert.equal(parsed.actionAvailability, "None");
 });
+
+test("parses exact structural page location and canonical render state", () => {
+  const parsed = parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 1, items: [finding] });
+  assert.deepEqual(parsed.items[0].pageLocation, { pageNumber: 2, confidence: "Exact", state: "Completed" });
+  assert.equal(parseAuditSummary(summary).documentRender.pageMapVersion, "page-map/1.0");
+});
+
+test("rejects fabricated zero page numbers", () => assert.throws(() => parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 1, items: [{ ...finding, pageLocation: { pageNumber: 0, confidence: "Exact", state: "Completed" } }] }), /kontrak/));
 
 test("rejects invalid summary enum with a controlled error", () => assert.throws(() => parseAuditSummary({ ...summary, status: "Unknown" }), /kontrak/));
 test("rejects invalid finding enum with a controlled error", () => assert.throws(() => parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 1, items: [{ ...finding, severity: "Critical" }] }), /kontrak/));

@@ -97,6 +97,9 @@ public enum AutomaticRemediationState
     Conflict
 }
 
+public enum DocumentRenderState { Pending, Processing, Completed, Failed }
+public enum PageMapConfidence { Exact, Estimated, Unavailable }
+
 [JsonConverter(typeof(JsonStringEnumConverter<FixFailureCategory>))]
 public enum FixFailureCategory
 {

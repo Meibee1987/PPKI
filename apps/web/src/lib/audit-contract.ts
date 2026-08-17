@@ -4,6 +4,8 @@ export const fixModes = ["Auto", "Confirm", "Manual", "Report"] as const;
 export const scoreStates = ["Calculated", "NotConfigured", "InvalidConfiguration", "NotApplicable", "AuditIncomplete"] as const;
 export const actionAvailabilities = ["None", "Automatic"] as const;
 export const automaticRemediationStates = ["Pending", "NoAction", "Queued", "Processing", "ReauditPending", "Completed", "Failed", "Conflict"] as const;
+export const documentRenderStates = ["Pending", "Processing", "Completed", "Failed"] as const;
+export const pageLocationConfidences = ["Exact", "Estimated", "Unavailable"] as const;
 
 export type AuditStatus = (typeof auditStatuses)[number];
 export type Severity = (typeof severities)[number];
@@ -11,6 +13,8 @@ export type FixMode = (typeof fixModes)[number];
 export type ScoreState = (typeof scoreStates)[number];
 export type ActionAvailability = (typeof actionAvailabilities)[number];
 export type AutomaticRemediationState = (typeof automaticRemediationStates)[number];
+export type DocumentRenderState = (typeof documentRenderStates)[number];
+export type PageLocationConfidence = (typeof pageLocationConfidences)[number];
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export type AuditSource = {
@@ -38,6 +42,7 @@ export type AuditFinding = {
   confidence: number | null;
   source: AuditSource;
   actionAvailability: ActionAvailability;
+  pageLocation: { pageNumber: number | null; confidence: PageLocationConfidence; state: DocumentRenderState | null };
 };
 
 export type AuditFindingDetail = AuditFinding & { documentVersionId: string };
@@ -76,6 +81,7 @@ export type AuditSummary = {
   failureCode: string | null;
   errorMessage: string | null;
   automaticRemediation: { state: AutomaticRemediationState; policyVersion: string; eligibleFindingCount: number; operationCount: number; verifiedResolvedCount: number; stillDetectedCount: number; failureCode: string | null } | null;
+  documentRender: { state: DocumentRenderState; pageCount: number | null; rendererVersion: string; rendererContractVersion: string; fontProfileVersion: string; pageMapVersion: string; safeFailureCode: string | null; previewAvailable: boolean };
 };
 
 export type FindingFilters = {
@@ -129,6 +135,12 @@ function nonNegativeInteger(value: unknown): number {
   return parsed;
 }
 
+function positiveInteger(value: unknown): number {
+  const parsed = nonNegativeInteger(value);
+  if (parsed < 1) throw new ApiContractError();
+  return parsed;
+}
+
 function nullableNumber(value: unknown): number | null {
   return value === null ? null : finiteNumber(value);
 }
@@ -158,6 +170,7 @@ function source(value: unknown): AuditSource {
 
 function finding(value: unknown): AuditFinding {
   const data = record(value);
+  const pageLocation = record(data.pageLocation);
   return {
     id: uuid(data.id),
     auditId: uuid(data.auditId),
@@ -177,6 +190,11 @@ function finding(value: unknown): AuditFinding {
     confidence: nullableNumber(data.confidence),
     source: source(data.source),
     actionAvailability: enumValue(data.actionAvailability, actionAvailabilities),
+    pageLocation: {
+      pageNumber: pageLocation.pageNumber === null ? null : positiveInteger(pageLocation.pageNumber),
+      confidence: enumValue(pageLocation.confidence, pageLocationConfidences),
+      state: pageLocation.state === null || pageLocation.state === undefined ? null : enumValue(pageLocation.state, documentRenderStates),
+    },
   };
 }
 
@@ -186,6 +204,7 @@ export function parseAuditSummary(value: unknown): AuditSummary {
   const fixModeCounts = record(data.fixModes);
   if (!Array.isArray(data.domains)) throw new ApiContractError();
   const automatic = data.automaticRemediation === null ? null : record(data.automaticRemediation);
+  const documentRender = record(data.documentRender);
   return {
     id: uuid(data.id), status: enumValue(data.status, auditStatuses),
     documentVersionId: uuid(data.documentVersionId), profileVersionId: uuid(data.profileVersionId),
@@ -206,6 +225,13 @@ export function parseAuditSummary(value: unknown): AuditSummary {
       eligibleFindingCount: nonNegativeInteger(automatic.eligibleFindingCount), operationCount: nonNegativeInteger(automatic.operationCount),
       verifiedResolvedCount: nonNegativeInteger(automatic.verifiedResolvedCount), stillDetectedCount: nonNegativeInteger(automatic.stillDetectedCount),
       failureCode: nullableString(automatic.failureCode),
+    },
+    documentRender: {
+      state: enumValue(documentRender.state, documentRenderStates),
+      pageCount: documentRender.pageCount === null ? null : nonNegativeInteger(documentRender.pageCount),
+      rendererVersion: string(documentRender.rendererVersion), rendererContractVersion: string(documentRender.rendererContractVersion),
+      fontProfileVersion: string(documentRender.fontProfileVersion), pageMapVersion: string(documentRender.pageMapVersion),
+      safeFailureCode: nullableString(documentRender.safeFailureCode), previewAvailable: documentRender.previewAvailable === true,
     },
   };
 }

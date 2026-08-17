@@ -91,7 +91,8 @@ public sealed record AuditSummaryDto(
     DateTimeOffset? CompletedAt,
     string? FailureCode,
     string? ErrorMessage,
-    AutomaticRemediationSummaryDto? AutomaticRemediation = null);
+    AutomaticRemediationSummaryDto? AutomaticRemediation = null,
+    DocumentRenderStateDto? DocumentRender = null);
 
 public sealed record AuditFindingSourceDto(
     string? SourceSection,
@@ -116,7 +117,8 @@ public sealed record AuditFindingListItemDto(
     JsonElement Location,
     decimal? Confidence,
     AuditFindingSourceDto Source,
-    string ActionAvailability);
+    string ActionAvailability,
+    FindingPageLocationDto? PageLocation = null);
 
 public sealed record AuditFindingDetailDto(
     Guid Id,
@@ -137,7 +139,8 @@ public sealed record AuditFindingDetailDto(
     JsonElement Location,
     decimal? Confidence,
     AuditFindingSourceDto Source,
-    string ActionAvailability);
+    string ActionAvailability,
+    FindingPageLocationDto? PageLocation = null);
 
 public sealed record AuditFindingPageDto(
     int Page,

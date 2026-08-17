@@ -14,6 +14,7 @@
     <ProjectReference Include="../../src/Ppki.FixEngine/Ppki.FixEngine.csproj" />
     <ProjectReference Include="../../src/Ppki.Infrastructure/Ppki.Infrastructure.csproj" />
     <ProjectReference Include="../../src/Ppki.RuleEngine/Ppki.RuleEngine.csproj" />
+    <ProjectReference Include="../../src/Ppki.RenderEngine/Ppki.RenderEngine.csproj" />
   </ItemGroup>
   <ItemGroup>
     <None Include="../fixtures/docx/**" Link="fixtures/docx/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />

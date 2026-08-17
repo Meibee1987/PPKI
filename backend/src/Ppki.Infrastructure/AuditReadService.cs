@@ -64,6 +64,7 @@ public sealed class AuditReadService(
                 automatic.EligibleFindingCount, automatic.OperationCount, resolved,
                 stillDetected, automatic.SafeFailureCode);
         }
+        var render = await RenderStateAsync(db, audit.DocumentVersionId, cancellationToken);
 
         return new(
             audit.Id,
@@ -91,7 +92,8 @@ public sealed class AuditReadService(
             audit.CompletedAt,
             failure?.Code,
             failure?.Message,
-            automaticSummary);
+            automaticSummary,
+            render.Dto);
     }
 
     public async Task<AuditFindingPageDto?> GetFindingsAsync(
@@ -139,9 +141,13 @@ public sealed class AuditReadService(
                 value.SnapshotSchemaVersion))
             .ToListAsync(cancellationToken);
         var automaticFindingIds = await AutomaticFindingIdsAsync(db, auditId, cancellationToken);
+        var render = await RenderStateAsync(db,
+            rows.Select(value => value.DocumentVersionId).FirstOrDefault(), cancellationToken);
+        var pageLocations = await PageLocationsAsync(db, render, rows, cancellationToken);
 
         return new(query.Page, query.PageSize, totalCount,
-            rows.Select(row => ToListItem(row, automaticFindingIds)).ToArray());
+            rows.Select(row => ToListItem(row, automaticFindingIds,
+                pageLocations.GetValueOrDefault(row.Id, RenderFallback(render)))).ToArray());
     }
 
     public async Task<AuditFindingDetailDto?> GetFindingAsync(
@@ -156,6 +162,13 @@ public sealed class AuditReadService(
             .SingleOrDefaultAsync(cancellationToken);
         if (row is null) return null;
         var automaticFindingIds = await AutomaticFindingIdsAsync(db, auditId, cancellationToken);
+        var render = await RenderStateAsync(db, row.DocumentVersionId, cancellationToken);
+        var detailRows = new[] { new AuditFindingReadRow(row.Id, row.AuditId, row.DocumentVersionId,
+            row.RuleOrdinal, row.RuleCode, row.Domain, row.ValidationKey, row.Element, row.Severity,
+            row.FixMode, row.FindingState, row.ReasonCode, row.ActualJson, row.ExpectedJson,
+            row.LocationJson, row.Confidence, row.SourceSection, row.PdfPage, row.PrintedPage,
+            row.SnapshotSchemaVersion) };
+        var pageLocations = await PageLocationsAsync(db, render, detailRows, cancellationToken);
 
         return new(
             row.Id,
@@ -176,12 +189,14 @@ public sealed class AuditReadService(
             Json(row.LocationJson),
             row.Confidence,
             Source(row),
-            automaticFindingIds.Contains(row.Id) ? "Automatic" : "None");
+            automaticFindingIds.Contains(row.Id) ? "Automatic" : "None",
+            pageLocations.GetValueOrDefault(row.Id, RenderFallback(render)));
     }
 
     private static AuditFindingListItemDto ToListItem(
         AuditFindingReadRow row,
-        IReadOnlySet<Guid> automaticFindingIds) => new(
+        IReadOnlySet<Guid> automaticFindingIds,
+        FindingPageLocationDto pageLocation) => new(
         row.Id,
         row.AuditId,
         row.RuleOrdinal,
@@ -199,7 +214,91 @@ public sealed class AuditReadService(
         Json(row.LocationJson),
         row.Confidence,
         Source(row),
-        automaticFindingIds.Contains(row.Id) ? "Automatic" : "None");
+        automaticFindingIds.Contains(row.Id) ? "Automatic" : "None",
+        pageLocation);
+
+    private static async Task<RenderReadState> RenderStateAsync(
+        PpkiDbContext db, Guid documentVersionId, CancellationToken cancellationToken)
+    {
+        if (documentVersionId == Guid.Empty)
+            return new(null, null, new("Pending", null, CanonicalDocumentRenderContract.RendererVersion,
+                CanonicalDocumentRenderContract.RendererContractVersion, CanonicalDocumentRenderContract.FontProfileVersion,
+                CanonicalDocumentRenderContract.PageMapSchemaVersion, null, false));
+        var row = await db.DocumentRenderJobs.AsNoTracking()
+            .Where(value => value.DocumentVersionId == documentVersionId
+                && value.RendererId == CanonicalDocumentRenderContract.RendererId
+                && value.RendererVersion == CanonicalDocumentRenderContract.RendererVersion
+                && value.RendererContractVersion == CanonicalDocumentRenderContract.RendererContractVersion
+                && value.FontProfileVersion == CanonicalDocumentRenderContract.FontProfileVersion)
+            .Select(value => new { value.State, value.SafeFailureCode,
+                ArtifactId = value.Artifact == null ? (Guid?)null : value.Artifact.Id,
+                PageCount = value.Artifact == null ? (int?)null : value.Artifact.PageCount })
+            .SingleOrDefaultAsync(cancellationToken);
+        if (row is null)
+            return new(null, null, new("Pending", null, CanonicalDocumentRenderContract.RendererVersion,
+                CanonicalDocumentRenderContract.RendererContractVersion, CanonicalDocumentRenderContract.FontProfileVersion,
+                CanonicalDocumentRenderContract.PageMapSchemaVersion, null, false));
+        return new(row.ArtifactId, row.State, new(row.State.ToString(), row.PageCount,
+            CanonicalDocumentRenderContract.RendererVersion, CanonicalDocumentRenderContract.RendererContractVersion,
+            CanonicalDocumentRenderContract.FontProfileVersion, CanonicalDocumentRenderContract.PageMapSchemaVersion,
+            row.SafeFailureCode, row.State == DocumentRenderState.Completed && row.ArtifactId is not null));
+    }
+
+    private static async Task<IReadOnlyDictionary<Guid, FindingPageLocationDto>> PageLocationsAsync(
+        PpkiDbContext db,
+        RenderReadState render,
+        IReadOnlyList<AuditFindingReadRow> findings,
+        CancellationToken cancellationToken)
+    {
+        if (render.ArtifactId is null || render.State != DocumentRenderState.Completed || findings.Count == 0)
+            return new Dictionary<Guid, FindingPageLocationDto>();
+        var requested = findings.Select(value => (value.Id, Location: StructuralLocation(value.LocationJson))).ToArray();
+        var paragraphIndexes = requested.Where(value => value.Location.ParagraphIndex is not null)
+            .Select(value => value.Location.ParagraphIndex!.Value).Distinct().ToArray();
+        if (paragraphIndexes.Length == 0) return new Dictionary<Guid, FindingPageLocationDto>();
+        var entries = await db.DocumentPageMapEntries.AsNoTracking()
+            .Where(value => value.RenderArtifactId == render.ArtifactId
+                && value.ParagraphIndex != null && paragraphIndexes.Contains(value.ParagraphIndex.Value))
+            .Select(value => new { value.ParagraphIndex, value.RunIndex, value.PageNumber, value.Confidence })
+            .ToListAsync(cancellationToken);
+        var result = new Dictionary<Guid, FindingPageLocationDto>();
+        foreach (var item in requested)
+        {
+            if (item.Location.ParagraphIndex is null) continue;
+            var entry = entries.SingleOrDefault(value => value.ParagraphIndex == item.Location.ParagraphIndex
+                && value.RunIndex == item.Location.RunIndex);
+            if (entry is not null)
+                result[item.Id] = new(entry.PageNumber, entry.Confidence.ToString(), "Completed");
+        }
+        return result;
+    }
+
+    private static (int? ParagraphIndex, int? RunIndex) StructuralLocation(string json)
+    {
+        try
+        {
+            using var document = JsonDocument.Parse(json);
+            return (Integer(document.RootElement, "ParagraphIndex", "paragraphIndex"),
+                Integer(document.RootElement, "RunIndex", "runIndex"));
+        }
+        catch (JsonException) { return (null, null); }
+    }
+
+    private static int? Integer(JsonElement root, string first, string second)
+    {
+        if (root.ValueKind != JsonValueKind.Object) return null;
+        if ((root.TryGetProperty(first, out var value) || root.TryGetProperty(second, out value))
+            && value.ValueKind == JsonValueKind.Number && value.TryGetInt32(out var parsed) && parsed >= 0)
+            return parsed;
+        return null;
+    }
+
+    private static FindingPageLocationDto RenderFallback(RenderReadState render) => render.State switch
+    {
+        DocumentRenderState.Failed => new(null, "Unavailable", "Failed"),
+        DocumentRenderState.Completed => new(null, "Unavailable", "Completed"),
+        _ => new(null, "Unavailable", "Pending")
+    };
 
     private static async Task<IReadOnlySet<Guid>> AutomaticFindingIdsAsync(
         PpkiDbContext db,
@@ -238,6 +337,11 @@ public sealed class AuditReadService(
         int ApplicableRuleCount,
         DateTimeOffset? StartedAt,
         DateTimeOffset? CompletedAt);
+
+    private sealed record RenderReadState(
+        Guid? ArtifactId,
+        DocumentRenderState? State,
+        DocumentRenderStateDto Dto);
 
 }
 

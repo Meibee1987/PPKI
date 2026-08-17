@@ -12,6 +12,9 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
     public DbSet<ProfileRule> ProfileRules => Set<ProfileRule>();
     public DbSet<DocumentRecord> Documents => Set<DocumentRecord>();
     public DbSet<DocumentVersion> DocumentVersions => Set<DocumentVersion>();
+    public DbSet<DocumentRenderJob> DocumentRenderJobs => Set<DocumentRenderJob>();
+    public DbSet<DocumentRenderArtifact> DocumentRenderArtifacts => Set<DocumentRenderArtifact>();
+    public DbSet<DocumentPageMapEntry> DocumentPageMapEntries => Set<DocumentPageMapEntry>();
     public DbSet<RuleDefinition> Rules => Set<RuleDefinition>();
     public DbSet<AuditJob> AuditJobs => Set<AuditJob>();
     public DbSet<AuditRuleSnapshot> AuditRuleSnapshots => Set<AuditRuleSnapshot>();
@@ -215,6 +218,81 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.HasIndex(x => x.AuditJobId).HasDatabaseName("ix_audit_findings_audit_job");
             entity.HasOne(x => x.AuditJob).WithMany(x => x.Findings).HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.Rule).WithMany().HasForeignKey(x => x.RuleId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<DocumentRenderJob>(entity =>
+        {
+            entity.ToTable("document_render_jobs");
+            Common(entity);
+            entity.Property(x => x.DocumentVersionId).HasColumnName("document_version_id");
+            entity.Property(x => x.SourceSha256).HasColumnName("source_sha256").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.RendererId).HasColumnName("renderer_id").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.RendererVersion).HasColumnName("renderer_version").HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RendererContractVersion).HasColumnName("renderer_contract_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.FontProfileVersion).HasColumnName("font_profile_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.PageMapSchemaVersion).HasColumnName("page_map_schema_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.RenderIdentity).HasColumnName("render_identity").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.State).HasColumnName("state").HasConversion<string>();
+            entity.Property(x => x.Priority).HasColumnName("priority");
+            entity.Property(x => x.ClaimToken).HasColumnName("claim_token");
+            entity.Property(x => x.AttemptCount).HasColumnName("attempt_count");
+            entity.Property(x => x.MaxAttempts).HasColumnName("max_attempts");
+            entity.Property(x => x.NextAttemptAt).HasColumnName("next_attempt_at");
+            entity.Property(x => x.StartedAt).HasColumnName("started_at");
+            entity.Property(x => x.LeaseExpiresAt).HasColumnName("lease_expires_at");
+            entity.Property(x => x.CompletedAt).HasColumnName("completed_at");
+            entity.Property(x => x.SafeFailureCode).HasColumnName("safe_failure_code").HasMaxLength(128);
+            entity.HasIndex(x => x.RenderIdentity).IsUnique().HasDatabaseName("uq_document_render_jobs_identity");
+            entity.HasIndex(x => new { x.State, x.NextAttemptAt, x.CreatedAt }).HasDatabaseName("ix_document_render_jobs_queue");
+            entity.HasIndex(x => x.DocumentVersionId).HasDatabaseName("ix_document_render_jobs_version");
+            entity.HasOne(x => x.DocumentVersion).WithMany().HasForeignKey(x => x.DocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<DocumentRenderArtifact>(entity =>
+        {
+            entity.ToTable("document_render_artifacts");
+            Common(entity);
+            entity.Property(x => x.RenderJobId).HasColumnName("render_job_id");
+            entity.Property(x => x.DocumentVersionId).HasColumnName("document_version_id");
+            entity.Property(x => x.StorageBucket).HasColumnName("storage_bucket").HasMaxLength(128).IsRequired();
+            entity.Property(x => x.StorageKey).HasColumnName("storage_key").HasMaxLength(1024).IsRequired();
+            entity.Property(x => x.PdfSha256).HasColumnName("pdf_sha256").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.SizeBytes).HasColumnName("size_bytes");
+            entity.Property(x => x.PageCount).HasColumnName("page_count");
+            entity.Property(x => x.RendererId).HasColumnName("renderer_id").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.RendererVersion).HasColumnName("renderer_version").HasMaxLength(128).IsRequired();
+            entity.Property(x => x.RendererContractVersion).HasColumnName("renderer_contract_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.FontProfileVersion).HasColumnName("font_profile_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.PageMapSchemaVersion).HasColumnName("page_map_schema_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.SourceSha256).HasColumnName("source_sha256").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.SourceTextFingerprint).HasColumnName("source_text_fingerprint").HasMaxLength(64).IsRequired();
+            entity.HasIndex(x => x.RenderJobId).IsUnique();
+            entity.HasIndex(x => new { x.StorageBucket, x.StorageKey }).IsUnique();
+            entity.HasIndex(x => x.DocumentVersionId).HasDatabaseName("ix_document_render_artifacts_version");
+            entity.HasOne(x => x.RenderJob).WithOne(x => x.Artifact).HasForeignKey<DocumentRenderArtifact>(x => x.RenderJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.DocumentVersion).WithMany().HasForeignKey(x => x.DocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<DocumentPageMapEntry>(entity =>
+        {
+            entity.ToTable("document_page_map_entries");
+            Common(entity);
+            entity.Property(x => x.RenderArtifactId).HasColumnName("render_artifact_id");
+            entity.Property(x => x.StructuralLocation).HasColumnName("structural_location").HasMaxLength(512).IsRequired();
+            entity.Property(x => x.SectionIndex).HasColumnName("section_index");
+            entity.Property(x => x.BodyElementIndex).HasColumnName("body_element_index");
+            entity.Property(x => x.ParagraphIndex).HasColumnName("paragraph_index");
+            entity.Property(x => x.RunIndex).HasColumnName("run_index");
+            entity.Property(x => x.TableIndex).HasColumnName("table_index");
+            entity.Property(x => x.RowIndex).HasColumnName("row_index");
+            entity.Property(x => x.CellIndex).HasColumnName("cell_index");
+            entity.Property(x => x.Confidence).HasColumnName("confidence").HasConversion<string>();
+            entity.Property(x => x.PageNumber).HasColumnName("page_number");
+            entity.Property(x => x.SafeReason).HasColumnName("safe_reason").HasMaxLength(128);
+            entity.HasIndex(x => new { x.RenderArtifactId, x.StructuralLocation }).IsUnique();
+            entity.HasIndex(x => new { x.RenderArtifactId, x.ParagraphIndex, x.RunIndex })
+                .HasDatabaseName("ix_document_page_map_lookup");
+            entity.HasOne(x => x.RenderArtifact).WithMany(x => x.PageMapEntries).HasForeignKey(x => x.RenderArtifactId).OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<FixExecutionJob>(entity =>

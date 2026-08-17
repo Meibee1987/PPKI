@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <ItemGroup>
+    <ProjectReference Include="../Ppki.Application/Ppki.Application.csproj" />
+    <ProjectReference Include="../Ppki.DocxEngine/Ppki.DocxEngine.csproj" />
+    <PackageReference Include="DocumentFormat.OpenXml" />
+    <PackageReference Include="PDFsharp" />
+    <PackageReference Include="Microsoft.Extensions.Http" />
+    <PackageReference Include="Microsoft.Extensions.Options.ConfigurationExtensions" />
+  </ItemGroup>
+</Project>

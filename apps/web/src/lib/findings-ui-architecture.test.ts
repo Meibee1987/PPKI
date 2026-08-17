@@ -7,6 +7,7 @@ const list = read("../components/audit-findings-client.tsx");
 const detail = read("../components/finding-detail-client.tsx");
 const client = read("./audit-api.ts");
 const styles = read("../app/globals.css");
+const pageLocation = read("../components/document-page-location.tsx");
 
 test("typed API client separates summary, list, and lazy detail requests", () => {
   assert.match(client, /getAuditSummary/); assert.match(client, /listAuditFindings/); assert.match(client, /getAuditFinding/);
@@ -49,4 +50,12 @@ test("pagination is labelled, bounded, and keyboard-native", () => {
 
 test("responsive rules cover tablet, mobile, and narrow mobile layouts", () => {
   assert.match(styles, /max-width:900px/); assert.match(styles, /max-width:700px/); assert.match(styles, /max-width:430px/);
+});
+
+test("canonical page location labels never fabricate a page and preview remains GET-only", () => {
+  for (const label of ["Halaman ${value.pageNumber}", "Perkiraan halaman ${value.pageNumber}", "Menentukan halaman...", "Lokasi halaman belum tersedia", "Buka di dokumen"])
+    assert.match(pageLocation, new RegExp(label.replace(/[.$\{\}]/g, "\\$&")));
+  assert.match(pageLocation, /value\.state === "Completed"/);
+  assert.doesNotMatch(pageLocation, /method:\s*["'](?:POST|PUT|PATCH|DELETE)/i);
+  assert.match(pageLocation, /#page=\$\{value\.pageNumber\}/);
 });

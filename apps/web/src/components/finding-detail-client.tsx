@@ -8,6 +8,7 @@ import type { AuditFindingDetail } from "../lib/audit-contract";
 import { FindingGovernancePanel } from "./finding-governance-panel";
 import { FindingLocation } from "./finding-location";
 import { FindingPayload } from "./finding-payload";
+import { DocumentPageLocation } from "./document-page-location";
 
 export function FindingDetailClient() {
   const params = useParams();
@@ -27,7 +28,7 @@ export function FindingDetailClient() {
     <Link className="back-link" href={backHref}>← Kembali ke daftar temuan</Link>
     <article className="panel detail-card">
       <header className="detail-header"><div><p className="eyebrow">Snapshot temuan historis</p><h1>{finding.ruleCode}</h1><p>{finding.element}</p></div><span className={`severity severity-${finding.severity.toLowerCase()}`}>{finding.severity}</span></header>
-      <dl className="metadata-list"><div><dt>Domain</dt><dd>{finding.domain}</dd></div><div><dt>Mode perbaikan</dt><dd>{finding.fixMode}</dd></div><div><dt>Status temuan</dt><dd>{finding.findingState}</dd></div><div><dt>Capability</dt><dd>Diperiksa melalui pratinjau server</dd></div><div><dt>Alasan</dt><dd>{finding.reasonCode}</dd></div><div><dt>Lokasi</dt><dd><FindingLocation value={finding.location} /></dd></div><div><dt>Kunci validasi</dt><dd className="breakable">{finding.validationKey}</dd></div><div><dt>Keyakinan</dt><dd>{finding.confidence === null ? "Tidak tersedia" : finding.confidence}</dd></div></dl>
+      <dl className="metadata-list"><div><dt>Domain</dt><dd>{finding.domain}</dd></div><div><dt>Mode perbaikan</dt><dd>{finding.fixMode}</dd></div><div><dt>Status temuan</dt><dd>{finding.findingState}</dd></div><div><dt>Capability</dt><dd>Diperiksa melalui pratinjau server</dd></div><div><dt>Alasan</dt><dd>{finding.reasonCode}</dd></div><div><dt>Lokasi</dt><dd><FindingLocation value={finding.location} /><DocumentPageLocation versionId={finding.documentVersionId} value={finding.pageLocation} /></dd></div><div><dt>Kunci validasi</dt><dd className="breakable">{finding.validationKey}</dd></div><div><dt>Keyakinan</dt><dd>{finding.confidence === null ? "Tidak tersedia" : finding.confidence}</dd></div></dl>
       <section aria-labelledby="source-title"><h2 id="source-title">Referensi sumber</h2><p>{sourceLabel(finding.source)}</p></section>
       <div className="comparison detail-comparison"><FindingPayload label="Aktual" value={finding.actual} /><FindingPayload label="Diharapkan" value={finding.expected} /></div>
       <section aria-labelledby="diagnostic-title"><h2 id="diagnostic-title">Informasi diagnostik</h2><p><code>{finding.reasonCode}</code></p><p className="muted">Informasi berasal dari snapshot audit; capability dan transition selalu ditentukan server.</p></section>

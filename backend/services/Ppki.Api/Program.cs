@@ -140,6 +140,7 @@ api.MapPost("/documents", async (ClaimsPrincipal user, HttpRequest request, Ppki
         await using var transaction=await db.Database.BeginTransactionAsync(ct);
         await auditTrail.SetTransactionContextAsync(db,eventContext,ct);
         db.Documents.Add(document); db.DocumentVersions.Add(version);
+        db.DocumentRenderJobs.Add(CanonicalDocumentRenderContract.CreateJob(version.Id, version.Sha256));
         auditTrail.Add(db,eventContext,new AuditEventData(AuditActions.DocumentUploadCompleted,AuditResourceTypes.DocumentVersion,versionId,uid,AuditEventMetadata.Create(("file_size_bytes",stored.SizeBytes),("mime_type",stored.ContentType))));
         await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
     } catch {
@@ -404,6 +405,52 @@ api.MapPost("/finding-reviews/{reviewCaseId}/manual-remediation-reports", async 
         return result.Replayed?Results.Ok(result):Results.Created($"/api/finding-reviews/{parsedCaseId}",result);
     } catch(FindingReviewException exception) { return FindingReviewProblem(exception); }
 }).WithName("ReportManualFindingRemediation");
+
+api.MapGet("/document-versions/{id:guid}/preview-state", async (Guid id, PpkiDbContext db, CancellationToken ct) => {
+    var exists=await db.DocumentVersions.AsNoTracking().AnyAsync(value=>value.Id==id,ct);
+    if(!exists)return Results.NotFound();
+    var render=await db.DocumentRenderJobs.AsNoTracking()
+        .Where(value=>value.DocumentVersionId==id
+            && value.RendererId==CanonicalDocumentRenderContract.RendererId
+            && value.RendererVersion==CanonicalDocumentRenderContract.RendererVersion
+            && value.RendererContractVersion==CanonicalDocumentRenderContract.RendererContractVersion
+            && value.FontProfileVersion==CanonicalDocumentRenderContract.FontProfileVersion)
+        .Select(value=>new{value.State,value.SafeFailureCode,
+            PageCount=value.Artifact==null?(int?)null:value.Artifact.PageCount,
+            PreviewAvailable=value.State==DocumentRenderState.Completed&&value.Artifact!=null})
+        .SingleOrDefaultAsync(ct);
+    return Results.Ok(new DocumentRenderStateDto(render?.State.ToString()??"Pending",render?.PageCount,
+        CanonicalDocumentRenderContract.RendererVersion,CanonicalDocumentRenderContract.RendererContractVersion,
+        CanonicalDocumentRenderContract.FontProfileVersion,CanonicalDocumentRenderContract.PageMapSchemaVersion,
+        render?.SafeFailureCode,render?.PreviewAvailable??false));
+}).WithName("GetDocumentPreviewState");
+
+api.MapGet("/document-versions/{id:guid}/preview", async (Guid id, PpkiDbContext db,
+    IFileStorage storage,IStorageObjectPathBuilder pathBuilder,IOptions<SupabaseOptions> supabase,CancellationToken ct) => {
+    var artifact=await db.DocumentRenderArtifacts.AsNoTracking()
+        .Where(value=>value.DocumentVersionId==id
+            && value.RenderJob!.State==DocumentRenderState.Completed
+            && value.RendererId==CanonicalDocumentRenderContract.RendererId
+            && value.RendererVersion==CanonicalDocumentRenderContract.RendererVersion
+            && value.RendererContractVersion==CanonicalDocumentRenderContract.RendererContractVersion
+            && value.FontProfileVersion==CanonicalDocumentRenderContract.FontProfileVersion)
+        .Select(value=>new{value.StorageBucket,value.StorageKey,value.PdfSha256,value.SizeBytes,
+            value.RenderJobId,DocumentId=value.DocumentVersion!.DocumentId,
+            OwnerUserId=value.DocumentVersion.Document!.OwnerUserId})
+        .SingleOrDefaultAsync(ct);
+    if(artifact is null)return Results.NotFound();
+    var expectedPath=pathBuilder.BuildDocumentPreviewPath(artifact.OwnerUserId,artifact.DocumentId,artifact.RenderJobId);
+    if(artifact.StorageBucket!=supabase.Value.Storage.ReportBucket||artifact.StorageKey!=expectedPath)
+        return Results.NotFound();
+    try {
+        var bytes=await storage.ReadBytesAsync(artifact.StorageBucket,artifact.StorageKey,50L*1024*1024,ct);
+        var sha=Convert.ToHexStringLower(System.Security.Cryptography.SHA256.HashData(bytes));
+        if(bytes.LongLength!=artifact.SizeBytes||!StringComparer.Ordinal.Equals(sha,artifact.PdfSha256))
+            return Results.Problem(statusCode:StatusCodes.Status502BadGateway,title:"Document preview is unavailable.");
+        return Results.File(bytes,"application/pdf",enableRangeProcessing:true);
+    } catch(FileStorageException exception) when(exception.Kind==FileStorageFailureKind.NotFound) { return Results.NotFound(); }
+      catch { return Results.Problem(statusCode:StatusCodes.Status502BadGateway,title:"Document preview is unavailable."); }
+}).WithName("GetDocumentPreview");
 
 api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IAuditTrailWriter auditTrail, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {
     var uid=UserId(user); var version=await db.DocumentVersions.AsNoTracking().Where(v=>v.Id==id).Select(v=>new{Version=v,OwnerUserId=v.Document!.OwnerUserId}).SingleOrDefaultAsync(ct); if(version is null)return Results.NotFound();

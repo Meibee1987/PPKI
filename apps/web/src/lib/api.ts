@@ -47,3 +47,17 @@ export async function apiFetch<T>(path: string, init: RequestInit = {}): Promise
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
+
+export async function apiFetchBlob(path: string, init: RequestInit = {}): Promise<Blob> {
+  const { apiBaseUrl } = getPublicSupabaseEnvironment();
+  const supabase = createClient();
+  const { data: { session } } = await supabase.auth.getSession();
+  if (!session?.access_token) throw new Error("Sesi login tidak tersedia.");
+  const headers = new Headers(init.headers);
+  headers.set("Authorization", `Bearer ${session.access_token}`);
+  const response = await fetch(`${apiBaseUrl}${path}`, { ...init, headers, cache: "no-store" });
+  if (!response.ok) throw new ApiRequestError(response.status);
+  if (response.headers.get("content-type")?.split(";", 1)[0] !== "application/pdf")
+    throw new ApiRequestError(502);
+  return response.blob();
+}

@@ -5,6 +5,7 @@ using Ppki.DocxEngine;
 using Ppki.Infrastructure;
 using Ppki.FixEngine;
 using Ppki.RuleEngine;
+using Ppki.RenderEngine;
 using Ppki.Worker;
 
 var builder = Host.CreateApplicationBuilder(args);
@@ -19,6 +20,10 @@ builder.Services.AddOptions<DatabaseOptions>()
     .ValidateOnStart();
 builder.Services.AddSingleton<IValidateOptions<DatabaseOptions>, DatabaseOptionsValidator>();
 builder.Services.AddHttpClient();
+builder.Services.AddOptions<DocumentRendererOptions>()
+    .Bind(builder.Configuration.GetSection(DocumentRendererOptions.SectionName));
+builder.Services.AddHttpClient(GotenbergCanonicalDocumentRenderer.ClientName)
+    .ConfigureHttpClient(client => client.Timeout = Timeout.InfiniteTimeSpan);
 builder.Services.AddPooledDbContextFactory<PpkiDbContext>(o=>o.UseNpgsql(connectionString));
 builder.Services.AddSingleton<IFileStorage, SupabaseFileStorage>();
 builder.Services.AddSingleton<IStorageObjectPathBuilder, StorageObjectPathBuilder>();
@@ -66,10 +71,13 @@ builder.Services.AddSingleton<IReauditService, ReauditService>();
 builder.Services.AddSingleton<IFindingResolutionService, FindingResolutionService>();
 builder.Services.AddSingleton<FixExecutionProcessor>();
 builder.Services.AddSingleton<AutomaticRemediationProcessor>();
+builder.Services.AddSingleton<ICanonicalDocumentRenderer, GotenbergCanonicalDocumentRenderer>();
+builder.Services.AddSingleton<DocumentRenderProcessor>();
 builder.Services.AddSingleton<IRemediationFaultInjector, NoopRemediationFaultInjector>();
 builder.Services.AddHostedService<QueuedAuditWorker>();
 builder.Services.AddHostedService<QueuedFixExecutionWorker>();
 builder.Services.AddHostedService<AutomaticRemediationWorker>();
+builder.Services.AddHostedService<QueuedDocumentRenderWorker>();
 var host = builder.Build();
 _ = host.Services.GetRequiredService<IOptions<SupabaseOptions>>().Value;
 _ = host.Services.GetRequiredService<IOptions<DatabaseOptions>>().Value;

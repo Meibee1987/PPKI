@@ -242,6 +242,7 @@ public sealed class FixExecutionProcessor(
             CreatedByUserId = source.RequestedByUserId, ParentVersionId = source.SourceVersionId
         };
         db.DocumentVersions.Add(resultVersion);
+        db.DocumentRenderJobs.Add(CanonicalDocumentRenderContract.CreateJob(resultVersion.Id, resultVersion.Sha256));
         document.CurrentVersionNo = nextVersion;
         document.UpdatedAt = DateTimeOffset.UtcNow;
         job.State = FixExecutionState.Completed;

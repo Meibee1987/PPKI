@@ -9,6 +9,7 @@
     <Project Path="src/Ppki.Domain/Ppki.Domain.csproj" />
     <Project Path="src/Ppki.FixEngine/Ppki.FixEngine.csproj" />
     <Project Path="src/Ppki.Infrastructure/Ppki.Infrastructure.csproj" />
+    <Project Path="src/Ppki.RenderEngine/Ppki.RenderEngine.csproj" />
     <Project Path="src/Ppki.RuleEngine/Ppki.RuleEngine.csproj" />
   </Folder>
   <Folder Name="/tests/">

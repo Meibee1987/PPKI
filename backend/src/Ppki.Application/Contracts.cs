@@ -21,6 +21,12 @@ public interface IFileStorage
         TimeSpan lifetime,
         CancellationToken cancellationToken);
 
+    Task<byte[]> ReadBytesAsync(
+        string bucket,
+        string objectPath,
+        long maximumBytes,
+        CancellationToken cancellationToken);
+
     Task DeleteAsync(
         string bucket,
         string objectPath,
@@ -47,6 +53,7 @@ public interface IStorageObjectPathBuilder
     string BuildOriginalPath(Guid ownerUserId, Guid documentId, Guid documentVersionId);
     string BuildVersionPath(Guid ownerUserId, Guid documentId, Guid documentVersionId);
     string BuildAuditReportPath(Guid ownerUserId, Guid documentId, Guid auditJobId, string extension);
+    string BuildDocumentPreviewPath(Guid ownerUserId, Guid documentId, Guid renderJobId);
     void ValidateStoredPath(string bucket, string objectPath);
 }
 
