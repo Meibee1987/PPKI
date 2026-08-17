@@ -54,6 +54,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
         CreateDocumentSectionsDocument(mainPart);
         return;
     }
+    if (fixture.Kind == FixtureKind.AutoFormatProviders)
+    {
+        CreateAutoFormatProviderDocument(mainPart);
+        return;
+    }
     AddStyles(mainPart);
 
     if (fixture.Kind == FixtureKind.TableField)
@@ -194,6 +199,26 @@ static void CreateDocumentSectionsDocument(MainDocumentPart mainPart)
             new PageSize { Width = 11906U, Height = 16838U },
             new PageMargin { Top = 1701, Right = 1701U, Bottom = 1701, Left = 2268U }));
     mainPart.Document = new Document(body);
+    mainPart.Document.Save();
+}
+
+static void CreateAutoFormatProviderDocument(MainDocumentPart mainPart)
+{
+    AddStyles(mainPart);
+    var hyperlink = mainPart.AddHyperlinkRelationship(new Uri("https://example.invalid/synthetic-auto-format"), true);
+    var paragraph = new Paragraph(
+        new ParagraphProperties(
+            new Justification { Val = JustificationValues.Left },
+            new SpacingBetweenLines { Before = "120", After = "80", Line = "276", LineRule = LineSpacingRuleValues.Auto },
+            new Indentation { Left = "720", Right = "400", Hanging = "360" }),
+        new Run(new RunProperties(new RunFonts { Ascii = "Times New Roman", HighAnsi = "Times New Roman" }, new FontSize { Val = "24" }), new Text("Judul ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(new RunProperties(new RunFonts { Ascii = "Arial", HighAnsi = "Arial" }, new FontSize { Val = "22" }, new Bold(), new Underline { Val = UnderlineValues.Single }), new Text("penting")),
+        new Hyperlink(new Run(new RunProperties(new RunFonts { Ascii = "Calibri", HighAnsi = "Calibri" }, new FontSize { Val = "20" }, new Italic()), new Text(" hari ini") { Space = SpaceProcessingModeValues.Preserve })) { Id = hyperlink.Id },
+        new Run(new RunProperties(new RunFonts { Ascii = "Arial", HighAnsi = "Arial" }), new Text(string.Empty)),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Begin }),
+        new Run(new FieldCode(" PAGE ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.End }));
+    mainPart.Document = new Document(new Body(paragraph, StandardSection()));
     mainPart.Document.Save();
 }
 
@@ -587,6 +612,10 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         "minimal-document-sections-layout.docx",
         11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
         "Times New Roman", 24U, [], FixtureKind.DocumentSections)
+    ,new(
+        "auto-format-provider-mixed.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.AutoFormatProviders)
 ];
 
 internal sealed record FixtureDefinition(
@@ -609,4 +638,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders }

@@ -246,6 +246,7 @@ public sealed class DeterministicFixPlanPreviewPlanner(
             "decimal" => decimal.TryParse(expected.Value,
                 System.Globalization.NumberStyles.AllowLeadingSign | System.Globalization.NumberStyles.AllowDecimalPoint,
                 System.Globalization.CultureInfo.InvariantCulture, out _),
+            "string-code" => expected.Value.All(character => !char.IsControl(character)),
             "enum-code" => SafeCode.IsMatch(expected.Value),
             _ => false
         };

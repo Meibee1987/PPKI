@@ -73,7 +73,10 @@ public sealed class BodyJustifiedFixProvider : IFixPreviewProvider, IFixApplyPro
         if (parsed is null || parsed.IsInTable || parsed.IsHeading)
             throw new FixExecutionException("fix-operation-target-precondition-failed");
 
-        using var package = WordprocessingDocument.Open(context.WorkingFilePath, true, new OpenSettings { AutoSave = false });
+        using var ownedPackage = context.OpenPackage is null
+            ? WordprocessingDocument.Open(context.WorkingFilePath, true, new OpenSettings { AutoSave = false })
+            : null;
+        var package = context.OpenPackage ?? ownedPackage!;
         var main = package.MainDocumentPart ?? throw new FixExecutionException("fix-operation-main-part-missing");
         var document = main.Document ?? throw new FixExecutionException("fix-operation-document-missing");
         var body = document.Body ?? throw new FixExecutionException("fix-operation-body-missing");
@@ -93,7 +96,7 @@ public sealed class BodyJustifiedFixProvider : IFixPreviewProvider, IFixApplyPro
         cancellationToken.ThrowIfCancellationRequested();
         paragraph.ParagraphProperties ??= new ParagraphProperties();
         paragraph.ParagraphProperties.Justification = new Justification { Val = JustificationValues.Both };
-        document.Save();
+        if (ownedPackage is not null) document.Save();
         return Task.FromResult(FixApplyOutcome.Changed);
     }
 
@@ -123,13 +126,34 @@ public static class ProductionFixCapabilities
 {
     public static RemediationCapabilityRegistry CreatePreviewRegistry()
     {
-        var provider = new BodyJustifiedFixProvider();
+        var justified = new BodyJustifiedFixProvider();
+        var bodyFont = new BodyFontFixProvider();
+        var bodySpacing = new BodyLineSpacingFixProvider();
+        var firstLine = new BodyFirstLineIndentFixProvider();
+        var abstractSpacing = new AbstractParagraphSpacingFixProvider();
+        var chapterCentered = new ChapterCenteredFixProvider();
         return new RemediationCapabilityRegistry([
             new(BodyJustifiedFixProvider.Id, BodyJustifiedFixProvider.Version, "body.justified",
                 FixOperationKind.SetProperty, ["actual", "expected", "location"], false, true,
-                "body-justified-preview", "set-paragraph-alignment-justified", false, provider)
+                "body-justified-preview", "set-paragraph-alignment-justified", false, justified),
+            Descriptor(bodyFont, "body.font-times-new-roman-12", "body-font-preview", "set-run-font-format"),
+            Descriptor(bodySpacing, "body.line-spacing-single", "body-line-spacing-preview", "set-paragraph-line-spacing"),
+            Descriptor(firstLine, "body.first-line-indent-1cm", "body-first-line-indent-preview", "set-paragraph-first-line-indent"),
+            Descriptor(abstractSpacing, "abstract.skripsi-single-spacing-zero-paragraph-spacing", "abstract-spacing-preview", "set-abstract-paragraph-spacing"),
+            Descriptor(abstractSpacing, "abstract-summary-single-spacing-zero-paragraph-spacing", "abstract-summary-spacing-preview", "set-abstract-paragraph-spacing"),
+            Descriptor(chapterCentered, "heading.chapter-centered", "chapter-centered-preview", "set-heading-alignment-centered")
         ]);
     }
 
-    public static FixApplyCapabilityRegistry CreateApplyRegistry() => new([new BodyJustifiedFixProvider()]);
+    public static FixApplyCapabilityRegistry CreateApplyRegistry() => new([
+        new BodyJustifiedFixProvider(), new BodyFontFixProvider(), new BodyLineSpacingFixProvider(),
+        new BodyFirstLineIndentFixProvider(), new AbstractParagraphSpacingFixProvider(),
+        new ChapterCenteredFixProvider()
+    ]);
+
+    private static RemediationCapability Descriptor(
+        IFixApplyProvider applyProvider, string validationKey, string previewId, string description) =>
+        new(applyProvider.CapabilityId, applyProvider.CapabilityVersion, validationKey,
+            FixOperationKind.SetProperty, ["actual", "expected", "location"], false, true,
+            previewId, description, false, (IFixPreviewProvider)applyProvider);
 }

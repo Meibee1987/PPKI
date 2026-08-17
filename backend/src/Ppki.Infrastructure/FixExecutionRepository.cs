@@ -1,5 +1,6 @@
 using Microsoft.EntityFrameworkCore;
 using Npgsql;
+using System.Text.Json;
 using Ppki.Application;
 using Ppki.Domain;
 
@@ -78,9 +79,20 @@ public sealed class FixExecutionRepository(IDbContextFactory<PpkiDbContext> dbFa
         var sameRequest = existing.AuditJobId == candidate.AuditJobId
             && existing.SourceDocumentVersionId == candidate.SourceDocumentVersionId
             && existing.PlanHash == candidate.PlanHash
-            && existing.SelectedFindingIdsJson == candidate.SelectedFindingIdsJson;
+            && SameSelection(existing.SelectedFindingIdsJson, candidate.SelectedFindingIdsJson);
         return sameRequest
             ? new(existing, true)
             : new(null, false, "fix-execution-idempotency-conflict");
+    }
+
+    private static bool SameSelection(string persisted, string requested)
+    {
+        try
+        {
+            var left = JsonSerializer.Deserialize<Guid[]>(persisted);
+            var right = JsonSerializer.Deserialize<Guid[]>(requested);
+            return left is not null && right is not null && left.SequenceEqual(right);
+        }
+        catch (JsonException) { return false; }
     }
 }

@@ -1,6 +1,7 @@
 using Ppki.Application;
 using Ppki.DocxEngine;
 using System.Text.RegularExpressions;
+using DocumentFormat.OpenXml.Packaging;
 
 namespace Ppki.FixEngine;
 
@@ -31,7 +32,8 @@ public sealed record FixApplyContext(
     string WorkingFilePath,
     ParsedDocument SourceDocument,
     FixPlanFindingSnapshot Finding,
-    FixPlanOperation Operation);
+    FixPlanOperation Operation,
+    WordprocessingDocument? OpenPackage = null);
 
 public enum FixApplyOutcome { Changed, NoChange }
 

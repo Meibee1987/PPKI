@@ -17,14 +17,21 @@ namespace Ppki.RuleEngine.Tests;
 public sealed class FixApplyCapabilityTests
 {
     [Fact]
-    public void Production_registry_contains_only_real_body_justified_capability()
+    public void Production_registry_contains_explicit_versioned_formatting_capabilities()
     {
         var registry = ProductionFixCapabilities.CreatePreviewRegistry();
-        var capability = Assert.Single(registry.Capabilities);
+        Assert.Equal(7, registry.Capabilities.Count);
+        var capability = registry.Capabilities.Single(value => value.ValidationKey == "body.justified");
         Assert.Equal("body.justified", capability.ValidationKey);
         Assert.Equal(BodyJustifiedFixProvider.Id, capability.CapabilityId);
+        Assert.Equal("1.0", capability.CapabilityVersion);
         Assert.True(capability.DocumentMutationImplementationExists);
         Assert.IsType<BodyJustifiedFixProvider>(capability.Provider);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == BodyFontFixProvider.Id);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == BodyLineSpacingFixProvider.Id);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == BodyFirstLineIndentFixProvider.Id);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == AbstractParagraphSpacingFixProvider.Id);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == ChapterCenteredFixProvider.Id);
     }
 
     [Fact]
@@ -336,6 +343,37 @@ public sealed class FixExecutionPersistenceContractTests
         Assert.DoesNotContain("SaveChanges", provider, StringComparison.Ordinal);
         Assert.DoesNotContain("Ppki.Infrastructure", provider, StringComparison.Ordinal);
         Assert.DoesNotContain("Ppki.FixEngine", parserProject, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Worker_uses_upload_first_and_reads_existing_result_only_after_storage_conflict()
+    {
+        var worker = Source("backend", "services", "Ppki.Worker", "FixExecutionProcessor.cs");
+        var publish = worker.IndexOf("await storage.SaveAsync(stream", StringComparison.Ordinal);
+        var conflict = worker.IndexOf("FileStorageFailureKind.Conflict", publish, StringComparison.Ordinal);
+        var readCanonical = worker.IndexOf("existingResult = await storage.MaterializeToTempFileAsync", conflict, StringComparison.Ordinal);
+
+        Assert.True(publish >= 0 && conflict > publish && readCanonical > conflict);
+    }
+
+    [Fact]
+    public void Replay_comparison_accepts_jsonb_normalized_multi_finding_selection()
+    {
+        var first = Guid.Parse("30000000-0000-0000-0000-000000000001");
+        var second = Guid.Parse("30000000-0000-0000-0000-000000000002");
+        var job = Data.Job();
+        job.SelectedFindingIdsJson = $"[\"{first:D}\", \"{second:D}\"]";
+        var candidate = new FixExecutionCandidate(Guid.NewGuid(), job.AuditJobId,
+            job.SourceDocumentVersionId, job.RequestedByUserId, job.IdempotencyKey,
+            job.PlanHash, job.PlannerVersion, $"[\"{first:D}\",\"{second:D}\"]",
+            job.ApprovedPlanSnapshotJson, job.PlannedOperationCount, job.CreatedAt);
+        var compare = typeof(FixExecutionRepository).GetMethod("Compare",
+            System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Static)!;
+
+        var result = Assert.IsType<FixExecutionEnqueueResult>(compare.Invoke(null, [job, candidate]));
+
+        Assert.True(result.IsReplay);
+        Assert.Same(job, result.Job);
     }
 
     private static string Source(params string[] segments) => File.ReadAllText(Path.Combine([Data.RepositoryRoot(), .. segments]));

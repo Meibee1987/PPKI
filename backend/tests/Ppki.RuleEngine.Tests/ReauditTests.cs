@@ -301,8 +301,9 @@ public sealed class ReauditArchitectureTests
             Assert.DoesNotContain("accepted-risk", value, StringComparison.OrdinalIgnoreCase);
         });
         var capabilities = ProductionFixCapabilities.CreatePreviewRegistry().Capabilities;
-        Assert.Single(capabilities);
-        Assert.Equal("body.justified", capabilities.Single().ValidationKey);
+        var existing = capabilities.Single(value => value.ValidationKey == "body.justified");
+        Assert.Equal(BodyJustifiedFixProvider.Id, existing.CapabilityId);
+        Assert.Equal(BodyJustifiedFixProvider.Version, existing.CapabilityVersion);
     }
 
     private static string Source(params string[] segments) =>

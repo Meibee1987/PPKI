@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Npgsql;
+using DocumentFormat.OpenXml.Packaging;
 using Ppki.Application;
 using Ppki.DocxEngine;
 using Ppki.Domain;
@@ -72,24 +73,28 @@ public sealed class FixExecutionProcessor(
             var changed = 0;
             await faults.CheckpointAsync(RemediationCheckpoint.BeforeApply, claim.ExecutionId,
                 claim.AttemptNumber, cancellationToken);
-            foreach (var operation in approved.Preview.Operations.OrderBy(value => value.Ordinal))
+            using (var package = WordprocessingDocument.Open(working, true, new OpenSettings { AutoSave = false }))
             {
-                cancellationToken.ThrowIfCancellationRequested();
-                if (!capabilities.TryGet(operation, out var provider))
-                    throw new FixExecutionException(FixFailureCategory.CapabilityUnavailable, "fix-provider-version-unavailable");
-                if (operation.SourceFindingIds.Count != 1)
-                    throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-operation-invalid");
-                var finding = approved.Source.Findings.SingleOrDefault(value => value.FindingId == operation.SourceFindingIds[0])
-                    ?? throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-selection-invalid");
-                try
+                foreach (var operation in approved.Preview.Operations.OrderBy(value => value.Ordinal))
                 {
-                    if (await provider.ApplyAsync(new(working, before, finding, operation), cancellationToken) == FixApplyOutcome.Changed)
-                        changed++;
+                    cancellationToken.ThrowIfCancellationRequested();
+                    if (!capabilities.TryGet(operation, out var provider))
+                        throw new FixExecutionException(FixFailureCategory.CapabilityUnavailable, "fix-provider-version-unavailable");
+                    if (operation.SourceFindingIds.Count != 1)
+                        throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-operation-invalid");
+                    var finding = approved.Source.Findings.SingleOrDefault(value => value.FindingId == operation.SourceFindingIds[0])
+                        ?? throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-selection-invalid");
+                    try
+                    {
+                        if (await provider.ApplyAsync(new(working, before, finding, operation, package), cancellationToken) == FixApplyOutcome.Changed)
+                            changed++;
+                    }
+                    catch (FixExecutionException) { throw; }
+                    catch (OperationCanceledException) { throw; }
+                    catch (Exception exception)
+                    { throw new FixExecutionException(FixFailureCategory.CapabilityUnavailable, "fix-provider-unavailable", exception); }
                 }
-                catch (FixExecutionException) { throw; }
-                catch (OperationCanceledException) { throw; }
-                catch (Exception exception)
-                { throw new FixExecutionException(FixFailureCategory.CapabilityUnavailable, "fix-provider-unavailable", exception); }
+                if (changed > 0) package.MainDocumentPart?.Document?.Save();
             }
             await faults.CheckpointAsync(RemediationCheckpoint.AfterApply, claim.ExecutionId,
                 claim.AttemptNumber, cancellationToken);
@@ -119,35 +124,32 @@ public sealed class FixExecutionProcessor(
             await EnsureActiveAsync(claim, source, cancellationToken);
             await faults.CheckpointAsync(RemediationCheckpoint.BeforeResultUpload, claim.ExecutionId,
                 claim.AttemptNumber, cancellationToken);
-            try
+            await using (var stream = File.OpenRead(working))
             {
-                existingResult = await storage.MaterializeToTempFileAsync(
-                    supabase.Value.Storage.VersionBucket, objectPath, cancellationToken);
+                try
+                {
+                    uploaded = await storage.SaveAsync(stream, source.OriginalFilename, DocxMime,
+                        supabase.Value.Storage.VersionBucket, objectPath, cancellationToken);
+                    ownsUploadedObject = true;
+                }
+                catch (FileStorageException exception) when (exception.Kind == FileStorageFailureKind.Conflict) { }
+                catch (FileStorageException exception)
+                { throw UploadFailure(exception); }
             }
-            catch (FileStorageException exception) when (exception.Kind == FileStorageFailureKind.NotFound) { }
-            catch (FileStorageException exception) { throw DownloadFailure(exception); }
-            if (existingResult is not null)
+            if (uploaded is null)
             {
+                try
+                {
+                    existingResult = await storage.MaterializeToTempFileAsync(
+                        supabase.Value.Storage.VersionBucket, objectPath, cancellationToken);
+                }
+                catch (FileStorageException exception) { throw DownloadFailure(exception); }
                 var existingInfo = new FileInfo(existingResult);
                 if (!existingInfo.Exists || existingInfo.Length != new FileInfo(working).Length
                     || !string.Equals(await Sha256Async(existingResult, cancellationToken), outputSha, StringComparison.Ordinal))
                     throw new FixExecutionException(FixFailureCategory.Conflict, "fix-result-object-conflict");
                 uploaded = new(supabase.Value.Storage.VersionBucket, objectPath, source.OriginalFilename,
                     DocxMime, existingInfo.Length, outputSha);
-            }
-            else
-            {
-                await using var stream = File.OpenRead(working);
-                try
-                {
-                    uploaded = await storage.SaveAsync(stream, source.OriginalFilename, DocxMime,
-                        supabase.Value.Storage.VersionBucket, objectPath, cancellationToken);
-                }
-                catch (FileStorageException exception) when (exception.Kind == FileStorageFailureKind.Conflict)
-                { throw new FixExecutionException(FixFailureCategory.Conflict, "fix-result-object-conflict", exception); }
-                catch (FileStorageException exception)
-                { throw UploadFailure(exception); }
-                ownsUploadedObject = true;
             }
             await faults.CheckpointAsync(RemediationCheckpoint.AfterResultUpload, claim.ExecutionId,
                 claim.AttemptNumber, cancellationToken);
@@ -218,14 +220,15 @@ public sealed class FixExecutionProcessor(
         }
         var nextVersion = await db.DocumentVersions.Where(value => value.DocumentId == source.DocumentId)
             .MaxAsync(value => value.VersionNo, cancellationToken) + 1;
-        db.DocumentVersions.Add(new DocumentVersion
+        var resultVersion = new DocumentVersion
         {
             Id = resultId, DocumentId = source.DocumentId, VersionNo = nextVersion,
             StorageBucket = stored.StorageBucket, StorageKey = stored.StorageKey,
             OriginalFilename = source.OriginalFilename, MimeType = stored.ContentType,
             SizeBytes = stored.SizeBytes, Sha256 = stored.Sha256,
             CreatedByUserId = source.RequestedByUserId, ParentVersionId = source.SourceVersionId
-        });
+        };
+        db.DocumentVersions.Add(resultVersion);
         document.CurrentVersionNo = nextVersion;
         document.UpdatedAt = DateTimeOffset.UtcNow;
         job.State = FixExecutionState.Completed;
@@ -365,9 +368,37 @@ public sealed class FixExecutionProcessor(
                 value.Location?.PartKind == DocumentPartKind.MainDocument
                 && value.Location.BodyElementIndex == operation.Target.BodyElementIndex
                 && value.Location.ParagraphIndex == operation.Target.ParagraphIndex);
-            if (paragraph?.DirectAlignment != ParsedAlignment.Justified)
+            if (paragraph is null || !OperationPostcondition(paragraph, operation))
                 throw new FixExecutionException("fix-operation-postcondition-failed");
         }
+    }
+
+    private static bool OperationPostcondition(ParsedParagraph paragraph, FixPlanOperation operation)
+    {
+        var expected = operation.Expected.Value;
+        return operation.PropertyIdentifier switch
+        {
+            "paragraph.alignment" => expected switch
+            {
+                "justified" => paragraph.DirectAlignment == ParsedAlignment.Justified,
+                "centered" => paragraph.DirectAlignment == ParsedAlignment.Center,
+                _ => false
+            },
+            "paragraph.line-spacing-value" => paragraph.DirectLineSpacingValue?.ToString(System.Globalization.CultureInfo.InvariantCulture) == expected,
+            "paragraph.line-spacing-rule" => string.Equals(paragraph.DirectLineSpacingRule, expected, StringComparison.OrdinalIgnoreCase),
+            "paragraph.spacing-before" => paragraph.DirectSpacingBeforeTwips?.ToString(System.Globalization.CultureInfo.InvariantCulture) == expected,
+            "paragraph.spacing-after" => paragraph.DirectSpacingAfterTwips?.ToString(System.Globalization.CultureInfo.InvariantCulture) == expected,
+            "paragraph.first-line-indent" => paragraph.DirectFirstLineIndentTwips?.ToString(System.Globalization.CultureInfo.InvariantCulture) == expected
+                && paragraph.DirectHangingIndentTwips is null,
+            "run.font-family-ascii" => Run(operation) is { } asciiRun
+                && string.Equals(asciiRun.DirectFontAscii, expected, StringComparison.OrdinalIgnoreCase),
+            "run.font-family-high-ansi" => Run(operation) is { } highAnsiRun
+                && string.Equals(highAnsiRun.DirectFontHighAnsi, expected, StringComparison.OrdinalIgnoreCase),
+            "run.font-size" => Run(operation)?.DirectFontSizeHalfPoints?.ToString(System.Globalization.CultureInfo.InvariantCulture) == expected,
+            _ => false
+        };
+
+        ParsedRun? Run(FixPlanOperation value) => paragraph.RunList.SingleOrDefault(run => run.Index == value.Target.RunIndex);
     }
 
     private static string TextDigest(ParsedDocument document)

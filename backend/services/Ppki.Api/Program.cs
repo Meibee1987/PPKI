@@ -406,12 +406,17 @@ api.MapPost("/finding-reviews/{reviewCaseId}/manual-remediation-reports", async 
 
 api.MapGet("/document-versions/{id:guid}/download", async (Guid id, ClaimsPrincipal user, PpkiDbContext db, IFileStorage storage, IStorageObjectPathBuilder pathBuilder, IAuditTrailWriter auditTrail, IOptions<SupabaseOptions> supabase, CancellationToken ct) => {
     var uid=UserId(user); var version=await db.DocumentVersions.AsNoTracking().Where(v=>v.Id==id).Select(v=>new{Version=v,OwnerUserId=v.Document!.OwnerUserId}).SingleOrDefaultAsync(ct); if(version is null)return Results.NotFound();
-    var expected=pathBuilder.BuildOriginalPath(version.OwnerUserId,version.Version.DocumentId,version.Version.Id); if(version.Version.StorageBucket!=supabase.Value.Storage.OriginalBucket||version.Version.StorageKey!=expected)return Results.NotFound();
+    var isOriginal=version.Version.ParentVersionId is null;
+    var expected=isOriginal
+        ? pathBuilder.BuildOriginalPath(version.OwnerUserId,version.Version.DocumentId,version.Version.Id)
+        : pathBuilder.BuildVersionPath(version.OwnerUserId,version.Version.DocumentId,version.Version.Id);
+    var expectedBucket=isOriginal?supabase.Value.Storage.OriginalBucket:supabase.Value.Storage.VersionBucket;
+    if(version.Version.StorageBucket!=expectedBucket||version.Version.StorageKey!=expected)return Results.NotFound();
     var lifetime=TimeSpan.FromSeconds(supabase.Value.Storage.SignedUrlLifetimeSeconds); string url;
     try { url=await storage.CreateSignedDownloadUrlAsync(version.Version.StorageBucket,version.Version.StorageKey,lifetime,ct); }
     catch { return Results.Problem(statusCode:StatusCodes.Status502BadGateway,title:"Document download authorization failed."); }
     var eventContext=AuditEventContext.User(uid,Guid.NewGuid()); await using var transaction=await db.Database.BeginTransactionAsync(ct); await auditTrail.SetTransactionContextAsync(db,eventContext,ct);
-    auditTrail.Add(db,eventContext,new AuditEventData(AuditActions.DocumentDownloadAuthorized,AuditResourceTypes.DocumentVersion,version.Version.Id,version.OwnerUserId,AuditEventMetadata.Create(("download_kind","original")))); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
+    auditTrail.Add(db,eventContext,new AuditEventData(AuditActions.DocumentDownloadAuthorized,AuditResourceTypes.DocumentVersion,version.Version.Id,version.OwnerUserId,AuditEventMetadata.Create(("download_kind",isOriginal?"original":"remediated")))); await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
     return Results.Ok(new{url,expiresInSeconds=(int)lifetime.TotalSeconds});
 });
 

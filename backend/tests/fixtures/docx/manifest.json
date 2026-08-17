@@ -135,6 +135,21 @@
       },
       "containsPersonalData": false,
       "generatorVersion": "5.0.0"
+    },
+    {
+      "fixtureId": "auto-format-provider-mixed",
+      "filename": "auto-format-provider-mixed.docx",
+      "description": "Golden source fixture for deterministic run and paragraph formatting providers.",
+      "synthetic": true,
+      "intendedProperties": ["mixed-fonts", "mixed-font-sizes", "bold", "italic", "underline", "split-runs", "hyperlink", "field-adjacent", "empty-run", "paragraph-spacing", "line-spacing", "alignment", "first-line-hanging-conflict"],
+      "expectedDocumentProperties": {
+        "paragraphCount": 1,
+        "visibleRunCount": 3,
+        "hyperlinkCount": 1,
+        "fieldCount": 1
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "5.0.0"
     }
   ]
 }
