@@ -4,6 +4,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { buildChildEnvironment, getSupabaseEnvironment, localSettings, resolveRuleCatalog } from "./dev-bootstrap.mjs";
 
 const TITLE = "S5-T02 processor runtime provider coverage";
@@ -260,4 +261,15 @@ async function main() {
     if (temporary && path.resolve(temporary).startsWith(path.resolve(tmpdir()))) await rm(temporary, { recursive: true, force: true });
   }
 }
-main();
+export {
+  FIXTURE, DOCX_MIME, report, run, databaseContainer, sql, authenticate,
+  startServices, api, waitAudit, allFindings, download
+};
+export async function stopServices() {
+  await Promise.all([stopProcess(apiProcess), stopProcess(workerProcess)]);
+  apiProcess = undefined; workerProcess = undefined;
+}
+export function safeServiceDiagnostics() {
+  return diagnostics.split(/\r?\n/u).filter(line => /error|exception|failed|npgsql|postgres|sqlstate/i.test(line)).slice(-16).join(" | ").slice(0, 3500);
+}
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) main();

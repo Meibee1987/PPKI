@@ -201,6 +201,25 @@ public sealed class FixExecutionJob : Entity
     public DateTimeOffset? CompletedAt { get; set; }
 }
 
+public sealed class AutomaticRemediationOrchestration : Entity
+{
+    public Guid SourceAuditJobId { get; set; }
+    public AuditJob? SourceAuditJob { get; set; }
+    public required string OrchestrationType { get; set; }
+    public required string PolicyVersion { get; set; }
+    public AutomaticRemediationState State { get; set; } = AutomaticRemediationState.Pending;
+    public int EligibleFindingCount { get; set; }
+    public int OperationCount { get; set; }
+    public Guid? FixExecutionId { get; set; }
+    public FixExecutionJob? FixExecution { get; set; }
+    public Guid? ResultDocumentVersionId { get; set; }
+    public DocumentVersion? ResultDocumentVersion { get; set; }
+    public Guid? ReauditJobId { get; set; }
+    public AuditJob? ReauditJob { get; set; }
+    public string? SafeFailureCode { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+}
+
 public sealed class FindingResolutionCase : Entity
 {
     public Guid SourceAuditFindingId { get; set; }

@@ -12,7 +12,7 @@ import { StatusBadge } from "./status-badge";
 
 export function RemediationSelection({ items, selected, onSelectedChange }: { auditId: string; items: AuditFinding[]; selected: string[]; onSelectedChange: (ids: string[]) => void }) {
   return <fieldset className="selection-list" aria-describedby="selection-help"><legend>Pilih kandidat remediation</legend><p id="selection-help" className="muted">Selection ini hanya kandidat. Kelayakan akhir ditentukan oleh pratinjau server untuk exact selection. Maksimum 100 temuan.</p>
-    {items.map(item => { const checked = selected.includes(item.id); return <label className="selection-row" key={item.id}><input type="checkbox" checked={checked} onChange={() => onSelectedChange(toggleSelection(selected, item.id, true))} /><span>{item.ruleCode}</span><small>Kandidat — belum dinyatakan eligible</small></label>; })}
+    {items.filter(item => item.actionAvailability !== "Automatic").map(item => { const checked = selected.includes(item.id); return <label className="selection-row" key={item.id}><input type="checkbox" checked={checked} onChange={() => onSelectedChange(toggleSelection(selected, item.id, true))} /><span>{item.ruleCode}</span><small>Kandidat — belum dinyatakan eligible</small></label>; })}
   </fieldset>;
 }
 

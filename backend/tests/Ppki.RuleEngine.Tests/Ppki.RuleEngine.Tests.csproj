@@ -8,6 +8,7 @@
   </PropertyGroup>
   <ItemGroup>
     <ProjectReference Include="../../services/Ppki.Api/Ppki.Api.csproj" />
+    <ProjectReference Include="../../services/Ppki.Worker/Ppki.Worker.csproj" />
     <ProjectReference Include="../../src/Ppki.DocxEngine/Ppki.DocxEngine.csproj" />
     <ProjectReference Include="../../src/Ppki.Domain/Ppki.Domain.csproj" />
     <ProjectReference Include="../../src/Ppki.FixEngine/Ppki.FixEngine.csproj" />

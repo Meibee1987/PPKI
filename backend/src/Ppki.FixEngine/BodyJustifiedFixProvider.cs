@@ -135,7 +135,7 @@ public static class ProductionFixCapabilities
         return new RemediationCapabilityRegistry([
             new(BodyJustifiedFixProvider.Id, BodyJustifiedFixProvider.Version, "body.justified",
                 FixOperationKind.SetProperty, ["actual", "expected", "location"], false, true,
-                "body-justified-preview", "set-paragraph-alignment-justified", false, justified),
+                "body-justified-preview", "set-paragraph-alignment-justified", true, justified),
             Descriptor(bodyFont, "body.font-times-new-roman-12", "body-font-preview", "set-run-font-format"),
             Descriptor(bodySpacing, "body.line-spacing-single", "body-line-spacing-preview", "set-paragraph-line-spacing"),
             Descriptor(firstLine, "body.first-line-indent-1cm", "body-first-line-indent-preview", "set-paragraph-first-line-indent"),
@@ -155,5 +155,5 @@ public static class ProductionFixCapabilities
         IFixApplyProvider applyProvider, string validationKey, string previewId, string description) =>
         new(applyProvider.CapabilityId, applyProvider.CapabilityVersion, validationKey,
             FixOperationKind.SetProperty, ["actual", "expected", "location"], false, true,
-            previewId, description, false, (IFixPreviewProvider)applyProvider);
+            previewId, description, true, (IFixPreviewProvider)applyProvider);
 }

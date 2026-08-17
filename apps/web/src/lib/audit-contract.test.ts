@@ -15,6 +15,7 @@ const summary = {
   fixModes: { auto: 0, confirm: 0, manual: 1, report: 0 }, scoreState: "NotConfigured", score: null,
   scorePolicyVersion: null, scoreBreakdown: null, scoreDiagnosticCode: "scoring-policy-not-configured",
   startedAt: "2026-08-04T10:00:00Z", completedAt: "2026-08-04T10:01:00Z", failureCode: null, errorMessage: null,
+  automaticRemediation: null,
 };
 
 const finding = {
@@ -28,6 +29,12 @@ const finding = {
 test("parses a valid audit summary without calculating score", () => {
   const parsed = parseAuditSummary(summary);
   assert.equal(parsed.scoreState, "NotConfigured"); assert.equal(parsed.score, null); assert.equal(parsed.severity.error, 1);
+});
+
+test("parses canonical automatic remediation progress", () => {
+  const parsed = parseAuditSummary({ ...summary, automaticRemediation: { state: "ReauditPending", policyVersion: "auto-format/1.0", eligibleFindingCount: 8, operationCount: 8, verifiedResolvedCount: 0, stillDetectedCount: 0, failureCode: null } });
+  assert.equal(parsed.automaticRemediation?.state, "ReauditPending");
+  assert.equal(parsed.automaticRemediation?.operationCount, 8);
 });
 
 test("parses the completed backend wire summary with deterministic profile UUID and null score", () => {

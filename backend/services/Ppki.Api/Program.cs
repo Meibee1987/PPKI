@@ -163,9 +163,10 @@ api.MapPost("/document-versions/{versionId:guid}/audits", async (Guid versionId,
     var uid=UserId(user); var documentKind=await db.DocumentVersions.Where(v=>v.Id==versionId).Select(v=>(DocumentKind?)v.Document!.DocumentType!.Kind).SingleOrDefaultAsync(ct); if(documentKind is null)return Results.NotFound();
     var active=await db.ProfileVersions.OrderByDescending(x=>x.VersionNo).FirstAsync(x=>x.Status=="Active",ct);
     var audit=new AuditJob{DocumentVersionId=versionId,ProfileVersionId=active.Id,DocumentKindSnapshot=documentKind,RequestedByUserId=uid,Status=AuditJobStatus.Queued};
+    var automaticRemediation=new AutomaticRemediationOrchestration{SourceAuditJobId=audit.Id,OrchestrationType=AutomaticRemediationPolicy.OrchestrationType,PolicyVersion=AutomaticRemediationPolicy.Version,State=AutomaticRemediationState.Pending}; automaticRemediation.UpdatedAt=automaticRemediation.CreatedAt;
     var eventContext=AuditEventContext.User(uid,audit.Id);
     await using var transaction=await db.Database.BeginTransactionAsync(ct); await auditTrail.SetTransactionContextAsync(db,eventContext,ct);
-    db.AuditJobs.Add(audit); auditTrail.Add(db,eventContext,new AuditEventData(AuditActions.AuditRequested,AuditResourceTypes.AuditJob,audit.Id,uid,AuditEventMetadata.Create(("audit_status","Queued"))));
+    db.AuditJobs.Add(audit); db.AutomaticRemediationOrchestrations.Add(automaticRemediation); auditTrail.Add(db,eventContext,new AuditEventData(AuditActions.AuditRequested,AuditResourceTypes.AuditJob,audit.Id,uid,AuditEventMetadata.Create(("audit_status","Queued"))));
     await db.SaveChangesAsync(ct); await transaction.CommitAsync(ct);
     return Results.Accepted($"/api/audits/{audit.Id}",new{audit.Id,status=audit.Status.ToString()});
 });

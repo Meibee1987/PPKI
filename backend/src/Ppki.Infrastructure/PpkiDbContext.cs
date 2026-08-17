@@ -17,6 +17,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
     public DbSet<AuditRuleSnapshot> AuditRuleSnapshots => Set<AuditRuleSnapshot>();
     public DbSet<AuditFinding> AuditFindings => Set<AuditFinding>();
     public DbSet<FixExecutionJob> FixExecutionJobs => Set<FixExecutionJob>();
+    public DbSet<AutomaticRemediationOrchestration> AutomaticRemediationOrchestrations => Set<AutomaticRemediationOrchestration>();
     public DbSet<FindingResolutionCase> FindingResolutionCases => Set<FindingResolutionCase>();
     public DbSet<FindingResolutionEvent> FindingResolutionEvents => Set<FindingResolutionEvent>();
     public DbSet<FindingReviewCase> FindingReviewCases => Set<FindingReviewCase>();
@@ -251,6 +252,32 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.HasOne(x => x.AuditJob).WithMany().HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.SourceDocumentVersion).WithMany().HasForeignKey(x => x.SourceDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.ResultDocumentVersion).WithMany().HasForeignKey(x => x.ResultDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<AutomaticRemediationOrchestration>(entity =>
+        {
+            entity.ToTable("automatic_remediation_orchestrations");
+            Common(entity);
+            entity.Property(x => x.SourceAuditJobId).HasColumnName("source_audit_job_id");
+            entity.Property(x => x.OrchestrationType).HasColumnName("orchestration_type").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.PolicyVersion).HasColumnName("policy_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.State).HasColumnName("state").HasConversion<string>();
+            entity.Property(x => x.EligibleFindingCount).HasColumnName("eligible_finding_count");
+            entity.Property(x => x.OperationCount).HasColumnName("operation_count");
+            entity.Property(x => x.FixExecutionId).HasColumnName("fix_execution_id");
+            entity.Property(x => x.ResultDocumentVersionId).HasColumnName("result_document_version_id");
+            entity.Property(x => x.ReauditJobId).HasColumnName("reaudit_job_id");
+            entity.Property(x => x.SafeFailureCode).HasColumnName("safe_failure_code").HasMaxLength(128);
+            entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            entity.HasIndex(x => new { x.SourceAuditJobId, x.OrchestrationType, x.PolicyVersion }).IsUnique()
+                .HasDatabaseName("uq_automatic_remediation_identity");
+            entity.HasIndex(x => x.FixExecutionId).IsUnique().HasFilter("fix_execution_id is not null");
+            entity.HasIndex(x => x.ReauditJobId).IsUnique().HasFilter("reaudit_job_id is not null");
+            entity.HasIndex(x => new { x.State, x.UpdatedAt }).HasDatabaseName("ix_automatic_remediation_worker");
+            entity.HasOne(x => x.SourceAuditJob).WithMany().HasForeignKey(x => x.SourceAuditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.FixExecution).WithMany().HasForeignKey(x => x.FixExecutionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ResultDocumentVersion).WithMany().HasForeignKey(x => x.ResultDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ReauditJob).WithMany().HasForeignKey(x => x.ReauditJobId).OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<FindingResolutionCase>(entity =>

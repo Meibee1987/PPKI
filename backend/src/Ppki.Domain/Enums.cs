@@ -85,6 +85,18 @@ public enum FixExecutionState
     NoChange
 }
 
+public enum AutomaticRemediationState
+{
+    Pending,
+    NoAction,
+    Queued,
+    Processing,
+    ReauditPending,
+    Completed,
+    Failed,
+    Conflict
+}
+
 [JsonConverter(typeof(JsonStringEnumConverter<FixFailureCategory>))]
 public enum FixFailureCategory
 {

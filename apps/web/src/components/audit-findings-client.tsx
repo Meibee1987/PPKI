@@ -44,6 +44,13 @@ export function AuditFindingsClient() {
   }, [auditId, reload]);
 
   useEffect(() => {
+    const state = summary?.automaticRemediation?.state;
+    if (!state || ["NoAction", "Completed", "Failed", "Conflict"].includes(state)) return;
+    const timer = setTimeout(() => setReload(value => value + 1), 1500);
+    return () => clearTimeout(timer);
+  }, [summary?.automaticRemediation?.state, reload]);
+
+  useEffect(() => {
     if (summary?.status !== "Completed") { setPage(undefined); return; }
     const controller = new AbortController();
     setFindingsLoading(true); setFindingsError("");
@@ -81,6 +88,9 @@ export function AuditFindingsClient() {
   if (!summary) return <PageState title="Hasil audit tidak tersedia" message="Respons audit tidak tersedia." retry={() => setReload(value => value + 1)} />;
 
   const score = scorePresentation(summary.scoreState, summary.score, summary.scorePolicyVersion);
+  const automaticActive = summary.automaticRemediation
+    ? ["Pending", "Queued", "Processing", "ReauditPending"].includes(summary.automaticRemediation.state)
+    : false;
   return (
     <main className="page-shell audit-page">
       <Link className="back-link" href="/">← Dokumen saya</Link>
@@ -104,9 +114,22 @@ export function AuditFindingsClient() {
         </dl>
         {summary.domains.length > 0 && <div className="domain-summary" aria-label="Jumlah temuan per domain">{summary.domains.map(item => <span className="count-chip" key={item.domain}>{item.domain}: <strong>{item.findingCount}</strong></span>)}</div>}
       </section>
-      {summary.status === "Completed" ? <><FindingFiltersPanel draft={draft} setDraft={setDraft} domains={summary.domains.map(item => item.domain)} onSubmit={applyFilters} onClear={() => navigate({ page: 1, pageSize: 25 })} />{page?.items.length ? <section className="panel" aria-labelledby="remediation-selection-title"><h2 id="remediation-selection-title">Selection remediation</h2><RemediationSelection auditId={auditId} items={page.items} selected={selectedFindingIds} onSelectedChange={setSelectedFindingIds} /></section> : null}<FindingsSection auditId={auditId} filters={filters} page={page} loading={findingsLoading} error={findingsError} retry={() => setReload(value => value + 1)} navigate={navigate} /><RemediationWorkflow auditId={auditId} selected={selectedFindingIds} clearSelection={() => setSelectedFindingIds([])} /></> : <AuditNonCompleted summary={summary} />}
+      {summary.automaticRemediation && <AutomaticRemediationPanel value={summary.automaticRemediation} />}
+      {summary.status === "Completed" ? <><FindingFiltersPanel draft={draft} setDraft={setDraft} domains={summary.domains.map(item => item.domain)} onSubmit={applyFilters} onClear={() => navigate({ page: 1, pageSize: 25 })} />{!automaticActive && page?.items.some(item => item.actionAvailability !== "Automatic") ? <section className="panel" aria-labelledby="remediation-selection-title"><h2 id="remediation-selection-title">Selection remediation manual</h2><RemediationSelection auditId={auditId} items={page.items} selected={selectedFindingIds} onSelectedChange={setSelectedFindingIds} /></section> : null}<FindingsSection auditId={auditId} filters={filters} page={page} loading={findingsLoading} error={findingsError} retry={() => setReload(value => value + 1)} navigate={navigate} />{!automaticActive && <RemediationWorkflow auditId={auditId} selected={selectedFindingIds} clearSelection={() => setSelectedFindingIds([])} />}</> : <AuditNonCompleted summary={summary} />}
     </main>
   );
+}
+
+function AutomaticRemediationPanel({ value }: { value: NonNullable<AuditSummary["automaticRemediation"]> }) {
+  const failed = value.state === "Failed" || value.state === "Conflict";
+  const active = ["Pending", "Queued", "Processing", "ReauditPending"].includes(value.state);
+  const message = value.state === "Completed"
+    ? `${value.verifiedResolvedCount} diperbaiki & diverifikasi otomatis · ${value.stillDetectedCount} masih perlu pemeriksaan`
+    : value.state === "NoAction" ? "Tidak ada temuan format yang eligible untuk perbaikan otomatis."
+    : value.state === "ReauditPending" ? "Memeriksa ulang hasil perbaikan otomatis…"
+    : failed ? "Perbaikan otomatis tidak diterapkan. Temuan audit tetap tersedia."
+    : "Memperbaiki format secara otomatis…";
+  return <section className={`panel ${failed ? "error-state" : "processing-state"}`} aria-live="polite" aria-busy={active}><h2>Perbaikan format otomatis</h2><p>{message}</p><p className="muted">Policy {value.policyVersion} · {value.eligibleFindingCount} temuan · {value.operationCount} operasi</p>{failed && value.failureCode && <p>Kode aman: <code>{value.failureCode}</code></p>}</section>;
 }
 
 function FindingFiltersPanel({ draft, setDraft, domains, onSubmit, onClear }: { draft: DraftFilters; setDraft: (value: DraftFilters) => void; domains: string[]; onSubmit: (event: FormEvent) => void; onClear: () => void }) {

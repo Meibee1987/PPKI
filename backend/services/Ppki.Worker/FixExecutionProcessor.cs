@@ -18,7 +18,8 @@ public sealed class FixExecutionProcessor(
     IOptions<SupabaseOptions> supabase,
     IDocxParser parser,
     FixApplyCapabilityRegistry capabilities,
-    IRemediationFaultInjector faults)
+    IRemediationFaultInjector faults,
+    ILogger<FixExecutionProcessor> logger)
 {
     private const long MaximumBytes = 50L * 1024 * 1024;
     private const string DocxMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
@@ -80,16 +81,28 @@ public sealed class FixExecutionProcessor(
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!capabilities.TryGet(operation, out var provider))
                         throw new FixExecutionException(FixFailureCategory.CapabilityUnavailable, "fix-provider-version-unavailable");
-                    if (operation.SourceFindingIds.Count != 1)
+                    if (operation.SourceFindingIds.Count < 1)
                         throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-operation-invalid");
-                    var finding = approved.Source.Findings.SingleOrDefault(value => value.FindingId == operation.SourceFindingIds[0])
+                    if (operation.SourceFindingIds.Any(id => approved.Source.Findings.All(value => value.FindingId != id)))
+                        throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-selection-invalid");
+                    var finding = approved.Source.Findings
+                        .Where(value => operation.SourceFindingIds.Contains(value.FindingId)
+                            && value.RuleCode == operation.RuleCode
+                            && value.ValidationKey == operation.ValidationKey)
+                        .OrderBy(value => value.FindingId)
+                        .FirstOrDefault()
                         ?? throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-selection-invalid");
                     try
                     {
                         if (await provider.ApplyAsync(new(working, before, finding, operation, package), cancellationToken) == FixApplyOutcome.Changed)
                             changed++;
                     }
-                    catch (FixExecutionException) { throw; }
+                    catch (FixExecutionException exception)
+                    {
+                        logger.LogWarning("Fix operation failed safely; Ordinal={Ordinal}; Capability={Capability}; Property={Property}; Code={Code}.",
+                            operation.Ordinal, operation.CapabilityId, operation.PropertyIdentifier, exception.DiagnosticCode);
+                        throw;
+                    }
                     catch (OperationCanceledException) { throw; }
                     catch (Exception exception)
                     { throw new FixExecutionException(FixFailureCategory.CapabilityUnavailable, "fix-provider-unavailable", exception); }

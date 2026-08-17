@@ -2,13 +2,15 @@ export const auditStatuses = ["Queued", "Processing", "Completed", "Failed", "Ca
 export const severities = ["Error", "Warning", "Info"] as const;
 export const fixModes = ["Auto", "Confirm", "Manual", "Report"] as const;
 export const scoreStates = ["Calculated", "NotConfigured", "InvalidConfiguration", "NotApplicable", "AuditIncomplete"] as const;
-export const actionAvailabilities = ["None"] as const;
+export const actionAvailabilities = ["None", "Automatic"] as const;
+export const automaticRemediationStates = ["Pending", "NoAction", "Queued", "Processing", "ReauditPending", "Completed", "Failed", "Conflict"] as const;
 
 export type AuditStatus = (typeof auditStatuses)[number];
 export type Severity = (typeof severities)[number];
 export type FixMode = (typeof fixModes)[number];
 export type ScoreState = (typeof scoreStates)[number];
 export type ActionAvailability = (typeof actionAvailabilities)[number];
+export type AutomaticRemediationState = (typeof automaticRemediationStates)[number];
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export type AuditSource = {
@@ -73,6 +75,7 @@ export type AuditSummary = {
   completedAt: string | null;
   failureCode: string | null;
   errorMessage: string | null;
+  automaticRemediation: { state: AutomaticRemediationState; policyVersion: string; eligibleFindingCount: number; operationCount: number; verifiedResolvedCount: number; stillDetectedCount: number; failureCode: string | null } | null;
 };
 
 export type FindingFilters = {
@@ -182,6 +185,7 @@ export function parseAuditSummary(value: unknown): AuditSummary {
   const severity = record(data.severity);
   const fixModeCounts = record(data.fixModes);
   if (!Array.isArray(data.domains)) throw new ApiContractError();
+  const automatic = data.automaticRemediation === null ? null : record(data.automaticRemediation);
   return {
     id: uuid(data.id), status: enumValue(data.status, auditStatuses),
     documentVersionId: uuid(data.documentVersionId), profileVersionId: uuid(data.profileVersionId),
@@ -197,6 +201,12 @@ export function parseAuditSummary(value: unknown): AuditSummary {
     scorePolicyVersion: nullableString(data.scorePolicyVersion), scoreBreakdown: jsonValue(data.scoreBreakdown),
     scoreDiagnosticCode: nullableString(data.scoreDiagnosticCode), startedAt: nullableString(data.startedAt), completedAt: nullableString(data.completedAt),
     failureCode: nullableString(data.failureCode), errorMessage: nullableString(data.errorMessage),
+    automaticRemediation: automatic === null ? null : {
+      state: enumValue(automatic.state, automaticRemediationStates), policyVersion: string(automatic.policyVersion),
+      eligibleFindingCount: nonNegativeInteger(automatic.eligibleFindingCount), operationCount: nonNegativeInteger(automatic.operationCount),
+      verifiedResolvedCount: nonNegativeInteger(automatic.verifiedResolvedCount), stillDetectedCount: nonNegativeInteger(automatic.stillDetectedCount),
+      failureCode: nullableString(automatic.failureCode),
+    },
   };
 }
 

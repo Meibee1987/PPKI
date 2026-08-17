@@ -42,6 +42,28 @@ public sealed class AuditReadService(
         var score = scoreCalculator.Calculate(
             new(audit.Status, audit.ApplicableRuleCount, []), policy: null);
         var failure = AuditFailureSummary.FromStatus(audit.Status);
+        var automatic = await db.AutomaticRemediationOrchestrations.AsNoTracking()
+            .Where(value => value.SourceAuditJobId == auditId
+                && value.OrchestrationType == AutomaticRemediationPolicy.OrchestrationType
+                && value.PolicyVersion == AutomaticRemediationPolicy.Version)
+            .Select(value => new
+            {
+                value.State, value.PolicyVersion, value.EligibleFindingCount,
+                value.OperationCount, value.FixExecutionId, value.SafeFailureCode
+            }).SingleOrDefaultAsync(cancellationToken);
+        AutomaticRemediationSummaryDto? automaticSummary = null;
+        if (automatic is not null)
+        {
+            var resolved = automatic.FixExecutionId is null ? 0 : await db.FindingResolutionEvents.AsNoTracking()
+                .CountAsync(value => value.SourceFixExecutionId == automatic.FixExecutionId
+                    && value.EventType == FindingResolutionEventType.VerificationResolvedObserved, cancellationToken);
+            var stillDetected = automatic.FixExecutionId is null ? 0 : await db.FindingResolutionEvents.AsNoTracking()
+                .CountAsync(value => value.SourceFixExecutionId == automatic.FixExecutionId
+                    && value.EventType == FindingResolutionEventType.VerificationStillDetectedObserved, cancellationToken);
+            automaticSummary = new(automatic.State.ToString(), automatic.PolicyVersion,
+                automatic.EligibleFindingCount, automatic.OperationCount, resolved,
+                stillDetected, automatic.SafeFailureCode);
+        }
 
         return new(
             audit.Id,
@@ -68,7 +90,8 @@ public sealed class AuditReadService(
             audit.StartedAt,
             audit.CompletedAt,
             failure?.Code,
-            failure?.Message);
+            failure?.Message,
+            automaticSummary);
     }
 
     public async Task<AuditFindingPageDto?> GetFindingsAsync(
@@ -112,10 +135,13 @@ public sealed class AuditReadService(
                 value.Confidence,
                 value.SourceSection,
                 value.PdfPage,
-                value.PrintedPage))
+                value.PrintedPage,
+                value.SnapshotSchemaVersion))
             .ToListAsync(cancellationToken);
+        var automaticFindingIds = await AutomaticFindingIdsAsync(db, auditId, cancellationToken);
 
-        return new(query.Page, query.PageSize, totalCount, rows.Select(ToListItem).ToArray());
+        return new(query.Page, query.PageSize, totalCount,
+            rows.Select(row => ToListItem(row, automaticFindingIds)).ToArray());
     }
 
     public async Task<AuditFindingDetailDto?> GetFindingAsync(
@@ -129,6 +155,7 @@ public sealed class AuditReadService(
                 db, auditId, ownerUserId, findingId: findingId)
             .SingleOrDefaultAsync(cancellationToken);
         if (row is null) return null;
+        var automaticFindingIds = await AutomaticFindingIdsAsync(db, auditId, cancellationToken);
 
         return new(
             row.Id,
@@ -149,10 +176,12 @@ public sealed class AuditReadService(
             Json(row.LocationJson),
             row.Confidence,
             Source(row),
-            "None");
+            automaticFindingIds.Contains(row.Id) ? "Automatic" : "None");
     }
 
-    private static AuditFindingListItemDto ToListItem(AuditFindingReadRow row) => new(
+    private static AuditFindingListItemDto ToListItem(
+        AuditFindingReadRow row,
+        IReadOnlySet<Guid> automaticFindingIds) => new(
         row.Id,
         row.AuditId,
         row.RuleOrdinal,
@@ -170,7 +199,25 @@ public sealed class AuditReadService(
         Json(row.LocationJson),
         row.Confidence,
         Source(row),
-        "None");
+        automaticFindingIds.Contains(row.Id) ? "Automatic" : "None");
+
+    private static async Task<IReadOnlySet<Guid>> AutomaticFindingIdsAsync(
+        PpkiDbContext db,
+        Guid auditId,
+        CancellationToken cancellationToken)
+    {
+        var selectedFindingIdsJson = await db.AutomaticRemediationOrchestrations.AsNoTracking()
+            .Where(value => value.SourceAuditJobId == auditId
+                && value.OrchestrationType == AutomaticRemediationPolicy.OrchestrationType
+                && value.PolicyVersion == AutomaticRemediationPolicy.Version
+                && value.FixExecutionId != null)
+            .Select(value => value.FixExecution!.SelectedFindingIdsJson)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (selectedFindingIdsJson is null) return new HashSet<Guid>();
+
+        return JsonSerializer.Deserialize<Guid[]>(selectedFindingIdsJson)?.ToHashSet()
+            ?? new HashSet<Guid>();
+    }
 
     private static AuditFindingSourceDto Source(AuditFindingReadRow row) =>
         new(row.SourceSection, row.PdfPage, row.PrintedPage);
@@ -206,6 +253,7 @@ public static class AuditReadQueries
             snapshot.domain as "Domain",
             snapshot.validation_key as "ValidationKey",
             snapshot.element as "Element",
+            snapshot.snapshot_schema_version as "SnapshotSchemaVersion",
             case finding.severity when 'Error' then 0 when 'Warning' then 1 when 'Info' then 2 else 3 end as "Severity",
             case finding.fix_mode_snapshot when 'Auto' then 0 when 'Confirm' then 1 when 'Manual' then 2 when 'Report' then 3 else 4 end as "FixMode",
             case finding.status when 'Open' then 0 when 'Fixed' then 1 when 'Ignored' then 2 when 'ManualReview' then 3 else 4 end as "FindingState",
@@ -367,7 +415,8 @@ public static class AuditReadQueries
             finding.Confidence,
             finding.SourceSectionSnapshot,
             finding.PdfPageSnapshot,
-            finding.PrintedPageSnapshot);
+            finding.PrintedPageSnapshot,
+            snapshot.SnapshotSchemaVersion);
     }
 
     public static IQueryable<AuditFindingReadRow> ApplyFilters(
@@ -480,7 +529,8 @@ public sealed record AuditFindingReadRow(
     decimal? Confidence,
     string? SourceSection,
     int? PdfPage,
-    string? PrintedPage);
+    string? PrintedPage,
+    int SnapshotSchemaVersion = 1);
 
 public sealed class AuditFindingDatabaseRow
 {
@@ -492,6 +542,7 @@ public sealed class AuditFindingDatabaseRow
     public string Domain { get; init; } = string.Empty;
     public string ValidationKey { get; init; } = string.Empty;
     public string Element { get; init; } = string.Empty;
+    public int SnapshotSchemaVersion { get; init; }
     public RuleSeverity Severity { get; init; }
     public FixMode FixMode { get; init; }
     public FindingStatus FindingState { get; init; }

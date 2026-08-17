@@ -90,7 +90,8 @@ public sealed record AuditSummaryDto(
     DateTimeOffset? StartedAt,
     DateTimeOffset? CompletedAt,
     string? FailureCode,
-    string? ErrorMessage);
+    string? ErrorMessage,
+    AutomaticRemediationSummaryDto? AutomaticRemediation = null);
 
 public sealed record AuditFindingSourceDto(
     string? SourceSection,
