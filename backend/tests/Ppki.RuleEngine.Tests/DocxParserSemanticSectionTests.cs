@@ -215,7 +215,7 @@ public sealed class DocxParserSemanticSectionTests
     public async Task Existing_fixtures_worker_contract_and_header_footer_exclusions_remain_compatible()
     {
         var manifest = await DocxFixtureManifest.LoadAsync(DocxFixtureWorkspace.FixtureRoot);
-        Assert.Equal(11, manifest.Fixtures.Count);
+        Assert.Equal(12, manifest.Fixtures.Count);
         foreach (var fixture in manifest.Fixtures)
         {
             await using var workspace = await DocxFixtureWorkspace.CreateAsync(fixture.FixtureId);

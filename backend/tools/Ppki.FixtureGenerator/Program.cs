@@ -67,6 +67,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
         CreateDocumentPageMapDocument(mainPart);
         return;
     }
+    if (fixture.Kind == FixtureKind.ExactTextAnchor)
+    {
+        CreateExactTextAnchorDocument(mainPart);
+        return;
+    }
     AddStyles(mainPart);
 
     if (fixture.Kind == FixtureKind.TableField)
@@ -238,6 +243,57 @@ static void CreateAutoFormatProviderDocument(MainDocumentPart mainPart)
         abstractParagraph,
         chapterHeading,
         StandardSection()));
+    mainPart.Document.Save();
+}
+
+static void CreateExactTextAnchorDocument(MainDocumentPart mainPart)
+{
+    var hyperlink = mainPart.AddHyperlinkRelationship(new Uri("https://example.invalid/synthetic-anchor"), true);
+    var duplicate = "Analisis dilakukan. Data di analisa menggunakan R. Hasil di analisa kembali.";
+    var split = new Paragraph(
+        new Run(new Text("Target ")),
+        new Run(new Text("di ")),
+        new Run(new RunProperties(new Bold()), new Text("anal")),
+        new Run(new RunProperties(new Italic()), new Text("isa")),
+        new Run(new Text(" selesai.")));
+    var hyperlinkParagraph = new Paragraph(
+        new Run(new Text("Tautan ")),
+        new Hyperlink(new Run(new Text("di analisa"))) { Id = hyperlink.Id },
+        new Run(new Text(" aman.")));
+    var fieldAdjacent = new Paragraph(
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Begin }),
+        new Run(new FieldCode(" PAGE ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Separate }),
+        new Run(new Text("7")),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.End }),
+        new Run(new Text(" di analisa")));
+    var fieldResult = new Paragraph(
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Begin }),
+        new Run(new FieldCode(" REF synthetic ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Separate }),
+        new Run(new Text("di analisa")),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.End }));
+    var coordinates = new Paragraph(
+        new Run(new Text("A")), new Run(new TabChar()), new Run(new Text("B")),
+        new Run(new Break()), new Run(new Text("C\u00a0D\u00adE \U0001F600 e\u0301 é")));
+    var revision = new Paragraph(
+        new Run(new Text("Awal ")),
+        new InsertedRun(new Run(new Text("di analisa"))) { Id = "1", Author = "synthetic", Date = new DateTimeValue(DateTime.UnixEpoch) },
+        new Run(new Text(" akhir")));
+    var body = new Body(
+        new Paragraph(new Run(new Text(duplicate))),
+        new Paragraph(new Run(new Text("Paragraf lain memuat di analisa sekali."))),
+        new Paragraph(new Run(new Text("Paragraf identik di analisa."))),
+        new Paragraph(new Run(new Text("Paragraf identik di analisa."))),
+        split,
+        hyperlinkParagraph,
+        fieldAdjacent,
+        fieldResult,
+        coordinates,
+        new Paragraph(new Run(new Text("Kalimat berulang. Kalimat berulang."))),
+        revision,
+        StandardSection());
+    mainPart.Document = new Document(body);
     mainPart.Document.Save();
 }
 
@@ -688,6 +744,10 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         "document-page-map-multipage.docx",
         11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
         "Times New Roman", 24U, [], FixtureKind.DocumentPageMap)
+    ,new(
+        "exact-text-anchor.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.ExactTextAnchor)
 ];
 
 internal sealed record FixtureDefinition(
@@ -710,4 +770,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor }

@@ -165,6 +165,20 @@
       },
       "containsPersonalData": false,
       "generatorVersion": "5.1.0"
+    },
+    {
+      "fixtureId": "exact-text-anchor",
+      "filename": "exact-text-anchor.docx",
+      "description": "Synthetic exact text-coordinate fixture with duplicates, split formatting runs, hyperlink text, fields, controls, Unicode, and revision markup.",
+      "synthetic": true,
+      "intendedProperties": ["duplicate-occurrences", "identical-paragraphs", "split-runs", "bold-italic-boundary", "hyperlink", "field-adjacent", "field-result", "tab", "line-break", "nbsp", "soft-hyphen", "unicode-scalar", "normalization-pair", "revision"],
+      "expectedDocumentProperties": {
+        "paragraphCount": 11,
+        "textAnchorContractVersion": "text-anchor/1.0",
+        "textModelVersion": "wordprocessingml-visible-text/scalar-none/1.0"
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "5.2.0"
     }
   ]
 }

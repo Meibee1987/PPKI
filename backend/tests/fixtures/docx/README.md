@@ -86,3 +86,10 @@ page and section breaks, headings, abstract/body content, mixed runs, a
 hyperlink, a table, a long boundary paragraph, and identical paragraph text on
 different pages. Page assertions use injected structural bookmarks and PDF
 named destinations; duplicate text is never searched or matched.
+
+The S5-T05 addition is `exact-text-anchor`. It contains repeated phrases in
+one and separate paragraphs, identical paragraphs at distinct structural
+locations, a target split over ordinary/bold/italic runs, hyperlink text,
+field-adjacent and field-result text, tabs, line breaks, NBSP, soft hyphen,
+non-BMP and decomposed/composed Unicode, plus revision markup that must fail
+closed. The fixture is inspected read-only and never used for replacement.
