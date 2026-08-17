@@ -6,8 +6,8 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { buildChildEnvironment, getSupabaseEnvironment, localSettings, resolveRuleCatalog } from "./dev-bootstrap.mjs";
 
-const TITLE = "S5-T02 deterministic auto-format E2E final";
-const IDEMPOTENCY_KEY = "98600000-0000-0000-0000-000000000008";
+const TITLE = "S5-T02 processor runtime provider coverage";
+const IDEMPOTENCY_KEY = "98600000-0000-0000-0000-000000000009";
 const DOCX_MIME = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const FIXTURE = path.join(process.cwd(), "backend", "tests", "fixtures", "docx", "generated", "auto-format-provider-mixed.docx");
 const SUPPORTED = new Set(["body.font-times-new-roman-12", "body.line-spacing-single", "body.first-line-indent-1cm",
@@ -124,11 +124,15 @@ async function allFindings(apiUrl, environment, token, auditId) {
   throw new Error("audit findings exceeded bounded traversal");
 }
 function selectProductionFindings(findings) {
-  const select = (validationKey, property, runIndex) => findings.find(value => value.validationKey === validationKey
+  const select = (validationKey, property, runIndex, paragraphIndex) => findings.find(value => value.validationKey === validationKey
     && (value.actual?.property ?? value.actual?.Property) === property
-    && (runIndex === undefined || (value.location?.runIndex ?? value.location?.RunIndex) === runIndex));
-  return [select("body.font-times-new-roman-12", "font.ascii", 1), select("body.font-times-new-roman-12", "fontSize", 1),
-    select("body.line-spacing-single", "lineSpacingValue"), select("body.first-line-indent-1cm", "firstLineIndent")];
+    && (runIndex === undefined || (value.location?.runIndex ?? value.location?.RunIndex) === runIndex)
+    && (paragraphIndex === undefined || (value.location?.paragraphIndex ?? value.location?.ParagraphIndex) === paragraphIndex));
+  return [select("body.font-times-new-roman-12", "font.ascii", 1, 0), select("body.font-times-new-roman-12", "fontSize", 1, 0),
+    select("body.line-spacing-single", "lineSpacingValue", undefined, 0), select("body.first-line-indent-1cm", "firstLineIndent", undefined, 0),
+    select("abstract.skripsi-single-spacing-zero-paragraph-spacing", "spacingBeforeTwips", undefined, 2),
+    select("abstract.skripsi-single-spacing-zero-paragraph-spacing", "spacingAfterTwips", undefined, 2),
+    select("heading.chapter-centered", "alignment", undefined, 3), select("body.justified", "alignment", undefined, 0)];
 }
 async function inspect(file) {
   return JSON.parse(await run("powershell", ["-NoProfile", "-ExecutionPolicy", "Bypass", "-File", "scripts/inspect-auto-format-docx.ps1", "-Path", file], { timeoutMs: 30_000 }));
@@ -170,7 +174,7 @@ async function main() {
     const sourceAudit = await waitAudit(apiUrl, environment, users.adminA.token, sourceAuditId);
     report("real-audit-worker-completed", sourceAudit.status === "Completed" && sourceAudit.persistedFindingCount > 0);
     const findings = await allFindings(apiUrl, environment, users.adminA.token, sourceAuditId); const selected = selectProductionFindings(findings);
-    report("production-validators-created-four-target-findings", selected.every(Boolean) && new Set(selected.map(value => value.id)).size === 4);
+    report("production-validators-created-eight-target-findings", selected.every(Boolean) && new Set(selected.map(value => value.id)).size === 8);
     report("historical-finding-contracts-have-actual-expected-location", selected.every(value => (value.actual?.property ?? value.actual?.Property)
       && Array.isArray(value.expected?.acceptedValues ?? value.expected?.AcceptedValues)
       && (value.expected?.acceptedValues ?? value.expected?.AcceptedValues).length === 1
@@ -178,9 +182,11 @@ async function main() {
     const findingIds = selected.map(value => value.id); const previewRequest = { findingIds };
     const previewResponse = await api(apiUrl, environment, users.adminA.token, `/audits/${sourceAuditId}/fix-plan-preview`, { method: "POST", json: previewRequest }); const preview = previewResponse.body;
     const providerPairs = new Set(preview?.operations?.map(value => `${value.capabilityId}/${value.capabilityVersion}`));
-    report("server-selected-exact-provider-ids-and-versions", previewResponse.status === 200 && preview?.state === "Ready" && providerPairs.size === 3
-      && providerPairs.has("body-font-direct-run/1.0") && providerPairs.has("body-line-spacing-direct-paragraph/1.0") && providerPairs.has("body-first-line-indent-direct-paragraph/1.0"));
-    report("one-plan-has-four-deterministic-operations", preview.operations.length === 4 && preview.selectedFindingCount === 4 && preview.plannedFindingCount === 4);
+    report("server-selected-exact-provider-ids-and-versions", previewResponse.status === 200 && preview?.state === "Ready" && providerPairs.size === 6
+      && providerPairs.has("body-font-direct-run/1.0") && providerPairs.has("body-line-spacing-direct-paragraph/1.0")
+      && providerPairs.has("body-first-line-indent-direct-paragraph/1.0") && providerPairs.has("abstract-spacing-direct-paragraph/1.0")
+      && providerPairs.has("chapter-centered-direct-paragraph/1.0") && providerPairs.has("body-justified-direct-paragraph/1.0"));
+    report("one-plan-has-eight-deterministic-operations", preview.operations.length === 8 && preview.selectedFindingCount === 8 && preview.plannedFindingCount === 8);
     report("client-sends-only-finding-selection-to-preview", Object.keys(previewRequest).join() === "findingIds");
 
     const unsupported = findings.find(value => !SUPPORTED.has(value.validationKey)); report("production-audit-provides-unsupported-negative-finding", Boolean(unsupported));
@@ -191,7 +197,7 @@ async function main() {
     const accepted = await api(apiUrl, environment, users.adminA.token, `/audits/${sourceAuditId}/fix-executions`, { method: "POST", json: executionRequest, idempotencyKey: IDEMPOTENCY_KEY });
     report("production-fix-execution-api-accepted-or-replayed-canonical-intent", [200, 202].includes(accepted.status) && Boolean(accepted.body?.id));
     const execution = await waitExecution(apiUrl, environment, users.adminA.token, sourceAuditId, accepted.body.id);
-    report("real-queued-fix-worker-completed-all-operations", execution.state === "Completed" && execution.plannedOperationCount === 4 && execution.completedOperationCount === 4 && execution.failedOperationCount === 0 && Boolean(execution.resultDocumentVersionId));
+    report("real-queued-fix-worker-completed-all-operations", execution.state === "Completed" && execution.plannedOperationCount === 8 && execution.completedOperationCount === 8 && execution.failedOperationCount === 0 && Boolean(execution.resultDocumentVersionId));
     const replay = await api(apiUrl, environment, users.adminA.token, `/audits/${sourceAuditId}/fix-executions`, { method: "POST", json: executionRequest, idempotencyKey: IDEMPOTENCY_KEY });
     report("exact-intent-replay-returns-canonical-execution", replay.status === 200 && replay.body?.replayed === true && replay.body?.id === execution.id);
 
@@ -205,12 +211,16 @@ async function main() {
     report("full-document-text-fingerprint-is-identical", before.textFingerprint === after.textFingerprint && before.paragraphCount === after.paragraphCount);
     report("target-formatting-properties-changed-exactly", before.firstParagraph.runs[1].fontAscii === "Arial" && after.firstParagraph.runs[1].fontAscii === "Times New Roman"
       && before.firstParagraph.runs[1].size === "22" && after.firstParagraph.runs[1].size === "24" && before.firstParagraph.line === "276" && after.firstParagraph.line === "240"
-      && before.firstParagraph.hanging === "360" && after.firstParagraph.hanging === null && after.firstParagraph.firstLine === "567");
+      && before.firstParagraph.hanging === "360" && after.firstParagraph.hanging === null && after.firstParagraph.firstLine === "567"
+      && before.firstParagraph.alignment === "left" && after.firstParagraph.alignment === "both"
+      && before.abstractParagraph.before === "120" && before.abstractParagraph.after === "80"
+      && after.abstractParagraph.before === "0" && after.abstractParagraph.after === "0"
+      && before.chapterHeading.alignment === "left" && after.chapterHeading.alignment === "center");
     report("untargeted-formatting-and-hyperlink-are-preserved", after.firstParagraph.runs[1].fontHighAnsi === before.firstParagraph.runs[1].fontHighAnsi
       && after.firstParagraph.runs[1].bold === before.firstParagraph.runs[1].bold && after.firstParagraph.runs[1].underline === before.firstParagraph.runs[1].underline
       && after.firstParagraph.before === before.firstParagraph.before && after.firstParagraph.after === before.firstParagraph.after
       && after.firstParagraph.left === before.firstParagraph.left && after.firstParagraph.right === before.firstParagraph.right
-      && after.firstParagraph.alignment === before.firstParagraph.alignment && sameRunFormatting(before, after, 0) && sameRunFormatting(before, after, 2) && before.firstParagraph.runs[2].parent === "hyperlink");
+      && sameRunFormatting(before, after, 0) && sameRunFormatting(before, after, 2) && before.firstParagraph.runs[2].parent === "hyperlink");
 
     const adminBStatus = await api(apiUrl, environment, users.adminB.token, `/audits/${sourceAuditId}/fix-executions/${execution.id}`);
     const studentStatus = await api(apiUrl, environment, users.student.token, `/audits/${sourceAuditId}/fix-executions/${execution.id}`);
@@ -221,6 +231,10 @@ async function main() {
     report("manual-production-reaudit-created-or-replayed", [200, 202].includes(reauditAccepted.status) && Boolean(reauditAccepted.body?.auditId));
     const resultAudit = await waitAudit(apiUrl, environment, users.adminB.token, reauditAccepted.body.auditId);
     report("production-parser-and-audit-worker-accept-result-package", resultAudit.status === "Completed" && resultAudit.documentVersionId === resultVersion.id);
+    const resultFindings = await allFindings(apiUrl, environment, users.adminB.token, resultAudit.id);
+    const remediatedIds = new Set(selected.map(value => `${value.validationKey}|${value.actual?.property ?? value.actual?.Property}|${value.location?.compactLocation ?? value.location?.CompactLocation}`));
+    report("targeted-formatting-findings-do-not-reproduce-after-remediation", !resultFindings.some(value => remediatedIds.has(
+      `${value.validationKey}|${value.actual?.property ?? value.actual?.Property}|${value.location?.compactLocation ?? value.location?.CompactLocation}`)));
     const comparison = await api(apiUrl, environment, users.adminB.token, `/fix-executions/${execution.id}/comparison`);
     report("manual-reaudit-comparison-read-path-is-compatible", comparison.status === 200 && comparison.body?.comparisonState === "Ready");
 
@@ -233,9 +247,9 @@ async function main() {
       (select count(*) from public.audit_jobs where source_fix_execution_id='${execution.id}'), (select planned_operation_count from public.fix_execution_jobs where id='${execution.id}'),
       (select jsonb_array_length(selected_finding_ids::jsonb) from public.fix_execution_jobs where id='${execution.id}'),
       (select case when approved_plan_snapshot::jsonb #>> '{preview,planHash}'='${preview.planHash}' then 1 else 0 end from public.fix_execution_jobs where id='${execution.id}'))`);
-    report("source-immutable-lineage-and-approved-plan-are-persisted", sourceShaAfter === sourceVersion.sha256 && persisted === "1|2|1|1|1|1|1|4|4|1");
+    report("source-immutable-lineage-and-approved-plan-are-persisted", sourceShaAfter === sourceVersion.sha256 && persisted === "1|2|1|1|1|1|1|8|8|1");
     report("negative-preview-created-no-partial-result", detail.body.versions.length === 2);
-    console.log("cardinality documents=1 sourceVersions=1 sourceAudits=1 selectedFindings=4 fixPlans=1 operations=4 executions=1 resultVersions=1 reAudits=1");
+    console.log("cardinality documents=1 sourceVersions=1 sourceAudits=1 selectedFindings=8 fixPlans=1 operations=8 executions=1 resultVersions=1 reAudits=1");
     console.log("auto-format-providers-production-e2e-completed: PASS");
   } catch (error) {
     console.log(`BLOCKER: ${error instanceof Error ? error.message : "local runtime unavailable"}`);

@@ -49,36 +49,28 @@ try {
     }
     $textFingerprint = Sha256 ([System.Text.Encoding]::UTF8.GetBytes($textBuilder.ToString()))
 
-    $first = $paragraphs[0]
-    $properties = $first.Element($w + "pPr")
-    $spacing = if ($null -eq $properties) { $null } else { $properties.Element($w + "spacing") }
-    $indent = if ($null -eq $properties) { $null } else { $properties.Element($w + "ind") }
-    $justification = if ($null -eq $properties) { $null } else { $properties.Element($w + "jc") }
-    $runs = @()
-    foreach ($run in @($first.Descendants($w + "r"))) {
-        $runProperties = $run.Element($w + "rPr")
-        $fonts = if ($null -eq $runProperties) { $null } else { $runProperties.Element($w + "rFonts") }
-        $size = if ($null -eq $runProperties) { $null } else { $runProperties.Element($w + "sz") }
-        $underline = if ($null -eq $runProperties) { $null } else { $runProperties.Element($w + "u") }
-        $runs += [ordered]@{
-            parent = $run.Parent.Name.LocalName
-            fontAscii = Attribute-Value $fonts $w "ascii"
-            fontHighAnsi = Attribute-Value $fonts $w "hAnsi"
-            size = Attribute-Value $size $w "val"
-            bold = $null -ne $runProperties -and $null -ne $runProperties.Element($w + "b")
-            italic = $null -ne $runProperties -and $null -ne $runProperties.Element($w + "i")
-            underline = Attribute-Value $underline $w "val"
+    function Inspect-Paragraph($Paragraph) {
+        $properties = $Paragraph.Element($w + "pPr")
+        $spacing = if ($null -eq $properties) { $null } else { $properties.Element($w + "spacing") }
+        $indent = if ($null -eq $properties) { $null } else { $properties.Element($w + "ind") }
+        $justification = if ($null -eq $properties) { $null } else { $properties.Element($w + "jc") }
+        $runs = @()
+        foreach ($run in @($Paragraph.Descendants($w + "r"))) {
+            $runProperties = $run.Element($w + "rPr")
+            $fonts = if ($null -eq $runProperties) { $null } else { $runProperties.Element($w + "rFonts") }
+            $size = if ($null -eq $runProperties) { $null } else { $runProperties.Element($w + "sz") }
+            $underline = if ($null -eq $runProperties) { $null } else { $runProperties.Element($w + "u") }
+            $runs += [ordered]@{
+                parent = $run.Parent.Name.LocalName
+                fontAscii = Attribute-Value $fonts $w "ascii"
+                fontHighAnsi = Attribute-Value $fonts $w "hAnsi"
+                size = Attribute-Value $size $w "val"
+                bold = $null -ne $runProperties -and $null -ne $runProperties.Element($w + "b")
+                italic = $null -ne $runProperties -and $null -ne $runProperties.Element($w + "i")
+                underline = Attribute-Value $underline $w "val"
+            }
         }
-    }
-
-    [ordered]@{
-        packageValid = $true
-        entryCount = @($archive.Entries).Count
-        entryNamesHash = Sha256 ([System.Text.Encoding]::UTF8.GetBytes((@($archive.Entries | ForEach-Object FullName | Sort-Object) -join "`n")))
-        relationshipsHash = Sha256 $relationshipsBytes
-        textFingerprint = $textFingerprint
-        paragraphCount = $paragraphs.Count
-        firstParagraph = [ordered]@{
+        return [ordered]@{
             line = Attribute-Value $spacing $w "line"
             lineRule = Attribute-Value $spacing $w "lineRule"
             before = Attribute-Value $spacing $w "before"
@@ -90,6 +82,18 @@ try {
             alignment = Attribute-Value $justification $w "val"
             runs = $runs
         }
+    }
+
+    [ordered]@{
+        packageValid = $true
+        entryCount = @($archive.Entries).Count
+        entryNamesHash = Sha256 ([System.Text.Encoding]::UTF8.GetBytes((@($archive.Entries | ForEach-Object FullName | Sort-Object) -join "`n")))
+        relationshipsHash = Sha256 $relationshipsBytes
+        textFingerprint = $textFingerprint
+        paragraphCount = $paragraphs.Count
+        firstParagraph = Inspect-Paragraph $paragraphs[0]
+        abstractParagraph = Inspect-Paragraph $paragraphs[2]
+        chapterHeading = Inspect-Paragraph $paragraphs[3]
     } | ConvertTo-Json -Depth 8 -Compress
 }
 finally {

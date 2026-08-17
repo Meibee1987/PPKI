@@ -206,7 +206,7 @@ static void CreateAutoFormatProviderDocument(MainDocumentPart mainPart)
 {
     AddStyles(mainPart);
     var hyperlink = mainPart.AddHyperlinkRelationship(new Uri("https://example.invalid/synthetic-auto-format"), true);
-    var paragraph = new Paragraph(
+    var bodyParagraph = new Paragraph(
         new ParagraphProperties(
             new Justification { Val = JustificationValues.Left },
             new SpacingBetweenLines { Before = "120", After = "80", Line = "276", LineRule = LineSpacingRuleValues.Auto },
@@ -218,7 +218,18 @@ static void CreateAutoFormatProviderDocument(MainDocumentPart mainPart)
         new Run(new FieldChar { FieldCharType = FieldCharValues.Begin }),
         new Run(new FieldCode(" PAGE ") { Space = SpaceProcessingModeValues.Preserve }),
         new Run(new FieldChar { FieldCharType = FieldCharValues.End }));
-    mainPart.Document = new Document(new Body(paragraph, StandardSection()));
+    var abstractParagraph = new Paragraph(
+        new ParagraphProperties(
+            new SpacingBetweenLines { Before = "120", After = "80", Line = "276", LineRule = LineSpacingRuleValues.Auto }),
+        new Run(new Text("Isi abstrak sintetis untuk pengujian format otomatis.")));
+    var chapterHeading = StyledParagraph("BAB I PENDAHULUAN", "Heading1");
+    chapterHeading.ParagraphProperties!.Append(new Justification { Val = JustificationValues.Left });
+    mainPart.Document = new Document(new Body(
+        bodyParagraph,
+        StyledParagraph("ABSTRAK", "Heading1"),
+        abstractParagraph,
+        chapterHeading,
+        StandardSection()));
     mainPart.Document.Save();
 }
 

@@ -87,9 +87,11 @@ public sealed class AutoFormatProviderTests
         var source = await parser.ParseAsync(workspace.WorkingPath, CancellationToken.None);
         var line = Validate(new LineSpacingValidator(), Snapshot("body.line-spacing-single", "PPKI-LAY-017",
             "{\"value\":240,\"unit\":\"twip\",\"rule\":\"auto\"}"), source)
-            .Single(value => value.Finding.Actual.Property == "lineSpacingValue");
+            .Single(value => value.Finding.Location.ParagraphIndex == 0
+                && value.Finding.Actual.Property == "lineSpacingValue");
         var indent = Validate(new FirstLineIndentValidator(), Snapshot("body.first-line-indent-1cm", "PPKI-LAY-018",
-            "{\"value\":1,\"unit\":\"cm\"}"), source).Single();
+            "{\"value\":1,\"unit\":\"cm\"}"), source)
+            .Single(value => value.Finding.Location.ParagraphIndex == 0);
 
         await Apply(workspace.WorkingPath, source, line, new BodyLineSpacingFixProvider());
         await Apply(workspace.WorkingPath, source, indent, new BodyFirstLineIndentFixProvider());
