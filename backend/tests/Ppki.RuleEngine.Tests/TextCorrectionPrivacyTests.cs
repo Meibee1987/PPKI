@@ -181,7 +181,7 @@ public sealed class TextCorrectionPrivacyTests
         var anchor = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.DocxEngine", "ExactTextAnchors.cs"));
         var parser = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.DocxEngine", "OpenXmlDocxParser.cs"));
 
-        Assert.DoesNotContain("TextCorrection", domain, StringComparison.Ordinal);
+        Assert.Contains("TextCorrectionProposal", domain, StringComparison.Ordinal);
         Assert.DoesNotContain("SourceExcerpt", domain, StringComparison.Ordinal);
         Assert.DoesNotContain("SuggestedReplacement", review, StringComparison.Ordinal);
         Assert.DoesNotContain("AdminReplacement", review, StringComparison.Ordinal);
@@ -201,6 +201,11 @@ public sealed class TextCorrectionPrivacyTests
         var persistedFindingProperties = typeof(AuditFinding).GetProperties().Select(value => value.Name).ToArray();
         Assert.DoesNotContain(persistedFindingProperties, value => value.Contains("SourceText", StringComparison.Ordinal)
             || value.Contains("Excerpt", StringComparison.Ordinal) || value.Contains("Replacement", StringComparison.Ordinal));
+        var proposalProperties = typeof(TextCorrectionProposal).GetProperties().Select(value => value.Name).ToArray();
+        Assert.DoesNotContain(proposalProperties, value => value.Contains("SourceText", StringComparison.Ordinal)
+            || value.Contains("Excerpt", StringComparison.Ordinal)
+            || value.Contains("ParagraphText", StringComparison.Ordinal)
+            || value.Contains("Context", StringComparison.Ordinal));
         Assert.All(new[]
         {
             TextCorrectionPrivacyContract.ReplacementInvalidCode,
@@ -215,7 +220,7 @@ public sealed class TextCorrectionPrivacyTests
     public void Transient_content_types_redact_automatic_string_rendering()
     {
         var context = new TextCorrectionContext(AuditId, FindingId, VersionOne, new string('a', 64),
-            "di analisa", "Data di analisa.", false, false, 23);
+            "di analisa", "Data di analisa.", false, false, 5, 23);
         Assert.DoesNotContain("di analisa", context.ToString(), StringComparison.Ordinal);
         Assert.Contains("REDACTED", context.ToString(), StringComparison.Ordinal);
     }

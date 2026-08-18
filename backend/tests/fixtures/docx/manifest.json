@@ -171,14 +171,28 @@
       "filename": "exact-text-anchor.docx",
       "description": "Synthetic exact text-coordinate fixture with duplicates, split formatting runs, hyperlink text, fields, controls, Unicode, and revision markup.",
       "synthetic": true,
-      "intendedProperties": ["duplicate-occurrences", "identical-paragraphs", "split-runs", "bold-italic-boundary", "hyperlink", "field-adjacent", "field-result", "tab", "line-break", "nbsp", "soft-hyphen", "unicode-scalar", "normalization-pair", "revision"],
+      "intendedProperties": ["duplicate-occurrences", "identical-paragraphs", "split-runs", "equivalent-split-runs", "exact-token-boundaries", "no-fuzzy-match", "bold-italic-boundary", "hyperlink", "field-adjacent", "field-result", "tab", "line-break", "nbsp", "soft-hyphen", "unicode-scalar", "normalization-pair", "revision"],
       "expectedDocumentProperties": {
-        "paragraphCount": 11,
+        "paragraphCount": 13,
         "textAnchorContractVersion": "text-anchor/1.0",
         "textModelVersion": "wordprocessingml-visible-text/scalar-none/1.0"
       },
       "containsPersonalData": false,
       "generatorVersion": "5.2.0"
+    },
+    {
+      "fixtureId": "text-correction-batch",
+      "filename": "text-correction-batch.docx",
+      "description": "Synthetic multi-page production fixture combining deterministic formatting remediation with duplicate, split-run, and hyperlink language correction targets.",
+      "synthetic": true,
+      "intendedProperties": ["auto-format-issues", "deterministic-corrections", "duplicate-occurrences", "equivalent-split-runs", "hyperlink", "multiple-pages"],
+      "expectedDocumentProperties": {
+        "minimumPageCount": 3,
+        "textCorrectionDetectorVersion": "1.0",
+        "textReplacementProviderVersion": "1.0"
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "5.3.0"
     }
   ]
 }

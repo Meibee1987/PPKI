@@ -72,6 +72,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
         CreateExactTextAnchorDocument(mainPart);
         return;
     }
+    if (fixture.Kind == FixtureKind.TextCorrectionBatch)
+    {
+        CreateTextCorrectionBatchDocument(mainPart);
+        return;
+    }
     AddStyles(mainPart);
 
     if (fixture.Kind == FixtureKind.TableField)
@@ -280,6 +285,11 @@ static void CreateExactTextAnchorDocument(MainDocumentPart mainPart)
         new Run(new Text("Awal ")),
         new InsertedRun(new Run(new Text("di analisa"))) { Id = "1", Author = "synthetic", Date = new DateTimeValue(DateTime.UnixEpoch) },
         new Run(new Text(" akhir")));
+    var equivalentSplit = new Paragraph(
+        new Run(new Text("Split aman di ")),
+        new Run(new Text("analisa selesai.")));
+    var tokenBoundaries = new Paragraph(new Run(new Text(
+        "aktifitas aktifitasx xaktifitas resiko resikoo")));
     var body = new Body(
         new Paragraph(new Run(new Text(duplicate))),
         new Paragraph(new Run(new Text("Paragraf lain memuat di analisa sekali."))),
@@ -292,10 +302,47 @@ static void CreateExactTextAnchorDocument(MainDocumentPart mainPart)
         coordinates,
         new Paragraph(new Run(new Text("Kalimat berulang. Kalimat berulang."))),
         revision,
+        equivalentSplit,
+        tokenBoundaries,
         StandardSection());
     mainPart.Document = new Document(body);
     mainPart.Document.Save();
 }
+
+static void CreateTextCorrectionBatchDocument(MainDocumentPart mainPart)
+{
+    CreateAutoFormatProviderDocument(mainPart);
+    var hyperlink = mainPart.AddHyperlinkRelationship(new Uri("https://example.invalid/synthetic-correction"), true);
+    var body = mainPart.Document!.Body!;
+    var section = body.Elements<SectionProperties>().Single();
+    body.InsertBefore(CorrectionParagraph(CorrectionRun(new Break { Type = BreakValues.Page })), section);
+    body.InsertBefore(CorrectionParagraph(CorrectionRun(new Text(
+        "Kandidat pertama di analisa dan duplikat tidak dipilih di analisa."))), section);
+    body.InsertBefore(CorrectionParagraph(
+        CorrectionRun(new Text("Kandidat split di ")),
+        CorrectionRun(new Text("analisa untuk keputusan manual."))), section);
+    body.InsertBefore(CorrectionParagraph(
+        CorrectionRun(new Text("Kandidat tautan ")),
+        new Hyperlink(CorrectionRun(new Text("di analisa"))) { Id = hyperlink.Id },
+        CorrectionRun(new Text(" untuk diabaikan."))), section);
+    body.InsertBefore(CorrectionParagraph(CorrectionRun(new Break { Type = BreakValues.Page })), section);
+    body.InsertBefore(CorrectionParagraph(CorrectionRun(new Text("Halaman akhir sintetis tanpa koreksi."))), section);
+    mainPart.Document.Save();
+}
+
+static Paragraph CorrectionParagraph(params OpenXmlElement[] content)
+{
+    var paragraph = new Paragraph(new ParagraphProperties(
+        new Justification { Val = JustificationValues.Both },
+        new SpacingBetweenLines { Before = "0", After = "0", Line = "240", LineRule = LineSpacingRuleValues.Auto },
+        new Indentation { FirstLine = "567" }));
+    paragraph.Append(content);
+    return paragraph;
+}
+
+static Run CorrectionRun(OpenXmlElement content) => new(
+    new RunProperties(new RunFonts { Ascii = "Times New Roman", HighAnsi = "Times New Roman" },
+        new FontSize { Val = "24" }), content);
 
 static void CreateDocumentPageMapDocument(MainDocumentPart mainPart)
 {
@@ -748,6 +795,10 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         "exact-text-anchor.docx",
         11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
         "Times New Roman", 24U, [], FixtureKind.ExactTextAnchor)
+    ,new(
+        "text-correction-batch.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.TextCorrectionBatch)
 ];
 
 internal sealed record FixtureDefinition(
@@ -770,4 +821,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor, TextCorrectionBatch }

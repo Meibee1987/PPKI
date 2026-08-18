@@ -1,6 +1,8 @@
 using System.Globalization;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
+using System.Text.Json.Serialization;
 using DocumentFormat.OpenXml;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -52,12 +54,14 @@ public sealed record ExactTextTargetResult(
 public sealed class ExactTextTransientExcerpt
 {
     internal ExactTextTransientExcerpt(ExactTextTargetStatus status, string? safeReason,
-        string? targetText, string? context, bool prefixTruncated, bool suffixTruncated)
+        string? targetText, string? context, int? targetOffsetInContext,
+        bool prefixTruncated, bool suffixTruncated)
     {
         Status = status;
         SafeReason = safeReason;
         TargetText = targetText;
         Context = context;
+        TargetOffsetInContext = targetOffsetInContext;
         PrefixTruncated = prefixTruncated;
         SuffixTruncated = suffixTruncated;
     }
@@ -66,6 +70,7 @@ public sealed class ExactTextTransientExcerpt
     public string? SafeReason { get; }
     public string? TargetText { get; }
     public string? Context { get; }
+    public int? TargetOffsetInContext { get; }
     public bool PrefixTruncated { get; }
     public bool SuffixTruncated { get; }
 
@@ -178,14 +183,14 @@ public sealed class ExactTextAnchorMaterializer
         if (maximumContextScalars < 0) throw new ArgumentOutOfRangeException(nameof(maximumContextScalars));
         var resolved = await ResolveAsync(sourceDocxPath, currentDocumentVersionId, anchor, cancellationToken);
         if (resolved.Status != ExactTextTargetStatus.Exact)
-            return new(resolved.Status, resolved.SafeReason, null, null, false, false);
+            return new(resolved.Status, resolved.SafeReason, null, null, null, false, false);
         if (anchor.Length > maximumTargetScalars)
-            return new(ExactTextTargetStatus.Unsupported, "target-excerpt-too-large", null, null, false, false);
+            return new(ExactTextTargetStatus.Unsupported, "target-excerpt-too-large", null, null, null, false, false);
 
         using var document = WordprocessingDocument.Open(sourceDocxPath, false, new OpenSettings { AutoSave = false });
         var paragraph = LocateParagraph(document, anchor.ParagraphLocation.ParagraphIndex ?? -1);
         if (paragraph is null)
-            return new(ExactTextTargetStatus.Stale, "paragraph-location-missing", null, null, false, false);
+            return new(ExactTextTargetStatus.Stale, "paragraph-location-missing", null, null, null, false, false);
         var model = BuildParagraphModel(paragraph.Source, paragraph.Location);
         var prefixBudget = maximumContextScalars / 2;
         var suffixBudget = maximumContextScalars - prefixBudget;
@@ -197,8 +202,8 @@ public sealed class ExactTextAnchorMaterializer
         var context = ScalarSlice(model.Text, anchor.Start - prefixLength,
             prefixLength + anchor.Length + suffixLength);
         if (!string.Equals(anchor.SourceSha256, ComputeSha(sourceDocxPath), StringComparison.Ordinal))
-            return new(ExactTextTargetStatus.Stale, "source-changed-during-inspection", null, null, false, false);
-        return new(ExactTextTargetStatus.Exact, null, target, context,
+            return new(ExactTextTargetStatus.Stale, "source-changed-during-inspection", null, null, null, false, false);
+        return new(ExactTextTargetStatus.Exact, null, target, context, prefixLength,
             anchor.Start > prefixLength, suffixAvailable > suffixLength);
     }
 
@@ -400,4 +405,44 @@ public static class ExactTextAnchorContract
     }
 
     private static string Number(int? value) => value?.ToString(CultureInfo.InvariantCulture) ?? "-";
+}
+
+/// <summary>Typed persistence codec. The payload contains coordinates and fingerprints only.</summary>
+public static class ExactTextAnchorJson
+{
+    private static readonly JsonSerializerOptions Options = new()
+    {
+        PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
+        DefaultIgnoreCondition = JsonIgnoreCondition.Never
+    };
+
+    public static string Serialize(ExactTextAnchor anchor)
+    {
+        ArgumentNullException.ThrowIfNull(anchor);
+        Validate(anchor);
+        return JsonSerializer.Serialize(anchor, Options);
+    }
+
+    public static ExactTextAnchor Deserialize(string json)
+    {
+        var anchor = JsonSerializer.Deserialize<ExactTextAnchor>(json, Options)
+            ?? throw new InvalidDataException("text-anchor-evidence-invalid");
+        Validate(anchor);
+        return anchor;
+    }
+
+    private static void Validate(ExactTextAnchor anchor)
+    {
+        if (anchor.ContractVersion != ExactTextAnchorContract.ContractVersion
+            || anchor.TextModelVersion != ExactTextAnchorContract.TextModelVersion
+            || anchor.DocumentVersionId == Guid.Empty
+            || anchor.Start < 0 || anchor.Length <= 0
+            || anchor.SourceSha256.Length != 64
+            || anchor.Spans.Count == 0
+            || anchor.Spans.Any(span => span.RunIndex < 0 || span.NodeIndex < 0
+                || span.CanonicalStart < 0 || span.CanonicalLength <= 0
+                || span.SourceStart < 0 || span.SourceLength <= 0
+                || !string.Equals(span.NodeKind, "text", StringComparison.Ordinal)))
+            throw new InvalidDataException("text-anchor-evidence-invalid");
+    }
 }

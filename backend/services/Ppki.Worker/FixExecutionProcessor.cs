@@ -1,4 +1,5 @@
 using System.Security.Cryptography;
+using System.Text;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Options;
 using Npgsql;
@@ -18,6 +19,9 @@ public sealed class FixExecutionProcessor(
     IOptions<SupabaseOptions> supabase,
     IDocxParser parser,
     FixApplyCapabilityRegistry capabilities,
+    TextCorrectionExecutionResolver correctionResolver,
+    ExactTextReplacementProvider correctionProvider,
+    ExactTextAnchorMaterializer anchorMaterializer,
     IRemediationFaultInjector faults,
     ILogger<FixExecutionProcessor> logger)
 {
@@ -30,11 +34,16 @@ public sealed class FixExecutionProcessor(
             ?? throw new FixExecutionException(FixFailureCategory.TransientInfrastructure, "worker-lease-lost");
         if (source.CurrentVersionNo != source.SourceVersionNo)
             throw new FixExecutionException(FixFailureCategory.Conflict, "fix-source-version-superseded");
-        ApprovedFixExecutionPlan approved;
-        try { approved = ApprovedFixExecutionPlanSerializer.Deserialize(source.ApprovedPlanSnapshotJson); }
-        catch (Exception exception) when (exception is System.Text.Json.JsonException or FixExecutionException)
-        { throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-invalid", exception); }
-        ValidateApprovedSnapshot(source, approved);
+        var correctionMode = string.Equals(source.PlannerVersion,
+            ApprovedTextCorrectionExecutionPlanSerializer.PlannerVersion, StringComparison.Ordinal);
+        ApprovedFixExecutionPlan? approved = null;
+        if (!correctionMode)
+        {
+            try { approved = ApprovedFixExecutionPlanSerializer.Deserialize(source.ApprovedPlanSnapshotJson); }
+            catch (Exception exception) when (exception is System.Text.Json.JsonException or FixExecutionException)
+            { throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-invalid", exception); }
+            ValidateApprovedSnapshot(source, approved);
+        }
 
         string? materialized = null;
         string? workspace = null;
@@ -72,11 +81,22 @@ public sealed class FixExecutionProcessor(
                 throw new FixExecutionException("fix-execution-parser-schema-mismatch");
 
             var changed = 0;
+            IReadOnlyList<ExactTextReplacementOperation>? correctionOperations = null;
             await faults.CheckpointAsync(RemediationCheckpoint.BeforeApply, claim.ExecutionId,
                 claim.AttemptNumber, cancellationToken);
-            using (var package = WordprocessingDocument.Open(working, true, new OpenSettings { AutoSave = false }))
+            if (correctionMode)
             {
-                foreach (var operation in approved.Preview.Operations.OrderBy(value => value.Ordinal))
+                correctionOperations = await correctionResolver.ResolveAsync(claim.ExecutionId,
+                    source.SourceVersionId, source.SourceSha256, source.PlanHash,
+                    source.ApprovedPlanSnapshotJson, cancellationToken);
+                var result = await correctionProvider.ApplyAsync(working, source.SourceVersionId,
+                    correctionOperations, anchorMaterializer, cancellationToken);
+                changed = result.ChangedCount;
+            }
+            else
+            {
+                using var package = WordprocessingDocument.Open(working, true, new OpenSettings { AutoSave = false });
+                foreach (var operation in approved!.Preview.Operations.OrderBy(value => value.Ordinal))
                 {
                     cancellationToken.ThrowIfCancellationRequested();
                     if (!capabilities.TryGet(operation, out var provider))
@@ -119,7 +139,10 @@ public sealed class FixExecutionProcessor(
             {
                 DocxPackageIntegrity.ValidateMutation(packageSnapshot, working);
                 var after = await parser.ParseAsync(working, cancellationToken);
-                ValidatePostconditions(before, after, approved.Preview.Operations);
+                if (correctionMode)
+                    ValidateCorrectionPostconditions(before, after, correctionOperations!);
+                else
+                    ValidatePostconditions(before, after, approved!.Preview.Operations);
             }
             catch (FixExecutionException) { throw; }
             catch (Exception exception) when (exception is not OperationCanceledException)
@@ -129,7 +152,7 @@ public sealed class FixExecutionProcessor(
             var outputSha = await Sha256Async(working, cancellationToken);
             if (changed == 0 || string.Equals(outputSha, source.SourceSha256, StringComparison.Ordinal))
             {
-                try { await CompleteNoChangeAsync(claim, source, approved.Preview.Operations.Count, cancellationToken); }
+                try { await CompleteNoChangeAsync(claim, source, source.PlannedOperationCount, cancellationToken); }
                 catch (Exception exception) when (DatabaseTransient(exception))
                 { throw new FixExecutionException(FixFailureCategory.TransientInfrastructure, "database-transient", exception); }
                 return;
@@ -175,7 +198,7 @@ public sealed class FixExecutionProcessor(
             {
                 await faults.CheckpointAsync(RemediationCheckpoint.BeforeDatabaseFinalization, claim.ExecutionId,
                     claim.AttemptNumber, cancellationToken);
-                await CompleteWithVersion(claim, source, uploaded, resultId, approved.Preview.Operations.Count,
+                await CompleteWithVersion(claim, source, uploaded, resultId, source.PlannedOperationCount,
                     ownsUploadedObject, cancellationToken);
                 // Database commit made this object canonical; a lost response must not delete it.
                 uploaded = null;
@@ -386,6 +409,42 @@ public sealed class FixExecutionProcessor(
                 throw new FixExecutionException("fix-operation-postcondition-failed");
         }
     }
+
+    private static void ValidateCorrectionPostconditions(ParsedDocument before, ParsedDocument after,
+        IReadOnlyList<ExactTextReplacementOperation> operations)
+    {
+        if (after.ParserSchemaVersion != OpenXmlDocxParser.SchemaVersion
+            || before.PackageType != after.PackageType
+            || before.Counts.ExternalRelationships != after.Counts.ExternalRelationships
+            || before.Paragraphs.Count != after.Paragraphs.Count)
+            throw new FixExecutionException("correction-document-integrity-failed");
+        var byParagraph = operations.GroupBy(value => value.Anchor.ParagraphLocation.ParagraphIndex
+                ?? throw new FixExecutionException("correction-paragraph-location-invalid"))
+            .ToDictionary(value => value.Key, value => value.OrderByDescending(item => item.Anchor.Start).ToArray());
+        for (var index = 0; index < before.Paragraphs.Count; index++)
+        {
+            var expected = before.Paragraphs[index].Text;
+            if (byParagraph.TryGetValue(before.Paragraphs[index].Index, out var replacements))
+            {
+                foreach (var replacement in replacements)
+                {
+                    var total = expected.EnumerateRunes().Count();
+                    if (replacement.Anchor.Start < 0 || replacement.Anchor.Length <= 0
+                        || replacement.Anchor.Start + replacement.Anchor.Length > total)
+                        throw new FixExecutionException("correction-operation-postcondition-failed");
+                    expected = ScalarSlice(expected, 0, replacement.Anchor.Start)
+                        + replacement.Replacement.Value
+                        + ScalarSlice(expected, replacement.Anchor.Start + replacement.Anchor.Length,
+                            total - replacement.Anchor.Start - replacement.Anchor.Length);
+                }
+            }
+            if (!string.Equals(expected, after.Paragraphs[index].Text, StringComparison.Ordinal))
+                throw new FixExecutionException("correction-operation-postcondition-failed");
+        }
+    }
+
+    private static string ScalarSlice(string value, int start, int length) => string.Concat(
+        value.EnumerateRunes().Skip(start).Take(length).Select(item => item.ToString()));
 
     private static bool OperationPostcondition(ParsedParagraph paragraph, FixPlanOperation operation)
     {

@@ -42,6 +42,7 @@
     "test:document-render-page-map-local": "node scripts/document-render-page-map-smoke-test.mjs",
     "test:exact-text-anchor-local": "node scripts/exact-text-anchor-smoke-test.mjs",
     "test:text-correction-privacy": "dotnet test backend/tests/Ppki.RuleEngine.Tests/Ppki.RuleEngine.Tests.csproj --no-restore --filter FullyQualifiedName~TextCorrectionPrivacyTests",
+    "test:text-correction-batch-local": "node scripts/text-correction-batch-smoke-test.mjs",
     "test:findings-ui": "npm run --prefix apps/web test:findings-ui",
     "test:remediation-ui": "npm run --prefix apps/web test:remediation-ui",
     "test:remediation-ui-local": "node scripts/remediation-ui-smoke-test.mjs",

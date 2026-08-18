@@ -165,7 +165,7 @@ public sealed class TextCorrectionContext
 {
     public TextCorrectionContext(Guid auditId, Guid findingId, Guid documentVersionId,
         string anchorHash, string targetText, string context, bool prefixTruncated,
-        bool suffixTruncated, int? pageNumber)
+        bool suffixTruncated, int targetOffsetInContext, int? pageNumber)
     {
         AuditId = auditId;
         FindingId = findingId;
@@ -175,6 +175,7 @@ public sealed class TextCorrectionContext
         Context = context;
         PrefixTruncated = prefixTruncated;
         SuffixTruncated = suffixTruncated;
+        TargetOffsetInContext = targetOffsetInContext;
         PageNumber = pageNumber;
     }
 
@@ -186,6 +187,7 @@ public sealed class TextCorrectionContext
     public string Context { get; }
     public bool PrefixTruncated { get; }
     public bool SuffixTruncated { get; }
+    public int TargetOffsetInContext { get; }
     public int? PageNumber { get; }
 
     public override string ToString() => $"TextCorrectionContext(FindingId={FindingId:D},Content=[REDACTED])";
@@ -202,10 +204,21 @@ public interface ITextCorrectionContextMaterializationService
         TextCorrectionContextRequest request, CancellationToken cancellationToken);
 }
 
-public sealed class TextCorrectionContextMaterializationService(
-    IInternalAdminAuthorizationService authorization,
-    ExactTextAnchorMaterializer materializer) : ITextCorrectionContextMaterializationService
+public sealed class TextCorrectionContextMaterializationService : ITextCorrectionContextMaterializationService
 {
+    private readonly IInternalAdminAuthorizationService authorization;
+    private readonly ExactTextAnchorMaterializer materializer;
+
+    public TextCorrectionContextMaterializationService(IInternalAdminAuthorizationService authorization)
+        : this(authorization, new ExactTextAnchorMaterializer()) { }
+
+    public TextCorrectionContextMaterializationService(IInternalAdminAuthorizationService authorization,
+        ExactTextAnchorMaterializer materializer)
+    {
+        this.authorization = authorization;
+        this.materializer = materializer;
+    }
+
     public async Task<TextCorrectionContextResult> MaterializeAsync(Guid actorUserId, string sourceDocxPath,
         TextCorrectionContextRequest request, CancellationToken cancellationToken)
     {
@@ -230,6 +243,7 @@ public sealed class TextCorrectionContextMaterializationService(
         return new(ExactTextTargetStatus.Exact, null, new TextCorrectionContext(
             request.AuditId, request.FindingId, request.DocumentVersionId, request.Anchor.AnchorHash,
             excerpt.TargetText, excerpt.Context, excerpt.PrefixTruncated, excerpt.SuffixTruncated,
+            excerpt.TargetOffsetInContext ?? 0,
             request.PageNumber));
     }
 }

@@ -40,6 +40,8 @@ builder.Services.AddScoped<IReauditService, ReauditService>();
 builder.Services.AddScoped<IAuditComparisonService, AuditComparisonService>();
 builder.Services.AddScoped<IFindingResolutionService, FindingResolutionService>();
 builder.Services.AddScoped<IInternalAdminAuthorizationService, InternalAdminAuthorizationService>();
+builder.Services.AddScoped<ITextCorrectionService, TextCorrectionService>();
+builder.Services.AddScoped<ITextCorrectionContextMaterializationService, TextCorrectionContextMaterializationService>();
 builder.Services.AddScoped<InternalAdminEndpointFilter>();
 builder.Services.AddScoped<IFindingReviewService, FindingReviewService>();
 builder.Services.AddSingleton<IResolvedRuleSetHasher, ResolvedRuleSetHasher>();
@@ -60,6 +62,8 @@ builder.Services.AddAuthentication(SupabaseAuthenticationDefaults.Scheme)
     .AddScheme<AuthenticationSchemeOptions, SupabaseAuthenticationHandler>(SupabaseAuthenticationDefaults.Scheme, _ => { });
 builder.Services.AddAuthorization();
 builder.Services.AddOpenApi();
+builder.Services.ConfigureHttpJsonOptions(options =>
+    options.SerializerOptions.Converters.Add(new System.Text.Json.Serialization.JsonStringEnumConverter()));
 builder.Services.AddCors(options => options.AddDefaultPolicy(policy => {
     var origins = builder.Configuration.GetSection("Cors:AllowedOrigins").GetChildren().Select(x=>x.Value).Where(x=>!string.IsNullOrWhiteSpace(x)).Cast<string>().ToArray();
     policy.WithOrigins(origins.Length == 0 ? ["http://localhost:3000"] : origins).AllowAnyHeader().AllowAnyMethod();
@@ -157,7 +161,7 @@ api.MapGet("/documents/{id:guid}", async (Guid id, ClaimsPrincipal user, PpkiDbC
     _=UserId(user); var doc=await db.Documents.AsNoTracking().Where(x=>x.Id==id).Include(x=>x.DocumentType).Include(x=>x.Versions).ThenInclude(x=>x.Audits).SingleOrDefaultAsync(ct);
     if(doc is null) return Results.NotFound();
     return Results.Ok(new{doc.Id,doc.Title,DocumentType=doc.DocumentType!.Name,doc.CurrentVersionNo,doc.CreatedAt,doc.UpdatedAt,
-        Versions=doc.Versions.OrderByDescending(v=>v.VersionNo).Select(v=>new{v.Id,v.VersionNo,v.OriginalFilename,v.SizeBytes,v.Sha256,v.CreatedAt,Audits=v.Audits.OrderByDescending(a=>a.CreatedAt).Select(a=>new{a.Id,Status=a.Status.ToString(),a.Score,a.ErrorCount,a.WarningCount,a.InfoCount,a.CreatedAt})})});
+        Versions=doc.Versions.OrderByDescending(v=>v.VersionNo).Select(v=>new{v.Id,v.VersionNo,v.ParentVersionId,v.OriginalFilename,v.SizeBytes,v.Sha256,v.CreatedAt,Audits=v.Audits.OrderByDescending(a=>a.CreatedAt).Select(a=>new{a.Id,Status=a.Status.ToString(),a.Score,a.ErrorCount,a.WarningCount,a.InfoCount,a.CreatedAt})})});
 });
 
 api.MapPost("/document-versions/{versionId:guid}/audits", async (Guid versionId, ClaimsPrincipal user, PpkiDbContext db, IAuditTrailWriter auditTrail, CancellationToken ct) => {
@@ -406,6 +410,78 @@ api.MapPost("/finding-reviews/{reviewCaseId}/manual-remediation-reports", async 
     } catch(FindingReviewException exception) { return FindingReviewProblem(exception); }
 }).WithName("ReportManualFindingRemediation");
 
+api.MapGet("/audits/{auditId:guid}/text-corrections", async (Guid auditId, int? page, int? pageSize,
+    ClaimsPrincipal user, ITextCorrectionService corrections, CancellationToken ct) => {
+    if(!TextCorrectionProposalQuery.TryCreate(page,pageSize,out var query))
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid text correction query.",
+            extensions:new Dictionary<string,object?>{{"code","correction-query-invalid"}});
+    var result=await corrections.ListAsync(auditId,UserId(user),query,ct);
+    return result is null?Results.NotFound():Results.Ok(result);
+}).WithName("ListTextCorrections")
+  .WithSummary("Read one DB-paginated language correction proposal page without source excerpts.")
+  .Produces<TextCorrectionProposalPage>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapGet("/text-corrections/{proposalId:guid}/context", async (Guid proposalId,
+    ClaimsPrincipal user,ITextCorrectionService corrections,CancellationToken ct) => {
+    try {
+        var result=await corrections.ContextAsync(proposalId,UserId(user),ct);
+        return result is null?Results.NotFound():Results.Ok(result);
+    } catch(TextCorrectionException exception) { return TextCorrectionProblem(exception); }
+}).WithName("GetTextCorrectionContext")
+  .WithSummary("Materialize bounded exact source context transiently for an authorized admin.")
+  .Produces<TextCorrectionProposalContext>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status409Conflict)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapPost("/text-corrections/{proposalId:guid}/decisions", async (Guid proposalId,
+    HttpRequest httpRequest,TextCorrectionDecisionRequest? request,ClaimsPrincipal user,
+    ITextCorrectionService corrections,CancellationToken ct) => {
+    if(!TryIdempotencyKey(httpRequest,out var key)||request is null)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid text correction decision.",
+            extensions:new Dictionary<string,object?>{{"code","correction-idempotency-key-invalid"}});
+    try {
+        var result=await corrections.DecideAsync(proposalId,UserId(user),key,request,ct);
+        if(result is null)return Results.NotFound();
+        return result.Replayed?Results.Ok(result):Results.Created($"/api/text-corrections/{proposalId}/decisions/{result.Id}",result);
+    } catch(TextCorrectionException exception) { return TextCorrectionProblem(exception); }
+}).WithName("DecideTextCorrection")
+  .WithSummary("Append UseSuggestion, EditManual, or Ignore intent for an immutable proposal.")
+  .Produces<TextCorrectionDecisionAccepted>(StatusCodes.Status201Created)
+  .Produces<TextCorrectionDecisionAccepted>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .ProducesProblem(StatusCodes.Status409Conflict)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapPost("/audits/{auditId:guid}/text-correction-batches", async (Guid auditId,
+    HttpRequest httpRequest,TextCorrectionBatchRequest? request,ClaimsPrincipal user,
+    ITextCorrectionService corrections,CancellationToken ct) => {
+    if(!TryIdempotencyKey(httpRequest,out var key))
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid text correction batch.",
+            extensions:new Dictionary<string,object?>{{"code","correction-idempotency-key-invalid"}});
+    try {
+        var result=await corrections.CreateBatchAsync(auditId,UserId(user),key,request??new(),ct);
+        if(result is null)return Results.NotFound();
+        return result.Replayed?Results.Ok(result):Results.Accepted($"/api/text-correction-batches/{result.Id}",result);
+    } catch(TextCorrectionException exception) { return TextCorrectionProblem(exception); }
+}).WithName("CreateTextCorrectionBatch")
+  .WithSummary("Queue one all-or-nothing correction mutation for active accepted decisions.")
+  .Produces<TextCorrectionBatchAccepted>(StatusCodes.Status202Accepted)
+  .Produces<TextCorrectionBatchAccepted>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .ProducesProblem(StatusCodes.Status409Conflict)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapGet("/text-correction-batches/{batchId:guid}", async (Guid batchId,ClaimsPrincipal user,
+    ITextCorrectionService corrections,CancellationToken ct) => {
+    var result=await corrections.GetBatchAsync(batchId,UserId(user),ct);
+    return result is null?Results.NotFound():Results.Ok(result);
+}).WithName("GetTextCorrectionBatch")
+  .WithSummary("Read shared PPKIAdmin correction batch and verification state.")
+  .Produces<TextCorrectionBatchStatus>(StatusCodes.Status200OK)
+  .Produces(StatusCodes.Status404NotFound);
+
 api.MapGet("/document-versions/{id:guid}/preview-state", async (Guid id, PpkiDbContext db, CancellationToken ct) => {
     var exists=await db.DocumentVersions.AsNoTracking().AnyAsync(value=>value.Id==id,ct);
     if(!exists)return Results.NotFound();
@@ -481,6 +557,15 @@ static IResult FindingReviewProblem(FindingReviewException exception) {
         "finding-review-note-invalid" or "finding-review-idempotency-key-invalid" or "finding-review-not-available"=>StatusCodes.Status400BadRequest,
         _=>StatusCodes.Status409Conflict};
     return Results.Problem(statusCode:status,title:"Finding review command was rejected.",
+        extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
+}
+
+static IResult TextCorrectionProblem(TextCorrectionException exception) {
+    var status=exception.DiagnosticCode switch {
+        "correction-idempotency-key-invalid" or "correction-query-invalid" or "correction-decision-invalid"
+            or "correction-replacement-invalid" or "correction-batch-size-invalid"=>StatusCodes.Status400BadRequest,
+        _=>StatusCodes.Status409Conflict};
+    return Results.Problem(statusCode:status,title:"Text correction command was rejected.",
         extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
 }
 

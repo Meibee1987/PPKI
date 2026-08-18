@@ -21,7 +21,7 @@ public sealed class ExactTextAnchorTests
         await using var workspace = await DocxFixtureWorkspace.CreateAsync("exact-text-anchor");
         var parsed = await new OpenXmlDocxParser().ParseAsync(workspace.WorkingPath, CancellationToken.None);
         Assert.Equal("4.0", parsed.ParserSchemaVersion);
-        Assert.Equal(11, parsed.Paragraphs.Count);
+        Assert.Equal(13, parsed.Paragraphs.Count);
 
         var first = await BuildForText(workspace, parsed, 0, "di analisa", 0);
         var second = await BuildForText(workspace, parsed, 0, "di analisa", 1);

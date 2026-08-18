@@ -25,6 +25,11 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
     public DbSet<FindingResolutionEvent> FindingResolutionEvents => Set<FindingResolutionEvent>();
     public DbSet<FindingReviewCase> FindingReviewCases => Set<FindingReviewCase>();
     public DbSet<FindingReviewEvent> FindingReviewEvents => Set<FindingReviewEvent>();
+    public DbSet<TextCorrectionAnalysis> TextCorrectionAnalyses => Set<TextCorrectionAnalysis>();
+    public DbSet<TextCorrectionProposal> TextCorrectionProposals => Set<TextCorrectionProposal>();
+    public DbSet<TextCorrectionDecisionEvent> TextCorrectionDecisionEvents => Set<TextCorrectionDecisionEvent>();
+    public DbSet<TextCorrectionBatch> TextCorrectionBatches => Set<TextCorrectionBatch>();
+    public DbSet<TextCorrectionBatchItem> TextCorrectionBatchItems => Set<TextCorrectionBatchItem>();
     public DbSet<AuditTrailEvent> AuditTrailEvents => Set<AuditTrailEvent>();
 
     protected override void OnModelCreating(ModelBuilder builder)
@@ -431,6 +436,111 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.HasOne(x => x.ReviewCase).WithMany(x => x.Events).HasForeignKey(x => x.ReviewCaseId).OnDelete(DeleteBehavior.Restrict);
         });
 
+        builder.Entity<TextCorrectionAnalysis>(entity =>
+        {
+            entity.ToTable("text_correction_analyses"); Common(entity);
+            entity.Property(x => x.AuditJobId).HasColumnName("audit_job_id");
+            entity.Property(x => x.DocumentVersionId).HasColumnName("document_version_id");
+            entity.Property(x => x.SourceSha256).HasColumnName("source_sha256").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.DetectorId).HasColumnName("detector_id").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.DetectorVersion).HasColumnName("detector_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.CatalogVersion).HasColumnName("catalog_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.State).HasColumnName("state").HasConversion<string>();
+            entity.Property(x => x.ProposalCount).HasColumnName("proposal_count");
+            entity.Property(x => x.SafeFailureCode).HasColumnName("safe_failure_code").HasMaxLength(128);
+            entity.Property(x => x.StartedAt).HasColumnName("started_at");
+            entity.Property(x => x.CompletedAt).HasColumnName("completed_at");
+            entity.HasIndex(x => x.AuditJobId).IsUnique();
+            entity.HasIndex(x => new { x.State, x.CreatedAt }).HasDatabaseName("ix_text_correction_analyses_worker");
+            entity.HasOne(x => x.AuditJob).WithMany().HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.DocumentVersion).WithMany().HasForeignKey(x => x.DocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<TextCorrectionProposal>(entity =>
+        {
+            entity.ToTable("text_correction_proposals"); Common(entity);
+            entity.Property(x => x.AnalysisId).HasColumnName("analysis_id");
+            entity.Property(x => x.AuditJobId).HasColumnName("audit_job_id");
+            entity.Property(x => x.DocumentVersionId).HasColumnName("document_version_id");
+            entity.Property(x => x.SourceSha256).HasColumnName("source_sha256").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.DetectorId).HasColumnName("detector_id").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.DetectorVersion).HasColumnName("detector_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.CatalogVersion).HasColumnName("catalog_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.CatalogRuleId).HasColumnName("catalog_rule_id").HasMaxLength(128).IsRequired();
+            entity.Property(x => x.Category).HasColumnName("category").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.AnchorContractVersion).HasColumnName("anchor_contract_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.AnchorEvidenceJson).HasColumnName("anchor_evidence").HasColumnType("jsonb").IsRequired();
+            entity.Property(x => x.AnchorHash).HasColumnName("anchor_hash").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.SuggestedReplacement).HasColumnName("suggested_replacement").HasMaxLength(512).IsRequired();
+            entity.Property(x => x.SuggestionHash).HasColumnName("suggestion_hash").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.ProposalIdentity).HasColumnName("proposal_identity").HasMaxLength(64).IsRequired();
+            entity.HasIndex(x => x.ProposalIdentity).IsUnique();
+            entity.HasIndex(x => new { x.AuditJobId, x.CreatedAt, x.Id }).HasDatabaseName("ix_text_correction_proposals_page");
+            entity.HasOne(x => x.Analysis).WithMany(x => x.Proposals).HasForeignKey(x => x.AnalysisId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.AuditJob).WithMany().HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.DocumentVersion).WithMany().HasForeignKey(x => x.DocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<TextCorrectionDecisionEvent>(entity =>
+        {
+            entity.ToTable("text_correction_decision_events"); Common(entity);
+            entity.Property(x => x.ProposalId).HasColumnName("proposal_id");
+            entity.Property(x => x.Sequence).HasColumnName("sequence");
+            entity.Property(x => x.ActorUserId).HasColumnName("actor_user_id");
+            entity.Property(x => x.Action).HasColumnName("action").HasConversion<string>();
+            entity.Property(x => x.SourceDocumentVersionId).HasColumnName("source_document_version_id");
+            entity.Property(x => x.AnchorHash).HasColumnName("anchor_hash").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.ManualReplacement).HasColumnName("manual_replacement").HasMaxLength(512);
+            entity.Property(x => x.ReplacementHash).HasColumnName("replacement_hash").HasMaxLength(64);
+            entity.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key");
+            entity.Property(x => x.SemanticHash).HasColumnName("semantic_hash").HasMaxLength(64).IsRequired();
+            entity.HasIndex(x => new { x.ProposalId, x.Sequence }).IsUnique();
+            entity.HasIndex(x => new { x.ProposalId, x.IdempotencyKey }).IsUnique();
+            entity.HasOne(x => x.Proposal).WithMany(x => x.Decisions).HasForeignKey(x => x.ProposalId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceDocumentVersion).WithMany().HasForeignKey(x => x.SourceDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<TextCorrectionBatch>(entity =>
+        {
+            entity.ToTable("text_correction_batches"); Common(entity);
+            entity.Property(x => x.SourceAuditJobId).HasColumnName("source_audit_job_id");
+            entity.Property(x => x.SourceDocumentVersionId).HasColumnName("source_document_version_id");
+            entity.Property(x => x.ActorUserId).HasColumnName("actor_user_id");
+            entity.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key");
+            entity.Property(x => x.DecisionSetHash).HasColumnName("decision_set_hash").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.DecisionCount).HasColumnName("decision_count");
+            entity.Property(x => x.State).HasColumnName("state").HasConversion<string>();
+            entity.Property(x => x.FixExecutionId).HasColumnName("fix_execution_id");
+            entity.Property(x => x.ResultDocumentVersionId).HasColumnName("result_document_version_id");
+            entity.Property(x => x.ReauditJobId).HasColumnName("reaudit_job_id");
+            entity.Property(x => x.SafeFailureCode).HasColumnName("safe_failure_code").HasMaxLength(128);
+            entity.Property(x => x.UpdatedAt).HasColumnName("updated_at");
+            entity.HasIndex(x => new { x.SourceAuditJobId, x.ActorUserId, x.IdempotencyKey }).IsUnique();
+            entity.HasIndex(x => new { x.SourceDocumentVersionId, x.DecisionSetHash }).IsUnique();
+            entity.HasIndex(x => x.FixExecutionId).IsUnique().HasFilter("fix_execution_id is not null");
+            entity.HasIndex(x => x.ReauditJobId).IsUnique().HasFilter("reaudit_job_id is not null");
+            entity.HasIndex(x => new { x.State, x.UpdatedAt }).HasDatabaseName("ix_text_correction_batches_worker");
+            entity.HasOne(x => x.SourceAuditJob).WithMany().HasForeignKey(x => x.SourceAuditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceDocumentVersion).WithMany().HasForeignKey(x => x.SourceDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.FixExecution).WithMany().HasForeignKey(x => x.FixExecutionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ResultDocumentVersion).WithMany().HasForeignKey(x => x.ResultDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ReauditJob).WithMany().HasForeignKey(x => x.ReauditJobId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<TextCorrectionBatchItem>(entity =>
+        {
+            entity.ToTable("text_correction_batch_items"); Common(entity);
+            entity.Property(x => x.BatchId).HasColumnName("batch_id");
+            entity.Property(x => x.DecisionEventId).HasColumnName("decision_event_id");
+            entity.Property(x => x.Ordinal).HasColumnName("ordinal");
+            entity.Property(x => x.VerificationState).HasColumnName("verification_state").HasConversion<string>();
+            entity.Property(x => x.VerifiedAt).HasColumnName("verified_at");
+            entity.HasIndex(x => new { x.BatchId, x.Ordinal }).IsUnique();
+            entity.HasIndex(x => x.DecisionEventId).IsUnique();
+            entity.HasOne(x => x.Batch).WithMany(x => x.Items).HasForeignKey(x => x.BatchId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.DecisionEvent).WithMany().HasForeignKey(x => x.DecisionEventId).OnDelete(DeleteBehavior.Restrict);
+        });
+
         builder.Entity<AuditTrailEvent>(entity =>
         {
             entity.ToTable("audit_trail_events");
@@ -541,5 +651,19 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             throw new InvalidOperationException("Finding review case identity is immutable.");
         if (ChangeTracker.Entries<FindingReviewEvent>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
             throw new InvalidOperationException("Finding review events are append-only.");
+        if (ChangeTracker.Entries<TextCorrectionProposal>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Text correction proposals are insert-only evidence.");
+        if (ChangeTracker.Entries<TextCorrectionDecisionEvent>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Text correction decisions are append-only.");
+        var immutableBatchItemProperties = new[]
+        {
+            nameof(TextCorrectionBatchItem.Id), nameof(TextCorrectionBatchItem.BatchId),
+            nameof(TextCorrectionBatchItem.DecisionEventId), nameof(TextCorrectionBatchItem.Ordinal),
+            nameof(TextCorrectionBatchItem.CreatedAt)
+        };
+        if (ChangeTracker.Entries<TextCorrectionBatchItem>().Any(entry => entry.State == EntityState.Deleted
+            || entry.State == EntityState.Modified
+                && immutableBatchItemProperties.Any(name => entry.Property(name).IsModified)))
+            throw new InvalidOperationException("Text correction batch item identity is immutable.");
     }
 }

@@ -337,3 +337,93 @@ public sealed class FindingReviewEvent : Entity
     public Guid IdempotencyKey { get; set; }
     public required string SourceEventKey { get; set; }
 }
+
+public sealed class TextCorrectionAnalysis : Entity
+{
+    public Guid AuditJobId { get; set; }
+    public AuditJob? AuditJob { get; set; }
+    public Guid DocumentVersionId { get; set; }
+    public DocumentVersion? DocumentVersion { get; set; }
+    public required string SourceSha256 { get; set; }
+    public required string DetectorId { get; set; }
+    public required string DetectorVersion { get; set; }
+    public required string CatalogVersion { get; set; }
+    public TextCorrectionAnalysisState State { get; set; } = TextCorrectionAnalysisState.Pending;
+    public int ProposalCount { get; set; }
+    public string? SafeFailureCode { get; set; }
+    public DateTimeOffset? StartedAt { get; set; }
+    public DateTimeOffset? CompletedAt { get; set; }
+    public List<TextCorrectionProposal> Proposals { get; set; } = [];
+}
+
+public sealed class TextCorrectionProposal : Entity
+{
+    public Guid AnalysisId { get; set; }
+    public TextCorrectionAnalysis? Analysis { get; set; }
+    public Guid AuditJobId { get; set; }
+    public AuditJob? AuditJob { get; set; }
+    public Guid DocumentVersionId { get; set; }
+    public DocumentVersion? DocumentVersion { get; set; }
+    public required string SourceSha256 { get; set; }
+    public required string DetectorId { get; set; }
+    public required string DetectorVersion { get; set; }
+    public required string CatalogVersion { get; set; }
+    public required string CatalogRuleId { get; set; }
+    public required string Category { get; set; }
+    public required string AnchorContractVersion { get; set; }
+    public required string AnchorEvidenceJson { get; set; }
+    public required string AnchorHash { get; set; }
+    public required string SuggestedReplacement { get; set; }
+    public required string SuggestionHash { get; set; }
+    public required string ProposalIdentity { get; set; }
+    public List<TextCorrectionDecisionEvent> Decisions { get; set; } = [];
+}
+
+public sealed class TextCorrectionDecisionEvent : Entity
+{
+    public Guid ProposalId { get; set; }
+    public TextCorrectionProposal? Proposal { get; set; }
+    public int Sequence { get; set; }
+    public Guid ActorUserId { get; set; }
+    public TextCorrectionDecisionAction Action { get; set; }
+    public Guid SourceDocumentVersionId { get; set; }
+    public DocumentVersion? SourceDocumentVersion { get; set; }
+    public required string AnchorHash { get; set; }
+    public string? ManualReplacement { get; set; }
+    public string? ReplacementHash { get; set; }
+    public Guid IdempotencyKey { get; set; }
+    public required string SemanticHash { get; set; }
+}
+
+public sealed class TextCorrectionBatch : Entity
+{
+    public Guid SourceAuditJobId { get; set; }
+    public AuditJob? SourceAuditJob { get; set; }
+    public Guid SourceDocumentVersionId { get; set; }
+    public DocumentVersion? SourceDocumentVersion { get; set; }
+    public Guid ActorUserId { get; set; }
+    public Guid IdempotencyKey { get; set; }
+    public required string DecisionSetHash { get; set; }
+    public int DecisionCount { get; set; }
+    public TextCorrectionBatchState State { get; set; } = TextCorrectionBatchState.Pending;
+    public Guid? FixExecutionId { get; set; }
+    public FixExecutionJob? FixExecution { get; set; }
+    public Guid? ResultDocumentVersionId { get; set; }
+    public DocumentVersion? ResultDocumentVersion { get; set; }
+    public Guid? ReauditJobId { get; set; }
+    public AuditJob? ReauditJob { get; set; }
+    public string? SafeFailureCode { get; set; }
+    public DateTimeOffset UpdatedAt { get; set; }
+    public List<TextCorrectionBatchItem> Items { get; set; } = [];
+}
+
+public sealed class TextCorrectionBatchItem : Entity
+{
+    public Guid BatchId { get; set; }
+    public TextCorrectionBatch? Batch { get; set; }
+    public Guid DecisionEventId { get; set; }
+    public TextCorrectionDecisionEvent? DecisionEvent { get; set; }
+    public int Ordinal { get; set; }
+    public TextCorrectionVerificationState VerificationState { get; set; } = TextCorrectionVerificationState.Applied;
+    public DateTimeOffset? VerifiedAt { get; set; }
+}

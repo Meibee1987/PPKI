@@ -100,6 +100,17 @@ public enum AutomaticRemediationState
 public enum DocumentRenderState { Pending, Processing, Completed, Failed }
 public enum PageMapConfidence { Exact, Estimated, Unavailable }
 
+public enum TextCorrectionAnalysisState { Pending, Processing, Completed, Failed, Skipped }
+public enum TextCorrectionDecisionAction { UseSuggestion, EditManual, Ignore }
+public enum TextCorrectionBatchState
+{
+    Pending, Queued, Processing, ReauditPending, VerificationPending, Completed, Failed, Conflict
+}
+public enum TextCorrectionVerificationState
+{
+    Applied, ReauditPending, VerifiedResolved, VerifiedStillDetected, VerificationUnavailable
+}
+
 [JsonConverter(typeof(JsonStringEnumConverter<FixFailureCategory>))]
 public enum FixFailureCategory
 {
