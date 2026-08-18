@@ -65,6 +65,25 @@ public sealed record AuditFailureSummary(string Code, string Message)
             : null;
 }
 
+public sealed record CorrectionAnalysisReadinessDto(string State);
+
+public static class TextCorrectionAnalysisReadiness
+{
+    public const string AwaitingAnalysis = "AwaitingAnalysis";
+
+    public static string Resolve(
+        TextCorrectionAnalysisState? persistedState,
+        AuditJobStatus auditStatus,
+        bool isCurrentDocumentVersion,
+        bool hasEligibleLineage)
+    {
+        if (persistedState is not null) return persistedState.Value.ToString();
+        return auditStatus == AuditJobStatus.Completed && isCurrentDocumentVersion && hasEligibleLineage
+            ? AwaitingAnalysis
+            : TextCorrectionAnalysisState.Skipped.ToString();
+    }
+}
+
 public sealed record AuditSummaryDto(
     Guid Id,
     string Status,
@@ -91,6 +110,7 @@ public sealed record AuditSummaryDto(
     DateTimeOffset? CompletedAt,
     string? FailureCode,
     string? ErrorMessage,
+    CorrectionAnalysisReadinessDto CorrectionAnalysis,
     AutomaticRemediationSummaryDto? AutomaticRemediation = null,
     DocumentRenderStateDto? DocumentRender = null);
 

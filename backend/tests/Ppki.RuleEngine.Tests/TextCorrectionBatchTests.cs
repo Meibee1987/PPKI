@@ -171,6 +171,7 @@ public sealed class TextCorrectionBatchTests
             "Ppki.Infrastructure", "TextCorrectionService.cs"));
         Assert.Contains("currentVersion ? useSuggestion + editManual : 0", source, StringComparison.Ordinal);
         Assert.Contains("SourceAuditJobId == auditId", source, StringComparison.Ordinal);
+        Assert.Contains("if (!currentVersion) return null", source, StringComparison.Ordinal);
     }
 
     [Fact]

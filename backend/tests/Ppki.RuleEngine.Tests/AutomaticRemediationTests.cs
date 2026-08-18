@@ -147,6 +147,20 @@ public sealed class AutomaticRemediationOrchestrationTests
         Assert.Contains("summary.automaticRemediation", ui, StringComparison.Ordinal);
     }
 
+    [Fact]
+    public void Completed_read_model_exposes_backend_owned_canonical_reaudit_lineage()
+    {
+        var properties = typeof(AutomaticRemediationSummaryDto).GetProperties()
+            .Select(value => value.Name).ToHashSet(StringComparer.Ordinal);
+        Assert.Contains(nameof(AutomaticRemediationSummaryDto.ResultDocumentVersionId), properties);
+        Assert.Contains(nameof(AutomaticRemediationSummaryDto.ReauditJobId), properties);
+
+        var readService = File.ReadAllText(Path.Combine(RepositoryRoot(), "backend", "src",
+            "Ppki.Infrastructure", "AuditReadService.cs"));
+        Assert.Contains("automatic.ResultDocumentVersionId", readService, StringComparison.Ordinal);
+        Assert.Contains("automatic.ReauditJobId", readService, StringComparison.Ordinal);
+    }
+
     private static string RepositoryRoot() => Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,
         "..", "..", "..", "..", "..", ".."));
 }

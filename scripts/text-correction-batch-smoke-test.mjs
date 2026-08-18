@@ -123,15 +123,36 @@ async function main() {
     const automatic = await waitAutomatic(apiUrl, environment, users.adminA.token, initialAuditId);
     report("formatting-pass-precedes-corrections", automatic.automaticRemediation?.state === "Completed"
       && automatic.automaticRemediation?.operationCount > 0);
-    const lineage = (await sql(container, `select concat_ws('|',result_document_version_id,reaudit_job_id) from public.automatic_remediation_orchestrations where source_audit_job_id='${initialAuditId}';`)).split("|");
-    const [v2Id, v2AuditId] = lineage;
+    const v2Id = automatic.automaticRemediation?.resultDocumentVersionId;
+    const v2AuditId = automatic.automaticRemediation?.reauditJobId;
     if (!v2Id || !v2AuditId) throw new Error("automatic v2 lineage missing");
+    report("route-summary-exposes-backend-owned-canonical-a2-v2", automatic.id === initialAuditId
+      && v2AuditId !== initialAuditId && v2Id !== automatic.documentVersionId);
     const v2Audit = await waitAudit(apiUrl, environment, users.adminA.token, v2AuditId);
     report("v2-canonical-reaudit-completed", v2Audit.status === "Completed" && v2Audit.documentVersionId === v2Id);
+    report("v2-summary-exposes-explicit-analysis-readiness", ["AwaitingAnalysis", "Pending", "Processing", "Completed"]
+      .includes(v2Audit.correctionAnalysis?.state));
     const renderV2 = await waitRender(apiUrl, environment, users.adminA.token, v2Id);
     report("v2-page-map-ready-before-context", renderV2.pageCount >= 3);
 
     const page = await waitProposals(apiUrl, environment, users.adminA.token, v2AuditId);
+    const readyV2Audit = await api(apiUrl, environment, users.adminA.token, `/audits/${v2AuditId}`);
+    const readyV2AuditAdminB = await api(apiUrl, environment, users.adminB.token, `/audits/${v2AuditId}`);
+    const inaccessibleV2Audit = await api(apiUrl, environment, users.student.token, `/audits/${v2AuditId}`);
+    const unknownAudit = await api(apiUrl, environment, users.adminA.token, `/audits/${randomUUID()}`);
+    report("v2-proposals-are-read-only-after-completed-analysis-readiness", readyV2Audit.status === 200
+      && readyV2Audit.body?.correctionAnalysis?.state === "Completed" && page.totalCount === 4);
+    report("admin-a-and-admin-b-see-identical-readiness", readyV2AuditAdminB.status === 200
+      && readyV2AuditAdminB.body?.correctionAnalysis?.state === readyV2Audit.body?.correctionAnalysis?.state);
+    report("unknown-remains-404-and-inaccessible-remains-403", unknownAudit.status === 404
+      && inaccessibleV2Audit.status === 403);
+    const staleRoutePage = await api(apiUrl, environment, users.adminA.token,
+      `/audits/${initialAuditId}/text-corrections?page=1&pageSize=100`);
+    const adminBCanonicalPage = await api(apiUrl, environment, users.adminB.token,
+      `/audits/${v2AuditId}/text-corrections?page=1&pageSize=100`);
+    report("corrections-use-a2-never-stale-a1-and-admin-b-agrees", staleRoutePage.status === 404
+      && page.auditId === v2AuditId && page.documentVersionId === v2Id
+      && adminBCanonicalPage.status === 200 && adminBCanonicalPage.body?.auditId === v2AuditId);
     report("detector-produced-four-bounded-purpose-specific-proposals", page.totalCount === 4 && page.items.length === 4
       && page.items.every(value => value.detectorRule === "lex.di-analisa" && value.anchorStatus === "Exact"));
     const contexts = [];
@@ -174,6 +195,15 @@ async function main() {
     report("one-batch-completed-after-reaudit-and-verification", batch.state === "Completed"
       && batch.decisionCount === 2 && batch.verificationCounts?.VerifiedResolved === 2
       && Boolean(batch.fixExecutionId) && Boolean(batch.resultDocumentVersionId) && Boolean(batch.reauditId));
+    const finalAudit = await api(apiUrl, environment, users.adminA.token, `/audits/${batch.reauditId}`);
+    const completedSourcePage = await api(apiUrl, environment, users.adminA.token,
+      `/audits/${v2AuditId}/text-corrections?page=1&pageSize=100`);
+    report("completed-batch-exposes-canonical-a3-v3-without-preview-fallback", finalAudit.status === 200
+      && finalAudit.body?.id === batch.reauditId
+      && finalAudit.body?.documentVersionId === batch.resultDocumentVersionId
+      && completedSourcePage.body?.activeBatch?.reauditId === batch.reauditId
+      && completedSourcePage.body?.activeBatch?.resultDocumentVersionId === batch.resultDocumentVersionId);
+    report("final-a3-analysis-readiness-is-terminal-and-canonical", finalAudit.body?.correctionAnalysis?.state === "Completed");
     const renderV3 = await waitRender(apiUrl, environment, users.adminA.token, batch.resultDocumentVersionId);
     report("v3-render-and-page-map-completed", renderV3.pageCount >= 3);
     const renderV1 = await waitRender(apiUrl, environment, users.adminA.token, v1.id);

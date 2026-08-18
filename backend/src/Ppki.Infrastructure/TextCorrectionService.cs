@@ -125,6 +125,11 @@ public sealed class TextCorrectionService(
             await transaction.CommitAsync(cancellationToken);
             return Accepted(replay, true);
         }
+        var currentVersion = await db.DocumentVersions.AsNoTracking()
+            .Where(value => value.Id == proposal.DocumentVersionId)
+            .Select(value => value.Document!.CurrentVersionNo == value.VersionNo)
+            .SingleAsync(cancellationToken);
+        if (!currentVersion) return null;
         var sequence = (await db.TextCorrectionDecisionEvents.Where(value => value.ProposalId == proposalId)
             .MaxAsync(value => (int?)value.Sequence, cancellationToken) ?? 0) + 1;
         var created = new TextCorrectionDecisionEvent

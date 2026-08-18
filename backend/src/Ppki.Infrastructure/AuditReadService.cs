@@ -27,7 +27,9 @@ public sealed class AuditReadService(
                 value.ResolvedRuleSetHash,
                 value.ApplicableRuleCount,
                 value.StartedAt,
-                value.CompletedAt))
+                value.CompletedAt,
+                value.SourceFixExecutionId,
+                value.DocumentVersion!.VersionNo == value.DocumentVersion.Document!.CurrentVersionNo))
             .SingleOrDefaultAsync(cancellationToken);
         if (audit is null) return null;
 
@@ -49,7 +51,8 @@ public sealed class AuditReadService(
             .Select(value => new
             {
                 value.State, value.PolicyVersion, value.EligibleFindingCount,
-                value.OperationCount, value.FixExecutionId, value.SafeFailureCode
+                value.OperationCount, value.FixExecutionId, value.SafeFailureCode,
+                value.ResultDocumentVersionId, value.ReauditJobId
             }).SingleOrDefaultAsync(cancellationToken);
         AutomaticRemediationSummaryDto? automaticSummary = null;
         if (automatic is not null)
@@ -62,8 +65,17 @@ public sealed class AuditReadService(
                     && value.EventType == FindingResolutionEventType.VerificationStillDetectedObserved, cancellationToken);
             automaticSummary = new(automatic.State.ToString(), automatic.PolicyVersion,
                 automatic.EligibleFindingCount, automatic.OperationCount, resolved,
-                stillDetected, automatic.SafeFailureCode);
+                stillDetected, automatic.SafeFailureCode, automatic.ResultDocumentVersionId,
+                automatic.ReauditJobId);
         }
+        var analysisState = await db.TextCorrectionAnalyses.AsNoTracking()
+            .Where(value => value.AuditJobId == auditId)
+            .Select(value => (TextCorrectionAnalysisState?)value.State)
+            .SingleOrDefaultAsync(cancellationToken);
+        var analysisReadiness = analysisState is not null
+            ? TextCorrectionAnalysisReadiness.Resolve(analysisState, audit.Status,
+                audit.IsCurrentDocumentVersion, hasEligibleLineage: false)
+            : await MissingCorrectionAnalysisStateAsync(db, audit, cancellationToken);
         var render = await RenderStateAsync(db, audit.DocumentVersionId, cancellationToken);
 
         return new(
@@ -92,6 +104,7 @@ public sealed class AuditReadService(
             audit.CompletedAt,
             failure?.Code,
             failure?.Message,
+            new(analysisReadiness),
             automaticSummary,
             render.Dto);
     }
@@ -327,6 +340,33 @@ public sealed class AuditReadService(
         return document.RootElement.Clone();
     }
 
+    private static async Task<string> MissingCorrectionAnalysisStateAsync(
+        PpkiDbContext db,
+        AuditSummaryRow audit,
+        CancellationToken cancellationToken)
+    {
+        if (audit.Status != AuditJobStatus.Completed || !audit.IsCurrentDocumentVersion)
+            return TextCorrectionAnalysisReadiness.Resolve(null, audit.Status,
+                audit.IsCurrentDocumentVersion, hasEligibleLineage: false);
+
+        var expected = audit.SourceFixExecutionId is null
+            ? await db.AutomaticRemediationOrchestrations.AsNoTracking().AnyAsync(value =>
+                value.SourceAuditJobId == audit.Id
+                && (value.State == AutomaticRemediationState.NoAction
+                    || value.State == AutomaticRemediationState.Completed
+                    || value.State == AutomaticRemediationState.Failed
+                    || value.State == AutomaticRemediationState.Conflict), cancellationToken)
+            : await db.AutomaticRemediationOrchestrations.AsNoTracking().AnyAsync(value =>
+                    value.ReauditJobId == audit.Id
+                    && value.State == AutomaticRemediationState.Completed, cancellationToken)
+                || await db.TextCorrectionBatches.AsNoTracking().AnyAsync(value =>
+                    value.ReauditJobId == audit.Id
+                    && value.State == TextCorrectionBatchState.VerificationPending, cancellationToken);
+
+        return TextCorrectionAnalysisReadiness.Resolve(null, audit.Status,
+            audit.IsCurrentDocumentVersion, expected);
+    }
+
     private sealed record AuditSummaryRow(
         Guid Id,
         AuditJobStatus Status,
@@ -336,7 +376,9 @@ public sealed class AuditReadService(
         string? ResolvedRuleSetHash,
         int ApplicableRuleCount,
         DateTimeOffset? StartedAt,
-        DateTimeOffset? CompletedAt);
+        DateTimeOffset? CompletedAt,
+        Guid? SourceFixExecutionId,
+        bool IsCurrentDocumentVersion);
 
     private sealed record RenderReadState(
         Guid? ArtifactId,

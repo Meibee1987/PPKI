@@ -63,4 +63,6 @@ public sealed record AutomaticRemediationSummaryDto(
     int OperationCount,
     int VerifiedResolvedCount,
     int StillDetectedCount,
-    string? FailureCode);
+    string? FailureCode,
+    Guid? ResultDocumentVersionId,
+    Guid? ReauditJobId);

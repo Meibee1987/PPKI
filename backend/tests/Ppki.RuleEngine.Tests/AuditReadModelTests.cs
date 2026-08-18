@@ -18,7 +18,8 @@ public sealed class AuditReadModelTests
             new(2_228, 0, 0), [new("LAY", 2_228)], new(0, 0, 0, 2_228),
             AuditScoreState.NotConfigured, null, null, null,
             "scoring-policy-not-configured", DateTimeOffset.UtcNow,
-            DateTimeOffset.UtcNow, null, null);
+            DateTimeOffset.UtcNow, null, null,
+            new CorrectionAnalysisReadinessDto("Completed"));
 
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(
             summary, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
@@ -26,6 +27,8 @@ public sealed class AuditReadModelTests
         Assert.Equal(JsonValueKind.String, json.RootElement.GetProperty("scoreState").ValueKind);
         Assert.Equal("NotConfigured", json.RootElement.GetProperty("scoreState").GetString());
         Assert.Equal(JsonValueKind.Null, json.RootElement.GetProperty("score").ValueKind);
+        Assert.Equal("Completed", json.RootElement.GetProperty("correctionAnalysis")
+            .GetProperty("state").GetString());
     }
 
     [Fact]
@@ -116,6 +119,33 @@ public sealed class AuditReadModelTests
 
         Assert.False(valid);
         Assert.Equal("finding-pagination-invalid", error);
+    }
+
+    [Theory]
+    [InlineData(TextCorrectionAnalysisState.Pending, "Pending")]
+    [InlineData(TextCorrectionAnalysisState.Processing, "Processing")]
+    [InlineData(TextCorrectionAnalysisState.Completed, "Completed")]
+    [InlineData(TextCorrectionAnalysisState.Failed, "Failed")]
+    [InlineData(TextCorrectionAnalysisState.Skipped, "Skipped")]
+    public void Persisted_text_correction_analysis_state_is_exact(
+        TextCorrectionAnalysisState persisted,
+        string expected)
+    {
+        Assert.Equal(expected, TextCorrectionAnalysisReadiness.Resolve(
+            persisted, AuditJobStatus.Completed, true, true));
+    }
+
+    [Fact]
+    public void Eligible_completed_current_audit_without_analysis_is_explicitly_awaiting()
+    {
+        Assert.Equal("AwaitingAnalysis", TextCorrectionAnalysisReadiness.Resolve(
+            null, AuditJobStatus.Completed, true, true));
+        Assert.Equal("Skipped", TextCorrectionAnalysisReadiness.Resolve(
+            null, AuditJobStatus.Processing, true, true));
+        Assert.Equal("Skipped", TextCorrectionAnalysisReadiness.Resolve(
+            null, AuditJobStatus.Completed, false, true));
+        Assert.Equal("Skipped", TextCorrectionAnalysisReadiness.Resolve(
+            null, AuditJobStatus.Completed, true, false));
     }
 
     [Fact]

@@ -4,6 +4,7 @@ export const fixModes = ["Auto", "Confirm", "Manual", "Report"] as const;
 export const scoreStates = ["Calculated", "NotConfigured", "InvalidConfiguration", "NotApplicable", "AuditIncomplete"] as const;
 export const actionAvailabilities = ["None", "Automatic"] as const;
 export const automaticRemediationStates = ["Pending", "NoAction", "Queued", "Processing", "ReauditPending", "Completed", "Failed", "Conflict"] as const;
+export const textCorrectionAnalysisStates = ["AwaitingAnalysis", "Pending", "Processing", "Completed", "Failed", "Skipped"] as const;
 export const documentRenderStates = ["Pending", "Processing", "Completed", "Failed"] as const;
 export const pageLocationConfidences = ["Exact", "Estimated", "Unavailable"] as const;
 
@@ -13,9 +14,14 @@ export type FixMode = (typeof fixModes)[number];
 export type ScoreState = (typeof scoreStates)[number];
 export type ActionAvailability = (typeof actionAvailabilities)[number];
 export type AutomaticRemediationState = (typeof automaticRemediationStates)[number];
+export type TextCorrectionAnalysisState = (typeof textCorrectionAnalysisStates)[number];
 export type DocumentRenderState = (typeof documentRenderStates)[number];
 export type PageLocationConfidence = (typeof pageLocationConfidences)[number];
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
+
+export function isTextCorrectionAnalysisTransitional(state: TextCorrectionAnalysisState): boolean {
+  return state === "AwaitingAnalysis" || state === "Pending" || state === "Processing";
+}
 
 export type AuditSource = {
   sourceSection: string | null;
@@ -80,7 +86,8 @@ export type AuditSummary = {
   completedAt: string | null;
   failureCode: string | null;
   errorMessage: string | null;
-  automaticRemediation: { state: AutomaticRemediationState; policyVersion: string; eligibleFindingCount: number; operationCount: number; verifiedResolvedCount: number; stillDetectedCount: number; failureCode: string | null } | null;
+  correctionAnalysis: { state: TextCorrectionAnalysisState };
+  automaticRemediation: { state: AutomaticRemediationState; policyVersion: string; eligibleFindingCount: number; operationCount: number; verifiedResolvedCount: number; stillDetectedCount: number; failureCode: string | null; resultDocumentVersionId: string | null; reauditJobId: string | null } | null;
   documentRender: { state: DocumentRenderState; pageCount: number | null; rendererVersion: string; rendererContractVersion: string; fontProfileVersion: string; pageMapVersion: string; safeFailureCode: string | null; previewAvailable: boolean };
 };
 
@@ -122,6 +129,10 @@ function uuid(value: unknown): string {
   const parsed = string(value);
   if (!uuidPattern.test(parsed)) throw new ApiContractError();
   return parsed;
+}
+
+function nullableUuid(value: unknown): string | null {
+  return value === null ? null : uuid(value);
 }
 
 function finiteNumber(value: unknown): number {
@@ -204,6 +215,7 @@ export function parseAuditSummary(value: unknown): AuditSummary {
   const fixModeCounts = record(data.fixModes);
   if (!Array.isArray(data.domains)) throw new ApiContractError();
   const automatic = data.automaticRemediation === null ? null : record(data.automaticRemediation);
+  const correctionAnalysis = record(data.correctionAnalysis);
   const documentRender = record(data.documentRender);
   return {
     id: uuid(data.id), status: enumValue(data.status, auditStatuses),
@@ -220,11 +232,13 @@ export function parseAuditSummary(value: unknown): AuditSummary {
     scorePolicyVersion: nullableString(data.scorePolicyVersion), scoreBreakdown: jsonValue(data.scoreBreakdown),
     scoreDiagnosticCode: nullableString(data.scoreDiagnosticCode), startedAt: nullableString(data.startedAt), completedAt: nullableString(data.completedAt),
     failureCode: nullableString(data.failureCode), errorMessage: nullableString(data.errorMessage),
+    correctionAnalysis: { state: enumValue(correctionAnalysis.state, textCorrectionAnalysisStates) },
     automaticRemediation: automatic === null ? null : {
       state: enumValue(automatic.state, automaticRemediationStates), policyVersion: string(automatic.policyVersion),
       eligibleFindingCount: nonNegativeInteger(automatic.eligibleFindingCount), operationCount: nonNegativeInteger(automatic.operationCount),
       verifiedResolvedCount: nonNegativeInteger(automatic.verifiedResolvedCount), stillDetectedCount: nonNegativeInteger(automatic.stillDetectedCount),
-      failureCode: nullableString(automatic.failureCode),
+      failureCode: nullableString(automatic.failureCode), resultDocumentVersionId: nullableUuid(automatic.resultDocumentVersionId),
+      reauditJobId: nullableUuid(automatic.reauditJobId),
     },
     documentRender: {
       state: enumValue(documentRender.state, documentRenderStates),

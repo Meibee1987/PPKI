@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { auditFindingDetailPath, auditFindingsPath, auditSummaryPath, findingsQuery, normalizeFindingFilters, parseAuditFindingDetail, parseAuditFindingPage, parseAuditSummary } from "./audit-contract.ts";
+import { auditFindingDetailPath, auditFindingsPath, auditSummaryPath, findingsQuery, isTextCorrectionAnalysisTransitional, normalizeFindingFilters, parseAuditFindingDetail, parseAuditFindingPage, parseAuditSummary } from "./audit-contract.ts";
 
 const auditId = "11111111-1111-4111-8111-111111111111";
 const findingId = "22222222-2222-4222-8222-222222222222";
@@ -15,6 +15,7 @@ const summary = {
   fixModes: { auto: 0, confirm: 0, manual: 1, report: 0 }, scoreState: "NotConfigured", score: null,
   scorePolicyVersion: null, scoreBreakdown: null, scoreDiagnosticCode: "scoring-policy-not-configured",
   startedAt: "2026-08-04T10:00:00Z", completedAt: "2026-08-04T10:01:00Z", failureCode: null, errorMessage: null,
+  correctionAnalysis: { state: "Completed" },
   automaticRemediation: null,
   documentRender: { state: "Completed", pageCount: 7, rendererVersion: "8.34.0+libreoffice-26.2.4.2", rendererContractVersion: "docx-pdf/1.0", fontProfileVersion: "ppki-liberation-noto/1.0", pageMapVersion: "page-map/1.0", safeFailureCode: null, previewAvailable: true },
 };
@@ -33,10 +34,34 @@ test("parses a valid audit summary without calculating score", () => {
   assert.equal(parsed.scoreState, "NotConfigured"); assert.equal(parsed.score, null); assert.equal(parsed.severity.error, 1);
 });
 
+test("parses every explicit text-correction analysis readiness state", () => {
+  for (const state of ["AwaitingAnalysis", "Pending", "Processing", "Completed", "Failed", "Skipped"])
+    assert.equal(parseAuditSummary({ ...summary, correctionAnalysis: { state } }).correctionAnalysis.state, state);
+});
+
+test("only pre-completion analysis states are transitional", () => {
+  assert.deepEqual(["AwaitingAnalysis", "Pending", "Processing", "Completed", "Failed", "Skipped"]
+    .filter(state => isTextCorrectionAnalysisTransitional(state as never)),
+  ["AwaitingAnalysis", "Pending", "Processing"]);
+});
+
+test("rejects missing or unknown text-correction analysis readiness", () => {
+  assert.throws(() => parseAuditSummary({ ...summary, correctionAnalysis: undefined }), /kontrak/);
+  assert.throws(() => parseAuditSummary({ ...summary, correctionAnalysis: { state: "Unknown" } }), /kontrak/);
+});
+
 test("parses canonical automatic remediation progress", () => {
-  const parsed = parseAuditSummary({ ...summary, automaticRemediation: { state: "ReauditPending", policyVersion: "auto-format/1.0", eligibleFindingCount: 8, operationCount: 8, verifiedResolvedCount: 0, stillDetectedCount: 0, failureCode: null } });
+  const parsed = parseAuditSummary({ ...summary, automaticRemediation: { state: "ReauditPending", policyVersion: "auto-format/1.0", eligibleFindingCount: 8, operationCount: 8, verifiedResolvedCount: 0, stillDetectedCount: 0, failureCode: null, resultDocumentVersionId: null, reauditJobId: null } });
   assert.equal(parsed.automaticRemediation?.state, "ReauditPending");
   assert.equal(parsed.automaticRemediation?.operationCount, 8);
+});
+
+test("parses backend-owned completed automatic lineage", () => {
+  const resultDocumentVersionId = "55555555-5555-4555-8555-555555555555";
+  const reauditJobId = "66666666-6666-4666-8666-666666666666";
+  const parsed = parseAuditSummary({ ...summary, automaticRemediation: { state: "Completed", policyVersion: "auto-format/1.0", eligibleFindingCount: 2031, operationCount: 2031, verifiedResolvedCount: 2031, stillDetectedCount: 197, failureCode: null, resultDocumentVersionId, reauditJobId } });
+  assert.equal(parsed.automaticRemediation?.resultDocumentVersionId, resultDocumentVersionId);
+  assert.equal(parsed.automaticRemediation?.reauditJobId, reauditJobId);
 });
 
 test("parses the completed backend wire summary with deterministic profile UUID and null score", () => {

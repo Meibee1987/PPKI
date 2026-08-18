@@ -70,7 +70,7 @@ const cases: Array<[string, () => void]> = [
   ["53 unsupported excluded", () => assert.match(component, /proposal\.anchorStatus !== "Exact"/)],
   ["54 auto-format finding excluded", () => assert.doesNotMatch(api, /fix-plan-preview/)],
   ["55 zero eligible disables CTA", () => assert.match(component, /readyCount === 0[\s\S]*disabled/)],
-  ["56 exactly one create-batch POST", () => assert.equal((api.match(/text-correction-batches[\s\S]*method: "POST"/g) ?? []).length, 1)],
+  ["56 exactly one create-batch POST", () => assert.equal((api.match(/createTextCorrectionBatch[\s\S]*?method: "POST"/g) ?? []).length, 1)],
   ["57 no per-card Apply", () => assert.doesNotMatch(component, />\s*Apply\s*</)],
   ["58 batch replay idempotency", () => assert.match(component, /batchKey\.current \?\? crypto\.randomUUID/)],
   ["59 lost response same batch key", () => assert.match(component, /batchKey\.current = key/)],
@@ -82,7 +82,7 @@ const cases: Array<[string, () => void]> = [
   ["65 no POST from polling", () => assert.doesNotMatch(api.match(/getTextCorrectionBatch[\s\S]*?\n\}/)?.[0] ?? "", /POST/)],
   ["66 polling non-overlap", () => assert.match(component, /await getTextCorrectionBatch[\s\S]*setTimeout\(poll/)],
   ["67 polling abort", () => assert.match(component, /active\?\.abort\(\)/)],
-  ["68 final summary renders", () => { assert.match(component, /Ringkasan hasil akhir/); assert.match(component, /getAuditSummary\(batch\.reauditId/); assert.match(component, /Temuan versi akhir/); }],
+  ["68 final summary renders", () => { assert.match(component, /Ringkasan hasil akhir/); assert.match(component, /getAuditSummary\(nextIdentity\.auditId/); assert.match(component, /Masalah tersisa/); }],
   ["69 final v3 preview", () => assert.match(component, /resultDocumentVersionId/)],
   ["70 render pending", () => assert.match(component, /Preview sedang dibuat/)],
   ["71 remaining findings action", () => assert.match(component, /Lihat Temuan Tersisa/)],
@@ -102,6 +102,13 @@ const cases: Array<[string, () => void]> = [
   ["85 no global string replacement", () => assert.doesNotMatch(component + presentation, /\.replace(All)?\(/)],
   ["86 no client-generated authoritative anchor", () => assert.doesNotMatch(api, /anchor|offset|sourceText/)],
   ["87 no page-number fabrication", () => assert.doesNotMatch(presentation, /paragraph(Index)?|\/\s*\d+.*page/i)],
+  ["88 correction list waits for explicit Completed readiness", () => assert.match(component, /correctionAnalysis\.state !== "Completed"\) return/)],
+  ["89 readiness polling is chained and non-overlapping", () => assert.match(component, /await getAuditSummary\(identity\.auditId[\s\S]*setTimeout\(poll, 1500\)/)],
+  ["90 readiness polling aborts on canonical identity change", () => assert.match(component, /canonicalAuditId[\s\S]*active\?\.abort\(\)/)],
+  ["91 readiness polling does not retry correction 404", () => assert.doesNotMatch(component, /status === 404[\s\S]*setTimeout/)],
+  ["92 completed zero-proposal response remains visible", () => assert.match(component, /\{corrections\.totalCount\} usulan tersedia/)],
+  ["93 failed readiness has safe terminal copy", () => assert.match(component, /Analisis saran tidak dapat diselesaikan\. Dokumen asli tetap aman/)],
+  ["94 skipped readiness has safe terminal copy", () => assert.match(component, /Tidak ada analisis perbaikan bahasa untuk versi dokumen ini/)],
 ];
 
 for (const [name, body] of cases) test(name, body);

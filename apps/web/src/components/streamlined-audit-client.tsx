@@ -5,7 +5,8 @@ import { useParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ApiRequestError, apiFetchBlob } from "../lib/api";
 import { getAuditSummary, listAuditFindings } from "../lib/audit-api";
-import type { AuditFindingPage, AuditSummary } from "../lib/audit-contract";
+import { isTextCorrectionAnalysisTransitional, type AuditFindingPage, type AuditSummary } from "../lib/audit-contract";
+import { assertCanonicalSummary, canonicalIdentityFromCompletedBatch, canonicalIdentityFromRouteSummary, type CanonicalAuditIdentity } from "../lib/canonical-audit-identity";
 import { createTextCorrectionBatch, getDocumentPreviewState, getTextCorrectionBatch, getTextCorrectionContext, listTextCorrections, submitTextCorrectionDecision } from "../lib/text-correction-api";
 import type { CorrectionAction, CorrectionBatchStatus, DocumentPreviewState, TextCorrectionContext, TextCorrectionPage, TextCorrectionProposal } from "../lib/text-correction-contract";
 import { automaticProgress, batchProgress, contextStateCopy, decisionLabel, highlightedContext, isTerminalBatch, pageLocationLabel, previewFragment, safeCommandMessage, scalarCount, validateManualReplacement } from "../lib/streamlined-audit-presentation";
@@ -18,8 +19,10 @@ type ContextView = { state: "Loading" | "Exact" | "Stale" | "Unsupported" | "Una
 type CorrectionFilter = "All" | "Undecided" | "Selected" | "Ignored" | "Problem";
 
 export function StreamlinedAuditClient() {
-  const auditId = String(useParams().auditId);
-  const [summary, setSummary] = useState<AuditSummary>();
+  const routeAuditId = String(useParams().auditId);
+  const [current, setCurrent] = useState<{ identity: CanonicalAuditIdentity; summary: AuditSummary }>();
+  const summary = current?.summary;
+  const canonicalAuditId = current?.identity.auditId;
   const [corrections, setCorrections] = useState<TextCorrectionPage>();
   const [manualFindings, setManualFindings] = useState<AuditFindingPage>();
   const [proposalPage, setProposalPage] = useState(1);
@@ -39,24 +42,39 @@ export function StreamlinedAuditClient() {
   const decisionKeys = useRef(new Map<string, string>());
   const batchKey = useRef<string | undefined>(undefined);
   const contextRequests = useRef(new Map<string, AbortController>());
+  const activeAuditId = useRef<string | undefined>(undefined);
 
   const loadCorrections = useCallback(async (signal?: AbortSignal) => {
-    const value = await listTextCorrections(auditId, proposalPage, PAGE_SIZE, signal);
+    if (!canonicalAuditId) return;
+    const requestedAuditId = canonicalAuditId;
+    const value = await listTextCorrections(requestedAuditId, proposalPage, PAGE_SIZE, signal);
+    if (signal?.aborted || activeAuditId.current !== requestedAuditId) return;
     setCorrections(value);
     setBatch(value.activeBatch ?? undefined);
-  }, [auditId, proposalPage]);
+  }, [canonicalAuditId, proposalPage]);
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError(""); setCorrections(undefined); setBatch(undefined); setContexts({});
-    getAuditSummary(auditId, controller.signal)
-      .then(setSummary)
-      .catch(value => { if (!controller.signal.aborted) setError(commandMessage(value)); })
-      .finally(() => { if (!controller.signal.aborted) setLoading(false); });
+    setLoading(true); setError(""); setCurrent(undefined); setCorrections(undefined); setBatch(undefined); setContexts({});
+    const load = async () => {
+      try {
+        const routeSummary = await getAuditSummary(routeAuditId, controller.signal);
+        const identity = canonicalIdentityFromRouteSummary(routeAuditId, routeSummary);
+        const canonicalSummary = identity.auditId === routeSummary.id
+          ? routeSummary
+          : await getAuditSummary(identity.auditId, controller.signal);
+        if (controller.signal.aborted) return;
+        activeAuditId.current = identity.auditId;
+        setCurrent({ identity, summary: assertCanonicalSummary(identity, canonicalSummary) });
+      } catch (value) { if (!controller.signal.aborted) setError(commandMessage(value)); }
+      finally { if (!controller.signal.aborted) setLoading(false); }
+    };
+    void load();
     return () => controller.abort();
-  }, [auditId, reload]);
+  }, [routeAuditId, reload]);
 
   useEffect(() => {
+    if (!summary) return;
     const state = summary?.automaticRemediation?.state;
     if (summary?.status === "Completed" && (!state || ["NoAction", "Completed", "Failed", "Conflict"].includes(state))) return;
     if (summary?.status === "Failed" || summary?.status === "Cancelled") return;
@@ -65,38 +83,66 @@ export function StreamlinedAuditClient() {
   }, [summary?.status, summary?.automaticRemediation?.state, reload]);
 
   useEffect(() => {
+    if (!current || !isTextCorrectionAnalysisTransitional(current.summary.correctionAnalysis.state)) return;
+    if (batch && isTerminalBatch(batch.state)) return;
+    const identity = current.identity;
+    let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, active: AbortController | undefined;
+    const poll = async () => {
+      active = new AbortController();
+      try {
+        const value = assertCanonicalSummary(identity, await getAuditSummary(identity.auditId, active.signal));
+        if (stopped) return;
+        setCurrent(previous => previous?.identity.auditId === identity.auditId
+          ? { identity, summary: value }
+          : previous);
+        if (isTextCorrectionAnalysisTransitional(value.correctionAnalysis.state))
+          timer = setTimeout(poll, 1500);
+      } catch (value) {
+        if (!stopped && (value as { name?: string })?.name !== "AbortError") setError(commandMessage(value));
+      }
+    };
+    timer = setTimeout(poll, 1500);
+    return () => { stopped = true; active?.abort(); if (timer) clearTimeout(timer); };
+  }, [canonicalAuditId, summary?.correctionAnalysis.state, batch?.state]);
+
+  useEffect(() => {
     if (summary?.status !== "Completed") return;
+    if (batch?.state === "Completed") return;
+    if (summary.correctionAnalysis.state !== "Completed") return;
     const automatic = summary.automaticRemediation?.state;
     if (automatic && !["NoAction", "Completed"].includes(automatic)) return;
-    const controller = new AbortController(); let timer: ReturnType<typeof setTimeout> | undefined;
+    const controller = new AbortController();
     const load = async () => {
       try { await loadCorrections(controller.signal); }
       catch (value) {
         if (controller.signal.aborted) return;
-        if (value instanceof ApiRequestError && value.status === 404) timer = setTimeout(load, 1500);
-        else setError(commandMessage(value));
+        setError(commandMessage(value));
       }
     };
     void load();
-    return () => { controller.abort(); if (timer) clearTimeout(timer); };
-  }, [summary?.status, summary?.automaticRemediation?.state, loadCorrections]);
+    return () => controller.abort();
+  }, [summary?.status, summary?.automaticRemediation?.state, summary?.correctionAnalysis.state, batch?.state, loadCorrections]);
 
   useEffect(() => {
-    if (summary?.status !== "Completed") return;
+    if (summary?.status !== "Completed" || !canonicalAuditId) return;
     const controller = new AbortController();
-    listAuditFindings(auditId, { fixMode: "Manual", page: 1, pageSize: 25 }, controller.signal)
+    listAuditFindings(canonicalAuditId, { fixMode: "Manual", page: 1, pageSize: 25 }, controller.signal)
       .then(setManualFindings).catch(() => { /* Optional legacy section fails closed. */ });
     return () => controller.abort();
-  }, [auditId, summary?.status]);
+  }, [canonicalAuditId, summary?.status]);
 
   useEffect(() => {
     if (!batch || isTerminalBatch(batch.state)) return;
     let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, active: AbortController | undefined;
     const poll = async () => {
       active = new AbortController();
-      try { const value = await getTextCorrectionBatch(batch.id, active.signal); if (!stopped) setBatch(value); }
+      try {
+        const value = await getTextCorrectionBatch(batch.id, active.signal);
+        if (stopped) return;
+        setBatch(value);
+        if (!isTerminalBatch(value.state)) timer = setTimeout(poll, 1500);
+      }
       catch (value) { if (!stopped && (value as { name?: string })?.name !== "AbortError") setError(commandMessage(value)); }
-      if (!stopped) timer = setTimeout(poll, 1500);
     };
     timer = setTimeout(poll, 1500);
     return () => { stopped = true; active?.abort(); if (timer) clearTimeout(timer); };
@@ -104,7 +150,7 @@ export function StreamlinedAuditClient() {
 
   useEffect(() => {
     const versionId = batch?.resultDocumentVersionId;
-    if (!versionId) { setPreview(undefined); return; }
+    if (batch?.state !== "Completed" || !versionId) { setPreview(undefined); return; }
     let stopped = false, timer: ReturnType<typeof setTimeout> | undefined, active: AbortController | undefined;
     const poll = async () => {
       active = new AbortController();
@@ -116,18 +162,25 @@ export function StreamlinedAuditClient() {
     };
     void poll();
     return () => { stopped = true; active?.abort(); if (timer) clearTimeout(timer); };
-  }, [batch?.resultDocumentVersionId]);
+  }, [batch?.state, batch?.resultDocumentVersionId]);
 
   useEffect(() => {
-    if (batch?.state !== "Completed" || !batch.reauditId) { setFinalSummary(undefined); return; }
+    if (batch?.state !== "Completed" || !batch.reauditId || !current) { setFinalSummary(undefined); return; }
+    if (current.identity.auditId === batch.reauditId && finalSummary?.id === batch.reauditId) return;
     const controller = new AbortController();
-    getAuditSummary(batch.reauditId, controller.signal)
-      .then(setFinalSummary)
+    const nextIdentity = canonicalIdentityFromCompletedBatch(current.identity, batch);
+    getAuditSummary(nextIdentity.auditId, controller.signal)
+      .then(value => {
+        const canonicalSummary = assertCanonicalSummary(nextIdentity, value);
+        activeAuditId.current = nextIdentity.auditId;
+        setCorrections(undefined); setContexts({}); setManualFindings(undefined);
+        setCurrent({ identity: nextIdentity, summary: canonicalSummary }); setFinalSummary(canonicalSummary);
+      })
       .catch(value => { if (!controller.signal.aborted) setError(commandMessage(value)); });
     return () => controller.abort();
-  }, [batch?.state, batch?.reauditId]);
+  }, [batch?.state, batch?.reauditId, batch?.resultDocumentVersionId, current?.identity.auditId, finalSummary?.id]);
 
-  useEffect(() => () => { for (const controller of contextRequests.current.values()) controller.abort(); contextRequests.current.clear(); }, [auditId]);
+  useEffect(() => () => { for (const controller of contextRequests.current.values()) controller.abort(); contextRequests.current.clear(); }, [canonicalAuditId]);
 
   async function loadContext(proposalId: string): Promise<TextCorrectionContext | undefined> {
     const existing = contexts[proposalId]; if (existing?.value) return existing.value;
@@ -162,9 +215,10 @@ export function StreamlinedAuditClient() {
   }
 
   async function createBatch() {
+    if (!canonicalAuditId) return;
     const key = batchKey.current ?? crypto.randomUUID(); batchKey.current = key; setError("");
     try {
-      const accepted = await createTextCorrectionBatch(auditId, key);
+      const accepted = await createTextCorrectionBatch(canonicalAuditId, key);
       const canonical = await getTextCorrectionBatch(accepted.id); setBatch(canonical); setConfirmBatch(false);
     } catch (value) { if (value instanceof ApiRequestError && value.status === 409) await loadCorrections(); setError(commandMessage(value)); }
   }
@@ -185,18 +239,19 @@ export function StreamlinedAuditClient() {
     <header className="streamlined-header"><div><p className="eyebrow">{final ? "Hasil akhir" : "Hasil audit"}</p><h1>{final ? "Perbaikan selesai" : "Hasil Audit"}</h1><p className="muted">{final ? "Perbaikan telah diterapkan ke satu versi baru dan diverifikasi." : "Tinjau hanya temuan yang membutuhkan keputusan Anda."}</p></div></header>
     {error && <div className="error-box" role="alert">{error}<button className="text-button" type="button" onClick={() => setReload(value => value + 1)}>Coba lagi</button></div>}
     <AuditProgress summary={summary} />
-    <section className="summary-strip" aria-label={final ? "Ringkasan hasil akhir" : "Ringkasan hasil audit"}>
-      <SummaryMetric label={final ? "Temuan sebelum keputusan" : "Masalah ditemukan"} value={summary.findingCount} />
+    {(!final || finalSummary) && <section className="summary-strip" aria-label={final ? "Ringkasan hasil akhir" : "Ringkasan hasil audit"}>
+      <SummaryMetric label={final ? "Masalah tersisa" : "Masalah ditemukan"} value={summary.findingCount} />
       <SummaryMetric label="Diperbaiki otomatis" value={summary.automaticRemediation?.verifiedResolvedCount ?? 0} />
       {!final && <SummaryMetric label="Perlu keputusan" value={corrections?.summary.undecidedCount ?? 0} />}
       <SummaryMetric label="Diabaikan" value={corrections?.summary.ignoredCount ?? 0} />
       {final ? <SummaryMetric label="Diperbaiki admin" value={batch.verificationCounts.VerifiedResolved ?? 0} />
         : <SummaryMetric label="Masih perlu pemeriksaan" value={summary.automaticRemediation?.stillDetectedCount ?? summary.fixModes.manual} />}
-      {final && finalSummary && <SummaryMetric label="Temuan versi akhir" value={finalSummary.findingCount} />}
-    </section>
+    </section>}
     {final && !finalSummary && <p className="muted" role="status">Memuat ringkasan versi akhir...</p>}
 
     {batch && <BatchPanel batch={batch} preview={preview} openFinal={() => void openPreview(batch.resultDocumentVersionId, null)} />}
+
+    {!final && !corrections && <CorrectionAnalysisState state={summary.correctionAnalysis.state} />}
 
     {!final && corrections && <section className="correction-section" aria-labelledby="corrections-title">
       <div className="section-heading"><div><h2 id="corrections-title">Perbaikan bahasa</h2><p>{corrections.totalCount} usulan tersedia. Konteks dimuat hanya saat diminta.</p></div>
@@ -209,9 +264,19 @@ export function StreamlinedAuditClient() {
     {!final && readyCount > 0 && !batch && <aside className="batch-bar" aria-live="polite"><div><strong>{readyCount} perbaikan siap diterapkan</strong><span>Semua pilihan diterapkan ke satu versi baru.</span></div><button className="button" type="button" onClick={() => setConfirmBatch(true)}>Terapkan {readyCount} Perbaikan</button></aside>}
     {!final && corrections && readyCount === 0 && !batch && <aside className="batch-bar batch-disabled"><div><strong>Belum ada perbaikan siap diterapkan</strong><span>Pilih Gunakan Saran atau Edit Manual pada usulan.</span></div><button className="button" type="button" disabled>Terapkan Perbaikan</button></aside>}
 
-    {manualFindings && manualFindings.items.length > 0 && <details className="panel legacy-findings"><summary>Lihat temuan yang perlu pemeriksaan manual</summary><p className="muted">Workflow lama tetap tersedia pada detail temuan struktural yang belum memiliki alur khusus.</p><ul>{manualFindings.items.map(item => <li key={item.id}><div><strong>{item.element}</strong><FindingLocation value={item.location} /></div><Link className="button secondary" href={`/audits/${encodeURIComponent(auditId)}/findings/${encodeURIComponent(item.id)}`}>Periksa temuan</Link></li>)}</ul></details>}
+    {manualFindings && manualFindings.items.length > 0 && <details className="panel legacy-findings"><summary>Lihat temuan yang perlu pemeriksaan manual</summary><p className="muted">Workflow lama tetap tersedia pada detail temuan struktural yang belum memiliki alur khusus.</p><ul>{manualFindings.items.map(item => <li key={item.id}><div><strong>{item.element}</strong><FindingLocation value={item.location} /></div><Link className="button secondary" href={`/audits/${encodeURIComponent(canonicalAuditId ?? routeAuditId)}/findings/${encodeURIComponent(item.id)}`}>Periksa temuan</Link></li>)}</ul></details>}
     <ConfirmationDialog open={confirmBatch} title={`Terapkan ${readyCount} perbaikan?`} description={`Terapkan ${readyCount} perbaikan ke satu versi baru dokumen?`} confirmLabel="Terapkan" busy={Boolean(batch && !isTerminalBatch(batch.state))} onConfirm={createBatch} onClose={() => setConfirmBatch(false)} />
   </main>;
+}
+
+function CorrectionAnalysisState({ state }: { state: AuditSummary["correctionAnalysis"]["state"] }) {
+  if (isTextCorrectionAnalysisTransitional(state))
+    return <section className="panel" role="status" aria-live="polite"><h2>Menyiapkan perbaikan bahasa...</h2><p>Saran sedang dianalisis. Halaman ini akan diperbarui otomatis.</p></section>;
+  if (state === "Failed")
+    return <section className="panel progress-failed" role="status"><h2>Perbaikan bahasa belum tersedia</h2><p>Analisis saran tidak dapat diselesaikan. Dokumen asli tetap aman.</p></section>;
+  if (state === "Skipped")
+    return <section className="panel" role="status"><h2>Perbaikan bahasa tidak tersedia</h2><p>Tidak ada analisis perbaikan bahasa untuk versi dokumen ini.</p></section>;
+  return null;
 }
 
 function AuditProgress({ summary }: { summary: AuditSummary }) {
