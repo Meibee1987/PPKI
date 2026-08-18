@@ -99,6 +99,30 @@ public sealed class DocumentRenderTests
     }
 
     [Fact]
+    public void Claim_terminalizes_exhausted_pending_or_expired_rows_and_never_starts_attempt_four()
+    {
+        var worker = Source("backend", "services", "Ppki.Worker", "QueuedDocumentRenderWorker.cs");
+        var recovery = worker.IndexOf("await RecoverOneExhaustedAsync", StringComparison.Ordinal);
+        var reset = worker.IndexOf("value.AttemptCount < value.MaxAttempts", recovery, StringComparison.Ordinal);
+        var claim = worker.IndexOf("where state = 'Pending' and attempt_count < max_attempts", reset,
+            StringComparison.Ordinal);
+        var increment = worker.IndexOf("job.AttemptCount++", claim, StringComparison.Ordinal);
+
+        Assert.True(recovery >= 0 && reset > recovery && claim > reset && increment > claim);
+        Assert.Contains("where attempt_count >= max_attempts", worker, StringComparison.Ordinal);
+        Assert.Contains("for update skip locked", worker, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("exhausted.State = DocumentRenderState.Processing", worker, StringComparison.Ordinal);
+        Assert.Contains("exhausted.State = DocumentRenderState.Failed", worker, StringComparison.Ordinal);
+        Assert.Contains("exhausted.ClaimToken = recoveryToken", worker, StringComparison.Ordinal);
+        Assert.Contains("render-attempts-exhausted", worker, StringComparison.Ordinal);
+        Assert.DoesNotContain("attempt_count <= max_attempts", worker, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("state in ('Completed','Failed')", worker, StringComparison.OrdinalIgnoreCase);
+
+        var migration = Source("supabase", "migrations", "202608080001_document_render_page_map.sql");
+        Assert.Contains("attempt_count between 0 and max_attempts", migration, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
     public void Preview_and_page_map_reads_are_authorized_bounded_and_do_not_expose_paths()
     {
         var api = Source("backend", "services", "Ppki.Api", "Program.cs");

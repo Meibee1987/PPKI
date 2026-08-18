@@ -52,8 +52,10 @@ public sealed class QueuedDocumentRenderWorker(
         using var scope = scopes.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<PpkiDbContext>();
         var now = DateTimeOffset.UtcNow;
+        await RecoverOneExhaustedAsync(db, now, cancellationToken);
         await db.DocumentRenderJobs
-            .Where(value => value.State == DocumentRenderState.Processing && value.LeaseExpiresAt < now)
+            .Where(value => value.State == DocumentRenderState.Processing && value.LeaseExpiresAt < now
+                && value.AttemptCount < value.MaxAttempts)
             .ExecuteUpdateAsync(update => update
                 .SetProperty(value => value.State, DocumentRenderState.Pending)
                 .SetProperty(value => value.ClaimToken, (Guid?)null)
@@ -63,7 +65,8 @@ public sealed class QueuedDocumentRenderWorker(
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var job = await db.DocumentRenderJobs.FromSqlInterpolated($$"""
             select * from public.document_render_jobs
-            where state = 'Pending' and (next_attempt_at is null or next_attempt_at <= {{now}})
+            where state = 'Pending' and attempt_count < max_attempts
+              and (next_attempt_at is null or next_attempt_at <= {{now}})
             order by priority desc, created_at, id
             for update skip locked
             limit 1
@@ -79,6 +82,42 @@ public sealed class QueuedDocumentRenderWorker(
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(job.Id, token, job.AttemptCount, job.LeaseExpiresAt.Value);
+    }
+
+    private static async Task RecoverOneExhaustedAsync(
+        PpkiDbContext db,
+        DateTimeOffset now,
+        CancellationToken cancellationToken)
+    {
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var exhausted = await db.DocumentRenderJobs.FromSqlInterpolated($$"""
+            select * from public.document_render_jobs
+            where attempt_count >= max_attempts
+              and (state = 'Pending' or state = 'Processing' and lease_expires_at < {{now}})
+            order by priority desc, created_at, id
+            for update skip locked
+            limit 1
+            """).SingleOrDefaultAsync(cancellationToken);
+        if (exhausted is null) { await transaction.CommitAsync(cancellationToken); return; }
+
+        var recoveryToken = Guid.NewGuid();
+        exhausted.State = DocumentRenderState.Processing;
+        exhausted.ClaimToken = recoveryToken;
+        exhausted.StartedAt ??= now;
+        exhausted.LeaseExpiresAt = now.Add(LeaseDuration);
+        exhausted.NextAttemptAt = null;
+        await db.SaveChangesAsync(cancellationToken);
+
+        if (exhausted.ClaimToken != recoveryToken)
+            throw new InvalidOperationException("Document render exhaustion recovery fence was lost.");
+        exhausted.State = DocumentRenderState.Failed;
+        exhausted.ClaimToken = null;
+        exhausted.LeaseExpiresAt = null;
+        exhausted.NextAttemptAt = null;
+        exhausted.SafeFailureCode = "render-attempts-exhausted";
+        exhausted.CompletedAt = now;
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
     }
 
     internal async Task RetryOrFailAsync(
