@@ -335,7 +335,14 @@ public sealed class FixExecutionProcessor(
         try { selected = System.Text.Json.JsonSerializer.Deserialize<Guid[]>(source.SelectedFindingIdsJson) ?? []; }
         catch (System.Text.Json.JsonException exception)
         { throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-selection-invalid", exception); }
-        if (selected.Length is < 1 or > FixPlanSelection.MaximumFindingCount || selected.Contains(Guid.Empty)
+        ValidateApprovedSelection(approved, selected);
+    }
+
+    internal static void ValidateApprovedSelection(ApprovedFixExecutionPlan approved, IReadOnlyList<Guid> selected)
+    {
+        var maximumSelectionCount = ApprovedFixExecutionPlanSerializer.MaximumSelectionCount(approved);
+        if (selected.Count < 1 || selected.Count > maximumSelectionCount || selected.Contains(Guid.Empty)
+            || selected.Distinct().Count() != selected.Count
             || !selected.ToHashSet().SetEquals(approved.Source.Findings.Select(value => value.FindingId))
             || approved.Preview.Operations.Select(value => value.Ordinal).Distinct().Count() != approved.Preview.Operations.Count)
             throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-selection-invalid");

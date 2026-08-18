@@ -10,6 +10,7 @@ using Ppki.Domain;
 using Ppki.FixEngine;
 using Ppki.Infrastructure;
 using Ppki.RuleEngine.Tests.Fixtures;
+using Ppki.Worker;
 using Xunit;
 
 namespace Ppki.RuleEngine.Tests;
@@ -450,6 +451,48 @@ public sealed class FixExecutionAcceptanceTests
         Assert.Equal(1, accepted.SelectedFindingCount);
     }
 
+    [Fact]
+    public async Task Automatic_selection_over_two_thousand_is_persisted_and_worker_validated_but_manual_stays_bounded()
+    {
+        const int count = 2_031;
+        var plan = Data.LargePlan(count);
+        Assert.Equal(count, plan.Preview.Operations.Count);
+        var selection = new FixPlanSelection(plan.Source.Findings.Select(value => value.FindingId).ToArray());
+        var repository = new MemoryExecutionRepository();
+
+        var accepted = await Service(plan.Source, repository).AcceptAutomaticAsync(plan.Source.AuditId,
+            Guid.NewGuid(), Guid.NewGuid(), selection, plan.Preview.PlanHash, CancellationToken.None);
+
+        Assert.NotNull(accepted);
+        Assert.Equal(count, accepted.SelectedFindingCount);
+        Assert.Equal(count, repository.Single.PlannedOperationCount);
+        var approved = ApprovedFixExecutionPlanSerializer.Deserialize(repository.Single.ApprovedPlanSnapshotJson);
+        Assert.Equal(FixExecutionSelectionScope.Automatic, approved.SelectionScope);
+        FixExecutionProcessor.ValidateApprovedSelection(approved, selection.FindingIds);
+        Assert.False(FixPlanSelection.TryCreate(Enumerable.Range(1, 101).Select(value =>
+            Guid.Parse($"40000000-0000-0000-0000-{value:000000000000}").ToString()), out _, out var error));
+        Assert.Equal("fix-plan-selection-too-large", error);
+    }
+
+    [Fact]
+    public void Worker_selection_validation_rejects_duplicate_mismatch_and_manual_overflow()
+    {
+        var plan = Data.Plan();
+        var manual = new ApprovedFixExecutionPlan(ApprovedFixExecutionPlanSerializer.SchemaVersion,
+            plan.Source, plan.Preview, FixExecutionSelectionScope.Manual);
+        var id = plan.Source.Findings.Single().FindingId;
+        Assert.Equal("approved-plan-selection-invalid", Assert.Throws<FixExecutionException>(() =>
+            FixExecutionProcessor.ValidateApprovedSelection(manual, [id, id])).DiagnosticCode);
+        Assert.Equal("approved-plan-selection-invalid", Assert.Throws<FixExecutionException>(() =>
+            FixExecutionProcessor.ValidateApprovedSelection(manual, [Guid.NewGuid()])).DiagnosticCode);
+        var large = Data.LargePlan(101);
+        var manualLarge = new ApprovedFixExecutionPlan(ApprovedFixExecutionPlanSerializer.SchemaVersion,
+            large.Source, large.Preview, FixExecutionSelectionScope.Manual);
+        Assert.Equal("approved-plan-selection-invalid", Assert.Throws<FixExecutionException>(() =>
+            FixExecutionProcessor.ValidateApprovedSelection(manualLarge,
+                large.Source.Findings.Select(value => value.FindingId).ToArray())).DiagnosticCode);
+    }
+
     private static FixExecutionService Service(FixPlanSource source, MemoryExecutionRepository repository) => new(
         new StaticSourceReader(source),
         new DeterministicFixPlanPreviewPlanner(ProductionFixCapabilities.CreatePreviewRegistry()),
@@ -471,6 +514,7 @@ public sealed class FixExecutionAcceptanceTests
         private readonly object gate = new();
         private readonly List<FixExecutionJob> jobs = [];
         public int Count { get { lock (gate) return jobs.Count; } }
+        public FixExecutionJob Single { get { lock (gate) return jobs.Single(); } }
 
         public Task<FixExecutionEnqueueResult> EnqueueAsync(FixExecutionCandidate candidate, CancellationToken cancellationToken)
         {
@@ -523,16 +567,27 @@ internal static class Data
         return (source, new DeterministicFixPlanPreviewPlanner(ProductionFixCapabilities.CreatePreviewRegistry()).Create(source));
     }
 
-    internal static FixPlanFindingSnapshot Finding() => new(
-        Guid.Parse("30000000-0000-0000-0000-000000000001"), 19, "PPKI-LAY-019", "layout", "body",
+    internal static (FixPlanSource Source, FixPlanPreview Preview) LargePlan(int count)
+    {
+        var findings = Enumerable.Range(1, count).Select(Finding).ToArray();
+        var source = new FixPlanSource(Guid.Parse("10000000-0000-0000-0000-000000000001"), AuditJobStatus.Completed,
+            Guid.Parse("20000000-0000-0000-0000-000000000001"), new string('a', 64), new string('b', 64),
+            DocumentKind.Skripsi, findings);
+        return (source, new DeterministicFixPlanPreviewPlanner(ProductionFixCapabilities.CreatePreviewRegistry()).Create(source));
+    }
+
+    internal static FixPlanFindingSnapshot Finding() => Finding(1);
+
+    internal static FixPlanFindingSnapshot Finding(int index) => new(
+        Guid.Parse($"30000000-0000-0000-0000-{index:000000000000}"), 19, "PPKI-LAY-019", "layout", "body",
         "body.justified", RuleSeverity.Error, FixMode.Auto, FindingStatus.Open,
         JsonSerializer.Serialize(new { Property = "alignment", RawValue = "Left", NormalizedValue = "Left", Unit = "enum",
             ResolutionState = "Resolved", SourceKind = "Direct", SourceStyleId = (string?)null, Inherited = false,
-            DiagnosticCode = (string?)null, SectionIndex = 0, ParagraphIndex = 0, RunIndex = (int?)null }),
+            DiagnosticCode = (string?)null, SectionIndex = 0, ParagraphIndex = index - 1, RunIndex = (int?)null }),
         JsonSerializer.Serialize(new { Property = "alignment", AcceptedValues = new[] { "Justified" }, Unit = "enum",
             Tolerance = (string?)null, ContractSource = "resolved-snapshot-validation-key", ValidationKey = "body.justified" }),
-        JsonSerializer.Serialize(new { CompactLocation = "maindocument/s:0/b:0/p:0/kind:paragraph", SectionIndex = 0,
-            BodyElementIndex = 0, ParagraphIndex = 0, RunIndex = (int?)null }), 1);
+        JsonSerializer.Serialize(new { CompactLocation = $"maindocument/s:0/b:{index - 1}/p:{index - 1}/kind:paragraph", SectionIndex = 0,
+            BodyElementIndex = index - 1, ParagraphIndex = index - 1, RunIndex = (int?)null }), 1);
 
     internal static FixExecutionJob Job() => new()
     {

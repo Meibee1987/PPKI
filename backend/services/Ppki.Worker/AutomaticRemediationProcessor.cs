@@ -151,7 +151,7 @@ public sealed class AutomaticRemediationProcessor(
 
         try
         {
-            var accepted = await executions.AcceptAsync(audit.Id, audit.RequestedByUserId.Value,
+            var accepted = await executions.AcceptAutomaticAsync(audit.Id, audit.RequestedByUserId.Value,
                 CanonicalGuid(audit.Id, AutomaticRemediationPolicy.Version), selection,
                 preview.PlanHash, cancellationToken);
             if (accepted is null)

@@ -7,31 +7,51 @@ namespace Ppki.Application;
 
 public sealed record FixExecutionRequest(string[]? FindingIds, string? PlanHash);
 
+[JsonConverter(typeof(JsonStringEnumConverter<FixExecutionSelectionScope>))]
+public enum FixExecutionSelectionScope
+{
+    Manual,
+    Automatic
+}
+
 public sealed record ApprovedFixExecutionPlan(
     string SchemaVersion,
     FixPlanSource Source,
-    FixPlanPreview Preview);
+    FixPlanPreview Preview,
+    FixExecutionSelectionScope SelectionScope = FixExecutionSelectionScope.Manual);
 
 public static class ApprovedFixExecutionPlanSerializer
 {
-    public const string SchemaVersion = "fix-execution-plan/1.0";
+    public const string SchemaVersion = "fix-execution-plan/1.1";
+    public const string LegacySchemaVersion = "fix-execution-plan/1.0";
+    public const int MaximumAutomaticFindingCount = AuditFindingQuery.MaximumFindingCount;
     private static readonly JsonSerializerOptions Options = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
         Converters = { new JsonStringEnumConverter() }
     };
 
-    public static string Serialize(FixPlanSource source, FixPlanPreview preview) =>
-        JsonSerializer.Serialize(new ApprovedFixExecutionPlan(SchemaVersion, source, preview), Options);
+    public static string Serialize(FixPlanSource source, FixPlanPreview preview,
+        FixExecutionSelectionScope selectionScope = FixExecutionSelectionScope.Manual) =>
+        JsonSerializer.Serialize(new ApprovedFixExecutionPlan(SchemaVersion, source, preview, selectionScope), Options);
 
     public static ApprovedFixExecutionPlan Deserialize(string json)
     {
         var result = JsonSerializer.Deserialize<ApprovedFixExecutionPlan>(json, Options)
             ?? throw new FixExecutionException("fix-execution-snapshot-invalid");
-        if (!string.Equals(result.SchemaVersion, SchemaVersion, StringComparison.Ordinal))
+        if (!string.Equals(result.SchemaVersion, SchemaVersion, StringComparison.Ordinal)
+            && !string.Equals(result.SchemaVersion, LegacySchemaVersion, StringComparison.Ordinal))
             throw new FixExecutionException("fix-execution-snapshot-version-unsupported");
+        if (string.Equals(result.SchemaVersion, LegacySchemaVersion, StringComparison.Ordinal)
+            && result.SelectionScope != FixExecutionSelectionScope.Manual)
+            throw new FixExecutionException("fix-execution-snapshot-invalid");
         return result;
     }
+
+    public static int MaximumSelectionCount(ApprovedFixExecutionPlan plan) =>
+        plan.SelectionScope == FixExecutionSelectionScope.Automatic
+            ? MaximumAutomaticFindingCount
+            : FixPlanSelection.MaximumFindingCount;
 }
 
 public sealed class FixExecutionException : Exception
@@ -116,6 +136,8 @@ public interface IFixExecutionService
 {
     Task<FixExecutionAccepted?> AcceptAsync(Guid auditId, Guid ownerUserId, Guid idempotencyKey,
         FixPlanSelection selection, string planHash, CancellationToken cancellationToken);
+    Task<FixExecutionAccepted?> AcceptAutomaticAsync(Guid auditId, Guid ownerUserId, Guid idempotencyKey,
+        FixPlanSelection selection, string planHash, CancellationToken cancellationToken);
     Task<FixExecutionStatus?> GetAsync(Guid executionId, Guid ownerUserId, CancellationToken cancellationToken);
 }
 
@@ -127,7 +149,18 @@ public sealed class FixExecutionService(
     TimeProvider timeProvider) : IFixExecutionService
 {
     public async Task<FixExecutionAccepted?> AcceptAsync(Guid auditId, Guid ownerUserId, Guid idempotencyKey,
-        FixPlanSelection selection, string planHash, CancellationToken cancellationToken)
+        FixPlanSelection selection, string planHash, CancellationToken cancellationToken) =>
+        await AcceptAsync(auditId, ownerUserId, idempotencyKey, selection, planHash,
+            FixExecutionSelectionScope.Manual, cancellationToken);
+
+    public async Task<FixExecutionAccepted?> AcceptAutomaticAsync(Guid auditId, Guid ownerUserId,
+        Guid idempotencyKey, FixPlanSelection selection, string planHash, CancellationToken cancellationToken) =>
+        await AcceptAsync(auditId, ownerUserId, idempotencyKey, selection, planHash,
+            FixExecutionSelectionScope.Automatic, cancellationToken);
+
+    private async Task<FixExecutionAccepted?> AcceptAsync(Guid auditId, Guid ownerUserId, Guid idempotencyKey,
+        FixPlanSelection selection, string planHash, FixExecutionSelectionScope selectionScope,
+        CancellationToken cancellationToken)
     {
         if (idempotencyKey == Guid.Empty) throw new FixExecutionException("fix-execution-idempotency-key-invalid");
         if (!ValidSha(planHash)) throw new FixExecutionException("fix-execution-plan-hash-invalid");
@@ -145,7 +178,7 @@ public sealed class FixExecutionService(
         var idsJson = JsonSerializer.Serialize(selection.FindingIds.Select(value => value.ToString("D")).ToArray());
         var candidate = new FixExecutionCandidate(Guid.NewGuid(), auditId, source.DocumentVersionId,
             ownerUserId, idempotencyKey, preview.PlanHash, preview.PlannerVersion, idsJson,
-            ApprovedFixExecutionPlanSerializer.Serialize(source, preview), preview.Operations.Count,
+            ApprovedFixExecutionPlanSerializer.Serialize(source, preview, selectionScope), preview.Operations.Count,
             timeProvider.GetUtcNow());
         var result = await repository.EnqueueAsync(candidate, cancellationToken);
         if (result.ConflictCode is not null) throw new FixExecutionException(result.ConflictCode);

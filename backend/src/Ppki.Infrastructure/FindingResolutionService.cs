@@ -259,10 +259,13 @@ public sealed class FindingResolutionService(
         try
         {
             var ids = JsonSerializer.Deserialize<string[]>(source.SelectedFindingIdsJson) ?? [];
-            var selected = ids.Select(Guid.Parse).ToHashSet();
+            var parsed = ids.Select(Guid.Parse).ToArray();
+            var selected = parsed.ToHashSet();
             var approved = ApprovedFixExecutionPlanSerializer.Deserialize(source.ApprovedPlanSnapshotJson);
             var approvedIds = approved.Source.Findings.Select(value => value.FindingId).ToHashSet();
-            if (selected.Count is < 1 or > FixPlanSelection.MaximumFindingCount || selected.Contains(Guid.Empty)
+            var maximumSelectionCount = ApprovedFixExecutionPlanSerializer.MaximumSelectionCount(approved);
+            if (parsed.Length < 1 || parsed.Length > maximumSelectionCount || selected.Contains(Guid.Empty)
+                || selected.Count != parsed.Length
                 || !selected.SetEquals(approvedIds) || approved.Source.AuditId != source.SourceAuditId
                 || approved.Source.DocumentVersionId != source.SourceDocumentVersionId
                 || approved.Source.AuditStatus != AuditJobStatus.Completed
