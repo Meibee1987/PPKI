@@ -9,6 +9,7 @@ import {
   attachContainerOwners,
   ensureApplicationPortAvailable,
   ensureInfraPortsAvailable,
+  ensureLocalRenderer,
   findRepositoryRoot,
   formatPortConflicts,
   loadLocalOverrides,
@@ -76,6 +77,28 @@ test("child environment maps CLI values without logging or changing source data"
   assert.equal(env.Supabase__SecretKey, secret);
   assert.equal(env.NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY, "anon-local");
   assert.equal(env.NEXT_PUBLIC_SUPABASE_SECRET_KEY, undefined);
+  assert.equal(env.DocumentRenderer__BaseUrl, "http://127.0.0.1:55300");
+});
+
+test("canonical local renderer reuses only the exact pinned healthy container", async () => {
+  const calls = [];
+  await ensureLocalRenderer("D:/repo", async (command, args) => {
+    calls.push([command, ...args]);
+    return { code: 0, stdout: "gotenberg/gotenberg:8.34.0-libreoffice@sha256:3c23aeb3a027a63d7c71745fc9d83724bd58cf9dfa470396ac82c0896028db2a|true|[\"gotenberg\",\"--api-timeout=120s\"]\n", stderr: "" };
+  }, async () => true);
+  assert.deepEqual(calls, [["docker", "inspect", "--format", "{{.Config.Image}}|{{.State.Running}}|{{json .Config.Cmd}}", "ppki-smart-formatter-renderer-dev"]]);
+});
+
+test("canonical local renderer replaces only its stateless stale-timeout container", async () => {
+  const calls = [];
+  await ensureLocalRenderer("D:/repo", async (command, args) => {
+    calls.push([command, ...args]);
+    if (args[0] === "inspect") return { code: 0, stdout: "gotenberg/gotenberg:8.34.0-libreoffice@sha256:3c23aeb3a027a63d7c71745fc9d83724bd58cf9dfa470396ac82c0896028db2a|true|[\"gotenberg\",\"--api-timeout=30s\"]\n", stderr: "" };
+    return { code: 0, stdout: "ok", stderr: "" };
+  }, async () => true);
+  assert.equal(calls[1][1], "rm");
+  assert.equal(calls[2][1], "run");
+  assert.ok(calls[2].includes("--api-timeout=120s"));
 });
 
 test("bootstrap local web environment is accepted by the frontend validator", async () => {

@@ -6,7 +6,10 @@ import { fileURLToPath } from "node:url";
 const SCRIPT_DIR = path.dirname(fileURLToPath(import.meta.url));
 const DEFAULT_ROOT = path.resolve(SCRIPT_DIR, "..");
 const PROJECT_ID = "ppki-smart-formatter";
-const INFRA_PORTS = Object.freeze([54320, 54322, 54323, 54324, 54327, 55321]);
+const RENDERER_CONTAINER = "ppki-smart-formatter-renderer-dev";
+const RENDERER_IMAGE = "gotenberg/gotenberg:8.34.0-libreoffice@sha256:3c23aeb3a027a63d7c71745fc9d83724bd58cf9dfa470396ac82c0896028db2a";
+const DEFAULT_RENDERER_PORT = 55300;
+const INFRA_PORTS = Object.freeze([54320, 54322, 54323, 54324, 54327, 55321, DEFAULT_RENDERER_PORT]);
 const REQUIRED_STATUS_NAMES = Object.freeze(["API_URL", "DB_URL", "ANON_KEY", "SERVICE_ROLE_KEY"]);
 const SENSITIVE_NAME = /(?:KEY|SECRET|PASSWORD|TOKEN|JWT|DB_URL|CONNECTION)/i;
 const PLACEHOLDER = /(?:replace_me|project_ref|change-me|your[-_]|example)/i;
@@ -83,11 +86,16 @@ export function localSettings(overrides = {}) {
   const webPort = parsePort("WEB_PORT", overrides.WEB_PORT, 3000);
   const workerPoll = parsePort("WORKER_POLL_SECONDS", overrides.WORKER_POLL_SECONDS, 2);
   const healthTimeout = parsePort("HEALTHCHECKS_TIMEOUT_SECONDS", overrides.HEALTHCHECKS_TIMEOUT_SECONDS, 3);
+  const rendererPort = parsePort("DOCUMENT_RENDERER_PORT", overrides.DOCUMENT_RENDERER_PORT, DEFAULT_RENDERER_PORT);
+  const rendererTimeout = parsePort("DOCUMENT_RENDERER_TIMEOUT_SECONDS", overrides.DOCUMENT_RENDERER_TIMEOUT_SECONDS, 120);
   return {
     apiPort,
     webPort,
     workerPoll,
     healthTimeout,
+    rendererPort,
+    rendererUrl: `http://127.0.0.1:${rendererPort}`,
+    rendererTimeout,
     apiUrl: `http://127.0.0.1:${apiPort}`,
     webUrl: `http://localhost:${webPort}`,
   };
@@ -186,6 +194,8 @@ export function buildChildEnvironment(base, supabase, settings, catalog) {
     Cors__AllowedOrigins__0: settings.webUrl,
     Worker__PollSeconds: String(settings.workerPoll),
     HealthChecks__TimeoutSeconds: String(settings.healthTimeout),
+    DocumentRenderer__BaseUrl: settings.rendererUrl ?? `http://127.0.0.1:${DEFAULT_RENDERER_PORT}`,
+    DocumentRenderer__TimeoutSeconds: String(settings.rendererTimeout ?? 120),
     NEXT_PUBLIC_API_BASE_URL: settings.apiUrl,
     NEXT_PUBLIC_SUPABASE_URL: supabase.API_URL,
     NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY: supabase.ANON_KEY,
@@ -229,8 +239,39 @@ export async function listProjectContainers(root, run = spawnResult) {
   if (result.code !== 0) return [];
   return result.stdout.split(/\r?\n/u).filter(Boolean).map((line) => {
     const [name, ports = ""] = line.split("|");
-    return { name, ports, owned: name.includes(PROJECT_ID) && name.startsWith("supabase_") };
+    return { name, ports, owned: name === RENDERER_CONTAINER
+      || name.includes(PROJECT_ID) && name.startsWith("supabase_") };
   });
+}
+
+export async function ensureLocalRenderer(root, run = spawnResult, probe = async (url) => {
+  try { return (await fetch(url, { signal: AbortSignal.timeout(2_000) })).ok; } catch { return false; }
+}, port = DEFAULT_RENDERER_PORT, timeoutSeconds = 120) {
+  let inspected = await run("docker", ["inspect", "--format", "{{.Config.Image}}|{{.State.Running}}|{{json .Config.Cmd}}", RENDERER_CONTAINER], { cwd: root });
+  let create = inspected.code !== 0;
+  if (!create) {
+    const [image, running, command] = inspected.stdout.trim().split("|");
+    if (image !== RENDERER_IMAGE) throw new Error(`Container ${RENDERER_CONTAINER} tidak memakai image renderer pinned.`);
+    if (command !== JSON.stringify(["gotenberg", `--api-timeout=${timeoutSeconds}s`])) {
+      const removed = await run("docker", ["rm", "-f", RENDERER_CONTAINER], { cwd: root });
+      if (removed.code !== 0) throw new Error("Renderer lokal stale gagal diganti.");
+      create = true;
+    } else if (running !== "true") {
+      const started = await run("docker", ["start", RENDERER_CONTAINER], { cwd: root });
+      if (started.code !== 0) throw new Error("Renderer lokal gagal dimulai.");
+    }
+  }
+  if (create) {
+    const started = await run("docker", ["run", "-d", "--name", RENDERER_CONTAINER,
+      "-p", `127.0.0.1:${port}:3000`, RENDERER_IMAGE,
+      "gotenberg", `--api-timeout=${timeoutSeconds}s`], { cwd: root });
+    if (started.code !== 0) throw new Error("Renderer lokal gagal dibuat dari image pinned.");
+  }
+  for (let attempt = 0; attempt < 30; attempt++) {
+    if (await probe(`http://127.0.0.1:${port}/health`)) return;
+    await new Promise((resolve) => setTimeout(resolve, 1_000));
+  }
+  throw new Error("Renderer lokal tidak healthy pada endpoint loopback canonical.");
 }
 
 export async function ensureInfraPortsAvailable(root, { inspect = inspectPorts, containers = listProjectContainers } = {}) {
@@ -297,17 +338,20 @@ async function prepare(command) {
   await checkDocker();
   if (command === "infra") return { root, catalog, settings };
   const supabase = await getSupabaseEnvironment(root);
+  if (command === "backend" || command === "worker")
+    await ensureLocalRenderer(root, spawnResult, undefined, settings.rendererPort, settings.rendererTimeout);
   return { root, catalog, settings, env: buildChildEnvironment(process.env, supabase, settings, catalog) };
 }
 
 async function runInfra() {
-  const { root } = await prepare("infra");
+  const { root, settings } = await prepare("infra");
   await ensureInfraPortsAvailable(root);
   const invocation = supabaseInvocation(root, ["start"]);
   const result = await spawnResult(invocation.command, invocation.args, { cwd: root });
   if (result.code !== 0) throw new Error(`Supabase lokal gagal dimulai. ${safeCliDiagnostic(`${result.stderr}\n${result.stdout}`)} Jalankan npm run dev:status; untuk stack parsial gunakan npm run dev:stop lalu npm run dev:infra.`);
   await getSupabaseEnvironment(root);
-  console.log("Supabase lokal siap (API 55321, PostgreSQL 54322). Kredensial dimuat secara internal dan tidak dicetak.");
+  await ensureLocalRenderer(root, spawnResult, undefined, settings.rendererPort, settings.rendererTimeout);
+  console.log(`Supabase lokal dan renderer pinned siap (API 55321, PostgreSQL 54322, renderer ${settings.rendererPort}). Kredensial dimuat secara internal dan tidak dicetak.`);
 }
 
 async function runOne(kind) {
@@ -334,8 +378,11 @@ async function runStatus() {
   let ready = false;
   try { await getSupabaseEnvironment(root); ready = true; } catch { /* safe status below */ }
   const listeners = attachContainerOwners(await inspectPorts([...INFRA_PORTS, settings.webPort, settings.apiPort]), containers);
+  let rendererReady = false;
+  try { rendererReady = (await fetch(`${settings.rendererUrl}/health`, { signal: AbortSignal.timeout(2_000) })).ok; } catch { }
   console.log(`Repository: OK; RuleCatalog: OK; Docker: OK; Supabase lokal: ${ready ? "ready" : "not ready"}.`);
   console.log(`Container Supabase project: ${containers.filter((item) => item.owned).map((item) => item.name).join(", ") || "tidak ada"}.`);
+  console.log(`Renderer pinned lokal: ${rendererReady ? "ready" : "not ready"}; endpoint ${settings.rendererUrl}.`);
   console.log(`Port listener: ${listeners.length ? formatPortConflicts(listeners) : "tidak ada pada port development default"}.`);
   if (!ready) process.exitCode = 1;
 }
