@@ -1,0 +1,107 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import { automaticProgress, batchProgress, contextStateCopy, decisionLabel, highlightedContext, isTerminalBatch, pageLocationLabel, previewFragment, safeCommandMessage, scalarCount, validateManualReplacement } from "./streamlined-audit-presentation.ts";
+import { parseCorrectionBatchStatus, parseTextCorrectionContext, parseTextCorrectionPage } from "./text-correction-contract.ts";
+
+const component = await readFile(new URL("../components/streamlined-audit-client.tsx", import.meta.url), "utf8");
+const api = await readFile(new URL("./text-correction-api.ts", import.meta.url), "utf8");
+const presentation = await readFile(new URL("./streamlined-audit-presentation.ts", import.meta.url), "utf8");
+const backendService = await readFile(new URL("../../../../backend/src/Ppki.Infrastructure/TextCorrectionService.cs", import.meta.url), "utf8");
+const id = "11111111-1111-1111-1111-111111111111";
+const id2 = "22222222-2222-2222-2222-222222222222";
+const sampleBatch = { id, sourceAuditId: id, sourceDocumentVersionId: id, fixExecutionId: null, resultDocumentVersionId: id2, reauditId: id2, state: "Completed", decisionCount: 2, safeFailureCode: null, verificationCounts: { VerifiedResolved: 2 } };
+const samplePage = { auditId: id, documentVersionId: id, page: 1, pageSize: 25, totalCount: 1, items: [{ id, detectorRule: "lex.sample", category: "Language", state: "Actionable", suggestionAvailable: true, pageLocation: { pageNumber: 23, confidence: "Exact" }, anchorStatus: "Exact", effectiveDecision: null }], summary: { undecidedCount: 1, useSuggestionCount: 0, editManualCount: 0, ignoredCount: 0, eligibleDecisionCount: 0, historicalCount: 0 }, activeBatch: null };
+const context = { proposalId: id, documentVersionId: id, anchorStatus: "Exact", safeFailureCode: null, targetText: "di analisa", context: "Data di analisa selesai.", suggestedReplacement: "dianalisis", targetOffsetInContext: 5, prefixTruncated: false, suffixTruncated: false, pageLocation: { pageNumber: 23, confidence: "Exact" } };
+
+const cases: Array<[string, () => void]> = [
+  ["01 initial audit summary renders", () => assert.match(component, /Masalah ditemukan/)],
+  ["02 auto remediation Pending", () => assert.equal(automaticProgress("Pending")[0].tone, "active")],
+  ["03 auto remediation Processing", () => assert.equal(automaticProgress("Processing")[1].tone, "active")],
+  ["04 auto remediation ReauditPending", () => assert.equal(automaticProgress("ReauditPending")[2].tone, "active")],
+  ["05 auto remediation Completed", () => assert.ok(automaticProgress("Completed").every(value => value.tone === "done"))],
+  ["06 auto remediation Failed", () => assert.equal(automaticProgress("Failed")[1].tone, "failed")],
+  ["07 safe Conflict message", () => assert.match(component, /Dokumen telah berubah\. Muat ulang hasil audit/)],
+  ["08 no technical ID rendered", () => assert.doesNotMatch(component, />[^<]*(FixExecution|plan hash|provider ID|orchestration ID)[^<]*</i)],
+  ["09 Exact page label", () => assert.equal(pageLocationLabel({ pageNumber: 23, confidence: "Exact" }), "Halaman 23")],
+  ["10 Estimated page label", () => assert.equal(pageLocationLabel({ pageNumber: 23, confidence: "Estimated" }), "Perkiraan halaman 23")],
+  ["11 Pending page label", () => assert.equal(pageLocationLabel(null, true), "Menentukan halaman...")],
+  ["12 Unavailable page copy", () => assert.equal(pageLocationLabel(null), "Lokasi halaman belum tersedia")],
+  ["13 preview ready button", () => assert.match(component, /Buka di dokumen/)],
+  ["14 exact page opens hash hint", () => assert.equal(previewFragment({ pageNumber: 23, confidence: "Exact" }), "#page=23")],
+  ["15 preview unavailable hidden", () => assert.match(component, /props\.previewReady &&/)],
+  ["16 current version preview used", () => assert.match(component, /openPreview\(batch\.resultDocumentVersionId/)],
+  ["17 old version preview never substituted", () => assert.doesNotMatch(component, /resultDocumentVersionId\s*\?\?\s*summary\.documentVersionId/)],
+  ["18 context fetched on demand", () => assert.match(component, /onContext=\{\(\) => void loadContext/)],
+  ["19 no fetch all contexts on initial list", () => assert.doesNotMatch(api, /Promise\.all[\s\S]*getTextCorrectionContext/)],
+  ["20 context Loading", () => assert.match(component, /Memuat konteks/)],
+  ["21 context Exact", () => assert.deepEqual(highlightedContext(parseTextCorrectionContext(context)), { before: "Data ", target: "di analisa", after: " selesai." })],
+  ["22 context Stale", () => assert.match(contextStateCopy("Stale"), /Sumber temuan sudah berubah/)],
+  ["23 context Unsupported", () => assert.match(contextStateCopy("Unsupported"), /tidak dapat diperbaiki otomatis/)],
+  ["24 context Unavailable", () => assert.equal(contextStateCopy("Unavailable"), "Konteks belum tersedia.")],
+  ["25 component unmount abort", () => assert.match(component, /controller\.abort\(\)/)],
+  ["26 raw context not logged or stored", () => assert.doesNotMatch(component + api, /localStorage|sessionStorage|console\.(log|error)/)],
+  ["27 UseSuggestion sends once", () => assert.match(api, /submitTextCorrectionDecision[\s\S]*method: "POST"/)],
+  ["28 retry uses same idempotency key", () => assert.match(component, /decisionKeys\.current\.get\(intent\) \?\? crypto\.randomUUID/)],
+  ["29 canonical state after response", () => assert.match(component, /submitTextCorrectionDecision[\s\S]*await loadCorrections/)],
+  ["30 decision 409 reload", () => assert.match(component, /status === 409\) await loadCorrections/)],
+  ["31 EditManual opens", () => assert.match(component, /setEditing\(proposal\.id\)/)],
+  ["32 suggestion prefill", () => assert.match(component, /setManualValue\(context\.suggestedReplacement\)/)],
+  ["33 scalar counter correct", () => assert.equal(scalarCount("analisis"), 8)],
+  ["34 emoji counts one", () => assert.equal(scalarCount("😀"), 1)],
+  ["35 combining mark remains separate", () => assert.equal(scalarCount("e\u0301"), 2)],
+  ["36 256 accepted", () => assert.equal(validateManualReplacement("a".repeat(256)), null)],
+  ["37 257 rejected", () => assert.match(validateManualReplacement("a".repeat(257)) ?? "", /maksimal/)],
+  ["38 newline rejected", () => assert.match(validateManualReplacement("a\nb") ?? "", /baris baru/)],
+  ["39 tab rejected", () => assert.match(validateManualReplacement("a\tb") ?? "", /tab/)],
+  ["40 whitespace-only rejected", () => assert.match(validateManualReplacement("   ") ?? "", /kosong/)],
+  ["41 Save manual", () => assert.match(component, /Simpan Perbaikan/)],
+  ["42 Cancel manual", () => assert.match(component, />Batal</)],
+  ["43 Ignore decision", () => assert.match(component, /choose\(proposal, "Ignore"\)/)],
+  ["44 Ignore not VerifiedResolved", () => assert.notEqual(decisionLabel("Ignore"), "VerifiedResolved")],
+  ["45 effective decision update", () => assert.equal(decisionLabel("EditManual"), "Edit manual")],
+  ["46 Admin B canonical reload", () => assert.match(api, /listTextCorrections\(auditId/)],
+  ["47 CTA eligible canonical count", () => assert.match(component, /summary\.eligibleDecisionCount/)],
+  ["48 UseSuggestion included server-side", () => assert.match(backendService, /useSuggestion \+ editManual/)],
+  ["49 EditManual included server-side", () => assert.match(backendService, /EditManual/)],
+  ["50 Ignore excluded server-side", () => assert.match(backendService, /EligibleDecisionCount|useSuggestion \+ editManual/)],
+  ["51 undecided excluded", () => assert.equal(parseTextCorrectionPage(samplePage).summary.eligibleDecisionCount, 0)],
+  ["52 stale source excluded", () => assert.match(backendService, /currentVersion \? useSuggestion \+ editManual : 0/)],
+  ["53 unsupported excluded", () => assert.match(component, /proposal\.anchorStatus !== "Exact"/)],
+  ["54 auto-format finding excluded", () => assert.doesNotMatch(api, /fix-plan-preview/)],
+  ["55 zero eligible disables CTA", () => assert.match(component, /readyCount === 0[\s\S]*disabled/)],
+  ["56 exactly one create-batch POST", () => assert.equal((api.match(/text-correction-batches[\s\S]*method: "POST"/g) ?? []).length, 1)],
+  ["57 no per-card Apply", () => assert.doesNotMatch(component, />\s*Apply\s*</)],
+  ["58 batch replay idempotency", () => assert.match(component, /batchKey\.current \?\? crypto\.randomUUID/)],
+  ["59 lost response same batch key", () => assert.match(component, /batchKey\.current = key/)],
+  ["60 batch request contains no raw authority", () => assert.match(api, /body: JSON\.stringify\(\{\}\)/)],
+  ["61 batch progress mapping", () => assert.equal(batchProgress(parseCorrectionBatchStatus(sampleBatch), { state: "Completed", pageCount: 3, previewAvailable: true }).length, 5)],
+  ["62 Completed refresh canonical status", () => assert.ok(isTerminalBatch("Completed"))],
+  ["63 Failed terminal", () => assert.ok(isTerminalBatch("Failed"))],
+  ["64 Conflict terminal", () => assert.ok(isTerminalBatch("Conflict"))],
+  ["65 no POST from polling", () => assert.doesNotMatch(api.match(/getTextCorrectionBatch[\s\S]*?\n\}/)?.[0] ?? "", /POST/)],
+  ["66 polling non-overlap", () => assert.match(component, /await getTextCorrectionBatch[\s\S]*setTimeout\(poll/)],
+  ["67 polling abort", () => assert.match(component, /active\?\.abort\(\)/)],
+  ["68 final summary renders", () => { assert.match(component, /Ringkasan hasil akhir/); assert.match(component, /getAuditSummary\(batch\.reauditId/); assert.match(component, /Temuan versi akhir/); }],
+  ["69 final v3 preview", () => assert.match(component, /resultDocumentVersionId/)],
+  ["70 render pending", () => assert.match(component, /Preview sedang dibuat/)],
+  ["71 remaining findings action", () => assert.match(component, /Lihat Temuan Tersisa/)],
+  ["72 old proposals hidden after successful batch", () => assert.match(component, /!final && corrections/)],
+  ["73 ignored count presentation", () => assert.match(component, /summary\.ignoredCount/)],
+  ["74 verified resolved presentation", () => assert.match(component, /verificationCounts\.VerifiedResolved/)],
+  ["75 no localStorage", () => assert.doesNotMatch(component + api, /localStorage/)],
+  ["76 no sessionStorage", () => assert.doesNotMatch(component + api, /sessionStorage/)],
+  ["77 no source context URL", () => assert.doesNotMatch(api, /context=.*target|target=.*context/)],
+  ["78 no context console logging", () => assert.doesNotMatch(component + api, /console\.(log|error)/)],
+  ["79 no anchor coordinate rendered", () => assert.doesNotMatch(component, />[^<]*(run ordinal|node ordinal|scalar offset|anchor hash)[^<]*</i)],
+  ["80 no provider ID rendered", () => assert.doesNotMatch(component, />[^<]*provider[^<]*</i)],
+  ["81 no FixExecution ID rendered", () => assert.doesNotMatch(component, />[^<]*FixExecution[^<]*</)],
+  ["82 no plan hash rendered", () => assert.doesNotMatch(component, />[^<]*plan hash[^<]*</i)],
+  ["83 no client automatic remediation POST", () => assert.doesNotMatch(api, /automatic-remediation/)],
+  ["84 no client automatic re-audit POST", () => assert.doesNotMatch(api, /re-audit/)],
+  ["85 no global string replacement", () => assert.doesNotMatch(component + presentation, /\.replace(All)?\(/)],
+  ["86 no client-generated authoritative anchor", () => assert.doesNotMatch(api, /anchor|offset|sourceText/)],
+  ["87 no page-number fabrication", () => assert.doesNotMatch(presentation, /paragraph(Index)?|\/\s*\d+.*page/i)],
+];
+
+for (const [name, body] of cases) test(name, body);

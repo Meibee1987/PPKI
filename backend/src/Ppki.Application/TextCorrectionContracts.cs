@@ -28,9 +28,13 @@ public sealed record TextCorrectionProposalItem(
     Guid Id, string DetectorRule, string Category, string State, bool SuggestionAvailable,
     TextCorrectionPageLocation? PageLocation, string AnchorStatus,
     EffectiveTextCorrectionDecision? EffectiveDecision);
+public sealed record TextCorrectionProposalSummary(
+    int UndecidedCount, int UseSuggestionCount, int EditManualCount, int IgnoredCount,
+    int EligibleDecisionCount, int HistoricalCount);
 public sealed record TextCorrectionProposalPage(
     Guid AuditId, Guid DocumentVersionId, int Page, int PageSize, int TotalCount,
-    IReadOnlyList<TextCorrectionProposalItem> Items);
+    IReadOnlyList<TextCorrectionProposalItem> Items, TextCorrectionProposalSummary Summary,
+    TextCorrectionBatchStatus? ActiveBatch);
 
 public sealed record TextCorrectionProposalContext(
     Guid ProposalId, Guid DocumentVersionId, string AnchorStatus, string? SafeFailureCode,

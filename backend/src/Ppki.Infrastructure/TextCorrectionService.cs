@@ -28,6 +28,24 @@ public sealed class TextCorrectionService(
         if (analysis is null) return null;
         var source = db.TextCorrectionProposals.AsNoTracking().Where(value => value.AnalysisId == analysis.Id);
         var total = await source.CountAsync(cancellationToken);
+        var currentVersion = await db.DocumentVersions.AsNoTracking()
+            .Where(value => value.Id == analysis.DocumentVersionId)
+            .Select(value => value.Document!.CurrentVersionNo == value.VersionNo)
+            .SingleAsync(cancellationToken);
+        var effectiveActions = await source.Select(value => value.Decisions
+                .OrderByDescending(item => item.Sequence)
+                .Select(item => (TextCorrectionDecisionAction?)item.Action).FirstOrDefault())
+            .ToListAsync(cancellationToken);
+        var useSuggestion = effectiveActions.Count(value => value == TextCorrectionDecisionAction.UseSuggestion);
+        var editManual = effectiveActions.Count(value => value == TextCorrectionDecisionAction.EditManual);
+        var ignored = effectiveActions.Count(value => value == TextCorrectionDecisionAction.Ignore);
+        var summary = new TextCorrectionProposalSummary(
+            effectiveActions.Count(value => value is null), useSuggestion, editManual, ignored,
+            currentVersion ? useSuggestion + editManual : 0, currentVersion ? 0 : total);
+        var activeBatch = await db.TextCorrectionBatches.AsNoTracking().Include(value => value.Items)
+            .Where(value => value.SourceAuditJobId == auditId)
+            .OrderByDescending(value => value.CreatedAt).ThenByDescending(value => value.Id)
+            .FirstOrDefaultAsync(cancellationToken);
         var rows = await source.OrderBy(value => value.CreatedAt).ThenBy(value => value.Id)
             .Skip((query.Page - 1) * query.PageSize).Take(query.PageSize)
             .Select(value => new
@@ -42,7 +60,8 @@ public sealed class TextCorrectionService(
                 row.Proposal.CatalogRuleId, row.Proposal.Category, "Actionable", true,
                 pages.GetValueOrDefault(row.Proposal.Id), "Exact",
                 row.Latest is null ? null : new(row.Latest.Id, row.Latest.Sequence,
-                    row.Latest.Action.ToString(), row.Latest.ActorUserId))).ToArray());
+                    row.Latest.Action.ToString(), row.Latest.ActorUserId))).ToArray(), summary,
+            activeBatch is null ? null : BatchStatus(activeBatch));
     }
 
     public async Task<TextCorrectionProposalContext?> ContextAsync(Guid proposalId, Guid actorUserId,
@@ -302,6 +321,11 @@ public sealed class TextCorrectionService(
     private static TextCorrectionBatchAccepted BatchAccepted(TextCorrectionBatch value, bool replayed) =>
         new(value.Id, value.SourceAuditJobId, value.SourceDocumentVersionId, value.FixExecutionId,
             value.State.ToString(), value.DecisionCount, replayed);
+    private static TextCorrectionBatchStatus BatchStatus(TextCorrectionBatch value) =>
+        new(value.Id, value.SourceAuditJobId, value.SourceDocumentVersionId, value.FixExecutionId,
+            value.ResultDocumentVersionId, value.ReauditJobId, value.State.ToString(), value.DecisionCount,
+            value.SafeFailureCode, value.Items.GroupBy(item => item.VerificationState.ToString())
+                .ToDictionary(group => group.Key, group => group.Count(), StringComparer.Ordinal));
 
     private static Guid GuidFromHash(string value)
     {

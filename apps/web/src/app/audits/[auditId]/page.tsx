@@ -1,3 +1,3 @@
-import { AuditFindingsClient } from "../../../components/audit-findings-client";
+import { StreamlinedAuditClient } from "../../../components/streamlined-audit-client";
 
-export default function AuditPage() { return <AuditFindingsClient />; }
+export default function AuditPage() { return <StreamlinedAuditClient />; }

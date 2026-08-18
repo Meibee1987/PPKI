@@ -1,6 +1,7 @@
 using System.IO.Compression;
 using System.Security.Cryptography;
 using System.Text;
+using System.Text.Json;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Ppki.Application;
@@ -149,6 +150,27 @@ public sealed class TextCorrectionBatchTests
         Assert.Contains("PPKIAdmin", migration, StringComparison.Ordinal);
         Assert.Contains("decisions are append-only", migration, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("decision_count between 1 and 100", migration, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Streamlined_read_model_is_paginated_canonical_and_context_free()
+    {
+        var summary = new TextCorrectionProposalSummary(3, 2, 1, 4, 3, 0);
+        var batch = new TextCorrectionBatchStatus(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(),
+            Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), "Completed", 3, null,
+            new Dictionary<string, int> { ["VerifiedResolved"] = 3 });
+        var page = new TextCorrectionProposalPage(Guid.NewGuid(), Guid.NewGuid(), 2, 25, 50,
+            [], summary, batch);
+
+        Assert.Equal(25, page.PageSize);
+        Assert.Equal(3, page.Summary.EligibleDecisionCount);
+        Assert.Equal("Completed", page.ActiveBatch!.State);
+        Assert.DoesNotContain("Context", JsonSerializer.Serialize(page), StringComparison.OrdinalIgnoreCase);
+
+        var source = File.ReadAllText(Path.Combine(RepositoryRoot(), "backend", "src",
+            "Ppki.Infrastructure", "TextCorrectionService.cs"));
+        Assert.Contains("currentVersion ? useSuggestion + editManual : 0", source, StringComparison.Ordinal);
+        Assert.Contains("SourceAuditJobId == auditId", source, StringComparison.Ordinal);
     }
 
     [Fact]
