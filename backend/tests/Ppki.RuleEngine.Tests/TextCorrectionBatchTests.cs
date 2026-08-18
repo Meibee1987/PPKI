@@ -1,3 +1,5 @@
+using System.IO.Compression;
+using System.Security.Cryptography;
 using System.Text;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
@@ -99,13 +101,14 @@ public sealed class TextCorrectionBatchTests
         await using var workspace = await DocxFixtureWorkspace.CreateAsync("exact-text-anchor");
         var parsed = await _parser.ParseAsync(workspace.WorkingPath, CancellationToken.None);
         var incompatible = await BuildAsync(workspace, parsed, 4, "di analisa", 0);
-        var beforeSha = await DocxFixtureWorkspace.ComputeSha256Async(workspace.WorkingPath);
+        var beforeBytes = await File.ReadAllBytesAsync(workspace.WorkingPath);
+        var beforeSha = Convert.ToHexString(SHA256.HashData(beforeBytes));
         var provider = new ExactTextReplacementProvider();
         var incompatibleFailure = await Assert.ThrowsAsync<FixExecutionException>(() => provider.ApplyAsync(
             workspace.WorkingPath, VersionId,
             [new(Guid.NewGuid(), incompatible, Replacement("dianalisis"))], _anchors, CancellationToken.None));
         Assert.Equal("correction-multirun-semantics-incompatible", incompatibleFailure.DiagnosticCode);
-        Assert.Equal(beforeSha, await DocxFixtureWorkspace.ComputeSha256Async(workspace.WorkingPath));
+        await AssertRawSourceUnchangedAsync(workspace.WorkingPath, beforeBytes, beforeSha);
 
         var first = await BuildAsync(workspace, parsed, 0, "di analisa", 0);
         var overlapFailure = await Assert.ThrowsAsync<FixExecutionException>(() => provider.ApplyAsync(
@@ -113,7 +116,14 @@ public sealed class TextCorrectionBatchTests
             [new(Guid.NewGuid(), first, Replacement("dianalisis")),
              new(Guid.NewGuid(), first, Replacement("analisis"))], _anchors, CancellationToken.None));
         Assert.Equal("correction-target-overlap", overlapFailure.DiagnosticCode);
-        Assert.Equal(beforeSha, await DocxFixtureWorkspace.ComputeSha256Async(workspace.WorkingPath));
+        await AssertRawSourceUnchangedAsync(workspace.WorkingPath, beforeBytes, beforeSha);
+
+        var worker = File.ReadAllText(Path.Combine(RepositoryRoot(), "backend", "services",
+            "Ppki.Worker", "FixExecutionProcessor.cs"));
+        var apply = worker.IndexOf("await correctionProvider.ApplyAsync", StringComparison.Ordinal);
+        var publish = worker.IndexOf("await CompleteWithVersion", StringComparison.Ordinal);
+        Assert.True(apply >= 0 && publish > apply,
+            "A correction result DocumentVersion must only be published after provider success.");
     }
 
     [Fact]
@@ -178,6 +188,43 @@ public sealed class TextCorrectionBatchTests
     {
         Assert.True(TextCorrectionPrivacyContract.TryValidateReplacement(value, out var result, out _));
         return result!;
+    }
+
+    private static async Task AssertRawSourceUnchangedAsync(string path, byte[] beforeBytes, string beforeSha)
+    {
+        var afterBytes = await File.ReadAllBytesAsync(path);
+        var afterSha = Convert.ToHexString(SHA256.HashData(afterBytes));
+        var identical = beforeBytes.AsSpan().SequenceEqual(afterBytes);
+        var diagnostic = $"beforeLength={beforeBytes.Length}; afterLength={afterBytes.Length}; "
+            + $"sequenceEqual={identical}; beforeSha={beforeSha}; afterSha={afterSha}; "
+            + $"changedZipEntries={string.Join(',', ChangedZipEntries(beforeBytes, afterBytes))}";
+        Assert.True(identical, diagnostic);
+        Assert.Equal(beforeBytes.Length, afterBytes.Length);
+        Assert.Equal(beforeSha, afterSha);
+    }
+
+    private static IReadOnlyList<string> ChangedZipEntries(byte[] beforeBytes, byte[] afterBytes)
+    {
+        var before = ZipEntryHashes(beforeBytes);
+        var after = ZipEntryHashes(afterBytes);
+        var changed = before.Keys.Union(after.Keys, StringComparer.Ordinal)
+            .Where(name => !before.TryGetValue(name, out var left)
+                || !after.TryGetValue(name, out var right)
+                || !string.Equals(left, right, StringComparison.Ordinal))
+            .OrderBy(name => name, StringComparer.Ordinal).ToArray();
+        return changed.Length == 0 ? ["<package-serialization-only>"] : changed;
+    }
+
+    private static IReadOnlyDictionary<string, string> ZipEntryHashes(byte[] bytes)
+    {
+        using var stream = new MemoryStream(bytes, writable: false);
+        using var archive = new ZipArchive(stream, ZipArchiveMode.Read, leaveOpen: false);
+        return archive.Entries.OrderBy(entry => entry.FullName, StringComparer.Ordinal)
+            .ToDictionary(entry => entry.FullName, entry =>
+            {
+                using var content = entry.Open();
+                return Convert.ToHexString(SHA256.HashData(content));
+            }, StringComparer.Ordinal);
     }
 
     private static string RepositoryRoot()

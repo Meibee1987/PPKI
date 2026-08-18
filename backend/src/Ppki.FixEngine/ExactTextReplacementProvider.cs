@@ -36,6 +36,7 @@ public sealed class ExactTextReplacementProvider
         if (operations.Count is < 1 or > 100)
             throw Conflict("correction-batch-size-invalid");
 
+        var originalBytes = await File.ReadAllBytesAsync(workingFilePath, cancellationToken);
         var resolved = new List<ExactTextReplacementOperation>(operations.Count);
         foreach (var operation in operations)
         {
@@ -51,18 +52,26 @@ public sealed class ExactTextReplacementProvider
         }
 
         ValidateRanges(resolved);
-        var expected = BuildExpectedParagraphs(workingFilePath, resolved);
-        using var package = WordprocessingDocument.Open(workingFilePath, true,
-            new OpenSettings { AutoSave = false });
-        foreach (var operation in resolved.OrderByDescending(value => value.Anchor.ParagraphLocation.ParagraphIndex)
-                     .ThenByDescending(value => value.Anchor.Start)
-                     .ThenBy(value => value.DecisionId))
+        var prepared = PrepareOperations(workingFilePath, resolved);
+        var bytesAfterValidation = await File.ReadAllBytesAsync(workingFilePath, cancellationToken);
+        if (!originalBytes.AsSpan().SequenceEqual(bytesAfterValidation))
+            throw Conflict("correction-source-changed-during-validation");
+
+        using var output = new MemoryStream(originalBytes.Length);
+        await output.WriteAsync(originalBytes, cancellationToken);
+        output.Position = 0;
+        using (var package = WordprocessingDocument.Open(output, true,
+                   new OpenSettings { AutoSave = false }))
         {
-            cancellationToken.ThrowIfCancellationRequested();
-            ApplyOne(package, operation);
+            foreach (var operation in prepared.Operations)
+            {
+                cancellationToken.ThrowIfCancellationRequested();
+                ApplyOne(package, operation);
+            }
+            package.MainDocumentPart?.Document?.Save();
         }
-        package.MainDocumentPart?.Document?.Save();
-        return new(resolved.Count, expected);
+        await File.WriteAllBytesAsync(workingFilePath, output.ToArray(), cancellationToken);
+        return new(prepared.Operations.Count, prepared.ExpectedParagraphText);
     }
 
     private static void ValidateRanges(IReadOnlyList<ExactTextReplacementOperation> operations)
@@ -82,10 +91,15 @@ public sealed class ExactTextReplacementProvider
         }
     }
 
-    private static IReadOnlyDictionary<int, string> BuildExpectedParagraphs(string path,
+    private static PreparedPlan PrepareOperations(string path,
         IReadOnlyList<ExactTextReplacementOperation> operations)
     {
         using var package = WordprocessingDocument.Open(path, false, new OpenSettings { AutoSave = false });
+        var ordered = operations.OrderByDescending(value => value.Anchor.ParagraphLocation.ParagraphIndex)
+            .ThenByDescending(value => value.Anchor.Start)
+            .ThenBy(value => value.DecisionId).ToArray();
+        foreach (var operation in ordered) ValidateOne(package, operation);
+
         var result = new Dictionary<int, string>();
         foreach (var group in operations.GroupBy(value => value.Anchor.ParagraphLocation.ParagraphIndex
                      ?? throw Conflict("correction-paragraph-location-invalid")))
@@ -100,32 +114,27 @@ public sealed class ExactTextReplacementProvider
                         ScalarCount(text) - operation.Anchor.Start - operation.Anchor.Length);
             result[group.Key] = text;
         }
-        return result;
+        return new(ordered, result);
     }
 
-    private static void ApplyOne(WordprocessingDocument package, ExactTextReplacementOperation operation)
+    private static void ValidateOne(WordprocessingDocument package, ExactTextReplacementOperation operation)
     {
-        var paragraphIndex = operation.Anchor.ParagraphLocation.ParagraphIndex
-            ?? throw Conflict("correction-paragraph-location-invalid");
-        var paragraph = LocateParagraph(package, paragraphIndex)
-            ?? throw Conflict("correction-paragraph-location-invalid");
-        var runs = paragraph.Descendants<Run>().ToArray();
-        var targets = operation.Anchor.Spans.Select(span =>
-        {
-            if (span.RunIndex >= runs.Length) throw Conflict("correction-anchor-stale");
-            var run = runs[span.RunIndex];
-            if (span.NodeIndex >= run.ChildElements.Count || run.ChildElements[span.NodeIndex] is not Text text)
-                throw Conflict("correction-anchor-unsupported");
-            return new Target(run, text, span);
-        }).ToArray();
-
+        var targets = Targets(package, operation);
         var semantics = SemanticKey(targets[0].Run);
         if (targets.Any(target => !string.Equals(SemanticKey(target.Run), semantics, StringComparison.Ordinal)))
             throw Conflict("correction-multirun-semantics-incompatible");
+        if (targets.Any(target => target.Span.SourceStart + target.Span.SourceLength
+                > ScalarCount(target.Text.Text)))
+            throw Conflict("correction-anchor-stale");
         var currentTarget = string.Concat(targets.Select(target => ScalarSlice(target.Text.Text,
             target.Span.SourceStart, target.Span.SourceLength)));
         if (string.Equals(currentTarget, operation.Replacement.Value, StringComparison.Ordinal))
             throw Conflict("correction-target-no-change");
+    }
+
+    private static void ApplyOne(WordprocessingDocument package, ExactTextReplacementOperation operation)
+    {
+        var targets = Targets(package, operation);
 
         for (var index = targets.Length - 1; index >= 0; index--)
         {
@@ -138,6 +147,23 @@ public sealed class ExactTextReplacementProvider
             var suffix = ScalarSlice(target.Text.Text, suffixStart, scalarLength - suffixStart);
             target.Text.Text = prefix + (index == 0 ? operation.Replacement.Value : string.Empty) + suffix;
         }
+    }
+
+    private static Target[] Targets(WordprocessingDocument package, ExactTextReplacementOperation operation)
+    {
+        var paragraphIndex = operation.Anchor.ParagraphLocation.ParagraphIndex
+            ?? throw Conflict("correction-paragraph-location-invalid");
+        var paragraph = LocateParagraph(package, paragraphIndex)
+            ?? throw Conflict("correction-paragraph-location-invalid");
+        var runs = paragraph.Descendants<Run>().ToArray();
+        return operation.Anchor.Spans.Select(span =>
+        {
+            if (span.RunIndex >= runs.Length) throw Conflict("correction-anchor-stale");
+            var run = runs[span.RunIndex];
+            if (span.NodeIndex >= run.ChildElements.Count || run.ChildElements[span.NodeIndex] is not Text text)
+                throw Conflict("correction-anchor-unsupported");
+            return new Target(run, text, span);
+        }).ToArray();
     }
 
     private static string SemanticKey(Run run)
@@ -172,5 +198,8 @@ public sealed class ExactTextReplacementProvider
         value.EnumerateRunes().Skip(start).Take(length).Select(value => value.ToString()));
     private static FixExecutionException Conflict(string code) =>
         new(FixFailureCategory.Conflict, code);
+    private sealed record PreparedPlan(
+        IReadOnlyList<ExactTextReplacementOperation> Operations,
+        IReadOnlyDictionary<int, string> ExpectedParagraphText);
     private sealed record Target(Run Run, Text Text, ExactTextSourceSpan Span);
 }
