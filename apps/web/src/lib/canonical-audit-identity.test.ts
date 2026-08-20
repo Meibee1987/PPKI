@@ -24,6 +24,8 @@ function summary(id: string, version: string, automaticRemediation: unknown = nu
     fixModes: { auto: 0, confirm: 0, manual: 197, report: 0 }, scoreState: "NotConfigured", score: null,
     scorePolicyVersion: null, scoreBreakdown: null, scoreDiagnosticCode: null, startedAt: null,
     completedAt: null, failureCode: null, errorMessage: null,
+    findingDispositions: { resolvedCount: 0, automaticallyResolvedCount: 0, ignoredCount: 0, requiresReviewCount: 197 },
+    automaticRemediationHistory: null,
     correctionAnalysis: { state: "Completed" }, automaticRemediation,
     documentRender: { state: "Completed", pageCount: 1, rendererVersion: "r", rendererContractVersion: "c", fontProfileVersion: "f", pageMapVersion: "p", safeFailureCode: null, previewAvailable: true },
   });

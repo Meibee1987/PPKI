@@ -19,6 +19,8 @@ public sealed class AuditReadModelTests
             AuditScoreState.NotConfigured, null, null, null,
             "scoring-policy-not-configured", DateTimeOffset.UtcNow,
             DateTimeOffset.UtcNow, null, null,
+            new AuditFindingDispositionSummaryDto(0, 0, 0, 2_228),
+            null,
             new CorrectionAnalysisReadinessDto("Completed"));
 
         using var json = JsonDocument.Parse(JsonSerializer.Serialize(
@@ -75,12 +77,14 @@ public sealed class AuditReadModelTests
     public void Findings_query_has_bounded_defaults_and_exact_filters()
     {
         Assert.True(AuditFindingQuery.TryCreate(
-            "warning", "manual", " Layout ", " RULE-A ", " page.size ",
+            "warning", "manual", "requiresreview", true, " Layout ", " RULE-A ", " page.size ",
             "default", null, null, out var query, out var error));
 
         Assert.Null(error);
         Assert.Equal(RuleSeverity.Warning, query.Severity);
         Assert.Equal(FixMode.Manual, query.FixMode);
+        Assert.Equal(AuditFindingDisposition.RequiresReview, query.Disposition);
+        Assert.True(query.AutomaticallyResolved);
         Assert.Equal("Layout", query.Domain);
         Assert.Equal("RULE-A", query.RuleCode);
         Assert.Equal("page.size", query.ValidationKey);
@@ -103,7 +107,7 @@ public sealed class AuditReadModelTests
         string expectedCode)
     {
         var valid = AuditFindingQuery.TryCreate(
-            severity, fixMode, null, null, null, sort, 1, pageSize,
+            severity, fixMode, null, null, null, null, null, sort, 1, pageSize,
             out _, out var error);
 
         Assert.False(valid);
@@ -114,11 +118,73 @@ public sealed class AuditReadModelTests
     public void Findings_query_limits_the_result_window_to_the_finding_cap()
     {
         var valid = AuditFindingQuery.TryCreate(
-            null, null, null, null, null, null, 101, 100,
+            null, null, null, null, null, null, null, null, 101, 100,
             out _, out var error);
 
         Assert.False(valid);
         Assert.Equal("finding-pagination-invalid", error);
+    }
+
+    [Fact]
+    public void Canonical_finding_dispositions_are_exhaustive_without_double_counting()
+    {
+        var summary = AuditFindingDispositionSummaryDto.Create(197, 0, 0, 0, 197);
+        Assert.Equal(197, summary.ResolvedCount + summary.IgnoredCount + summary.RequiresReviewCount);
+        Assert.Throws<InvalidOperationException>(() =>
+            AuditFindingDispositionSummaryDto.Create(197, 1, 0, 0, 197));
+    }
+
+    [Theory]
+    [InlineData(FindingStatus.Open, null, null, AuditFindingDisposition.RequiresReview)]
+    [InlineData(FindingStatus.Open, FindingResolutionEventType.VerificationStillDetectedObserved, null, AuditFindingDisposition.RequiresReview)]
+    [InlineData(FindingStatus.Open, FindingResolutionEventType.VerificationResolvedObserved, null, AuditFindingDisposition.Resolved)]
+    [InlineData(FindingStatus.Open, null, FindingReviewEventType.Ignored, AuditFindingDisposition.Ignored)]
+    [InlineData(FindingStatus.Open, null, FindingReviewEventType.AcceptedRisk, AuditFindingDisposition.Ignored)]
+    public void Finding_disposition_preserves_still_detected_and_excludes_resolved_or_ignored(
+        FindingStatus findingState,
+        FindingResolutionEventType? resolution,
+        FindingReviewEventType? review,
+        AuditFindingDisposition expected) =>
+        Assert.Equal(expected, AuditFindingDispositionProjection.Resolve(findingState, resolution, review));
+
+    [Fact]
+    public void Structural_presentation_uses_only_allowlisted_immutable_evidence()
+    {
+        var presentation = AuditFindingPresentation.Create(
+            """{"Property":"marginLeft","NormalizedValue":"1701","Unit":"twip"}""",
+            """{"Property":"marginLeft","AcceptedValues":["2268"],"Unit":"twip"}""");
+
+        Assert.Equal("Margin kiri", presentation.PropertyLabel);
+        Assert.Equal("3 cm", presentation.BeforeValue);
+        Assert.Equal("4 cm", presentation.ExpectedValue);
+        Assert.Equal("Complete", presentation.EvidenceState);
+    }
+
+    [Fact]
+    public void Section_presence_uses_found_and_required_semantics()
+    {
+        var presentation = AuditFindingPresentation.Create(
+            """{"Property":"sectionPresence.SummaryIndonesian","NormalizedValue":"absent"}""",
+            """{"Property":"sectionPresence.SummaryIndonesian","AcceptedValues":["present"]}""");
+
+        Assert.Equal("SectionRequirement", presentation.Kind);
+        Assert.Equal("Ditemukan", presentation.BeforeLabel);
+        Assert.Equal("Belum tersedia", presentation.BeforeValue);
+        Assert.Equal("Wajib", presentation.ExpectedLabel);
+        Assert.Contains("Ringkasan Bahasa Indonesia", presentation.ExpectedValue);
+    }
+
+    [Fact]
+    public void Unknown_or_unsafe_evidence_is_never_echoed_or_fabricated()
+    {
+        var presentation = AuditFindingPresentation.Create(
+            """{"Property":"unknown","NormalizedValue":"raw thesis sentence"}""",
+            """{"Property":"unknown","AcceptedValues":["secret path"]}""");
+
+        Assert.Equal("Unavailable", presentation.EvidenceState);
+        Assert.Null(presentation.BeforeValue);
+        Assert.Null(presentation.ExpectedValue);
+        Assert.DoesNotContain("thesis", JsonSerializer.Serialize(presentation), StringComparison.OrdinalIgnoreCase);
     }
 
     [Theory]
@@ -152,7 +218,7 @@ public sealed class AuditReadModelTests
     public void Findings_query_accepts_explicit_page_and_maximum_page_size()
     {
         var valid = AuditFindingQuery.TryCreate(
-            null, null, null, null, null, "default", 2, 100,
+            null, null, null, null, null, null, null, "default", 2, 100,
             out var query, out var error);
 
         Assert.True(valid);
@@ -176,7 +242,7 @@ public sealed class AuditReadModelTests
             Row(6, "RULE-A", "Layout", "page.size", RuleSeverity.Error, FixMode.Report, "{}")
         }.AsQueryable();
         var query = new AuditFindingQuery(
-            RuleSeverity.Error, FixMode.Manual, "Layout", "RULE-A", "page.size", 1, 25);
+            RuleSeverity.Error, FixMode.Manual, null, null, "Layout", "RULE-A", "page.size", 1, 25);
 
         var result = AuditReadQueries.ApplyFilters(rows, query).Single();
 
@@ -357,7 +423,8 @@ public sealed class AuditReadModelTests
         var summarySql = AuditReadQueries.OwnedSummaryBuckets(db, auditId, ownerId)
             .ToQueryString().ToLowerInvariant();
         var query = new AuditFindingQuery(
-            RuleSeverity.Error, FixMode.Manual, "Layout", "RULE-A", "page.size", 2, 25);
+            RuleSeverity.Error, FixMode.Manual, AuditFindingDisposition.RequiresReview,
+            true, "Layout", "RULE-A", "page.size", 2, 25);
         var pageSql = AuditReadQueries.ApplyDatabaseOrdering(
                 AuditReadQueries.DatabaseFindings(db, auditId, query))
             .Skip((query.Page - 1) * query.PageSize)
@@ -368,11 +435,13 @@ public sealed class AuditReadModelTests
 
         Assert.Contains("group by", summarySql);
         Assert.DoesNotContain("owner_user_id", summarySql);
+        Assert.Contains("automatic_remediation_orchestrations", pageSql);
         Assert.Contains("limit", pageSql);
         Assert.Contains("offset", pageSql);
         Assert.Contains("order by", pageSql);
         Assert.Contains("collate \"c\"", pageSql);
         Assert.Contains("location_sort", pageSql);
+        Assert.Contains("workflow", pageSql);
         Assert.Contains("severity", pageSql);
         Assert.Contains("fixmode", pageSql);
         Assert.Contains("domain", pageSql);
@@ -466,5 +535,5 @@ public sealed class AuditReadModelTests
         string? ruleCode = null,
         string? validationKey = null) => AuditReadQueries.ApplyFilters(
             rows,
-            new(severity, fixMode, domain, ruleCode, validationKey, 1, 25));
+            new(severity, fixMode, null, null, domain, ruleCode, validationKey, 1, 25));
 }

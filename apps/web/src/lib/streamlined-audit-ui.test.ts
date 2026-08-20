@@ -6,6 +6,7 @@ import { parseCorrectionBatchStatus, parseTextCorrectionContext, parseTextCorrec
 
 const component = await readFile(new URL("../components/streamlined-audit-client.tsx", import.meta.url), "utf8");
 const api = await readFile(new URL("./text-correction-api.ts", import.meta.url), "utf8");
+const auditApi = await readFile(new URL("./audit-api.ts", import.meta.url), "utf8");
 const presentation = await readFile(new URL("./streamlined-audit-presentation.ts", import.meta.url), "utf8");
 const backendService = await readFile(new URL("../../../../backend/src/Ppki.Infrastructure/TextCorrectionService.cs", import.meta.url), "utf8");
 const id = "11111111-1111-1111-1111-111111111111";
@@ -109,6 +110,30 @@ const cases: Array<[string, () => void]> = [
   ["92 completed zero-proposal response remains visible", () => assert.match(component, /\{corrections\.totalCount\} usulan tersedia/)],
   ["93 failed readiness has safe terminal copy", () => assert.match(component, /Analisis saran tidak dapat diselesaikan\. Dokumen asli tetap aman/)],
   ["94 skipped readiness has safe terminal copy", () => assert.match(component, /Tidak ada analisis perbaikan bahasa untuk versi dokumen ini/)],
+  ["95 canonical remaining count is backend-owned", () => assert.match(component, /findingDispositions\.requiresReviewCount/)],
+  ["96 remaining findings are not restricted to historical Manual fix mode", () => { assert.match(component, /disposition: "RequiresReview"/); assert.doesNotMatch(component, /fixMode: "Manual"/); }],
+  ["97 large remaining set has database-backed pagination", () => { assert.match(component, /manualPage, pageSize: 25/); assert.match(component, /Navigasi temuan yang masih perlu pemeriksaan/); }],
+  ["98 remaining cards expose safe canonical identity and action", () => { assert.match(component, /item\.domain.*item\.ruleCode/); assert.match(component, /Tinjau temuan/); }],
+  ["99 page location uses canonical presentation without fabrication", () => assert.match(component, /pageLocationLabel\(item\.pageLocation\)/)],
+  ["100 zero text proposals remain a valid independent section", () => assert.match(component, /\{corrections\.totalCount\} usulan tersedia/)],
+  ["101 provider and execution internals remain absent from remaining cards", () => assert.doesNotMatch(component, />[^<]*(provider|FixExecution)[^<]*</i)],
+  ["102 text evidence shows transient context before and suggestion", () => { assert.match(component, />Konteks</); assert.match(component, />Sebelum</); assert.match(component, />Saran</); assert.match(component, /highlighted\.target/); }],
+  ["103 structural cards use backend safe presentation", () => { assert.match(component, /item\.presentation\.propertyLabel/); assert.match(component, /evidence\.beforeValue/); assert.match(component, /evidence\.expectedValue/); }],
+  ["104 missing evidence is explicit and never fabricated", () => assert.match(component, /Nilai aman tidak tersedia/)],
+  ["105 historical presentation never reads live rules", () => { assert.doesNotMatch(component, /public\.rules|\/rules\b/); assert.match(component, /item\.presentation/); }],
+  ["106 historical auto-fixed metric uses verified lineage", () => { assert.match(component, /automaticRemediationHistory\?\.verifiedResolvedCount/); assert.doesNotMatch(component, /findingDispositions\.automaticallyResolvedCount/); }],
+  ["107 verified auto history is read-only and expandable", () => { assert.match(component, /automaticExpanded/); assert.match(component, /disposition: "Resolved", automaticallyResolved: true/); assert.doesNotMatch(component, /automaticExpanded[\s\S]*apiFetch[^\n]*method:\s*"POST"/); }],
+  ["108 auto history remains database paginated", () => { assert.match(component, /automaticPage, pageSize: 25/); assert.match(component, /Navigasi riwayat perbaikan otomatis/); }],
+  ["109 section and formatting labels are human readable", () => { assert.match(component, /propertyLabel/); assert.match(component, /evidence\.beforeLabel/); assert.match(component, /evidence\.expectedLabel/); assert.doesNotMatch(component, />\{item\.validationKey\}</); }],
+  ["110 auto history labels expected evidence as verified after", () => assert.match(component, /Setelah \(terverifikasi\)/)],
+  ["111 structural excerpt is requested only by explicit card action", () => { assert.match(component, /Lihat bagian dokumen/); assert.match(component, /onClick=\{loadExcerpt\}/); assert.doesNotMatch(component, /manualFindings\.items[\s\S]*Promise\.all/); }],
+  ["112 excerpt endpoint is separate from language proposal flow", () => { assert.match(auditApi, /getStructuralFindingExcerpt/); assert.doesNotMatch(api, /StructuralFindingExcerpt|findings.*excerpt/); }],
+  ["113 exact heading and paragraph labels are explicit", () => { assert.match(component, /Teks pada dokumen/); assert.match(component, /Cuplikan paragraf/); }],
+  ["114 unavailable structural locator fails closed in UI", () => assert.match(component, /Cuplikan dokumen tidak tersedia\./)],
+  ["115 structural excerpt lifecycle aborts and never uses client storage", () => { assert.match(component, /structuralExcerptRequests[\s\S]*controller\.abort/); assert.doesNotMatch(component + auditApi, /localStorage|sessionStorage|console\.(log|error)/); }],
+  ["116 current unresolved structural finding keeps before and expected semantics", () => { assert.match(component, /<FindingEvidence item=\{item\}/); assert.doesNotMatch(component, /StructuralExcerpt[\s\S]*Sesudah/); }],
+  ["117 structural materialization does not create a language decision", () => assert.doesNotMatch(auditApi, /submitTextCorrectionDecision|text-correction-batches/)],
+  ["118 requires-review list remains one paginated request plus on-demand excerpt", () => { assert.match(component, /disposition: "RequiresReview", page: manualPage/); assert.match(component, /loadStructuralExcerpt\(item\.id\)/); }],
 ];
 
 for (const [name, body] of cases) test(name, body);

@@ -28,6 +28,7 @@ public sealed class AuditReadService(
                 value.ApplicableRuleCount,
                 value.StartedAt,
                 value.CompletedAt,
+                value.SourceAuditJobId,
                 value.SourceFixExecutionId,
                 value.DocumentVersion!.VersionNo == value.DocumentVersion.Document!.CurrentVersionNo))
             .SingleOrDefaultAsync(cancellationToken);
@@ -37,6 +38,24 @@ public sealed class AuditReadService(
                 db, auditId, ownerUserId)
             .ToListAsync(cancellationToken);
         var counts = AuditSummaryCounts.FromBuckets(countBuckets);
+        var dispositionBuckets = await AuditReadQueries.DatabaseFindings(db, auditId)
+            .GroupBy(value => value.WorkflowDisposition)
+            .Select(value => new { Disposition = value.Key, Count = value.Count() })
+            .ToListAsync(cancellationToken);
+        var automaticallyResolved = await db.FindingResolutionCases.AsNoTracking()
+            .Where(value => value.SourceAuditJobId == auditId
+                && value.Events.OrderByDescending(item => item.Sequence)
+                    .Select(item => (FindingResolutionEventType?)item.EventType).FirstOrDefault()
+                    == FindingResolutionEventType.VerificationResolvedObserved
+                && value.Events.Any(item => item.SourceFixExecutionId != null
+                    && db.AutomaticRemediationOrchestrations.Any(orchestration =>
+                        orchestration.FixExecutionId == item.SourceFixExecutionId)))
+            .CountAsync(cancellationToken);
+        var findingDispositions = AuditFindingDispositionSummaryDto.Create(counts.FindingCount,
+            dispositionBuckets.SingleOrDefault(value => value.Disposition == AuditFindingDisposition.Resolved)?.Count ?? 0,
+            automaticallyResolved,
+            dispositionBuckets.SingleOrDefault(value => value.Disposition == AuditFindingDisposition.Ignored)?.Count ?? 0,
+            dispositionBuckets.SingleOrDefault(value => value.Disposition == AuditFindingDisposition.RequiresReview)?.Count ?? 0);
 
         // AuditJob has no persisted scoring-policy version yet. Applying a live
         // policy here would rewrite historical meaning, so the read model must
@@ -67,6 +86,28 @@ public sealed class AuditReadService(
                 automatic.EligibleFindingCount, automatic.OperationCount, resolved,
                 stillDetected, automatic.SafeFailureCode, automatic.ResultDocumentVersionId,
                 automatic.ReauditJobId);
+        }
+        var lineageAuditIds = await AuditLineageIdsAsync(db, audit.Id, audit.SourceAuditJobId, cancellationToken);
+        var historicalAutomatic = await db.AutomaticRemediationOrchestrations.AsNoTracking()
+            .Where(value => lineageAuditIds.Contains(value.SourceAuditJobId)
+                && value.OrchestrationType == AutomaticRemediationPolicy.OrchestrationType
+                && value.PolicyVersion == AutomaticRemediationPolicy.Version
+                && value.State == AutomaticRemediationState.Completed
+                && value.FixExecutionId != null)
+            .OrderByDescending(value => value.UpdatedAt)
+            .Select(value => new { value.SourceAuditJobId, value.OperationCount, value.FixExecutionId })
+            .FirstOrDefaultAsync(cancellationToken);
+        AutomaticRemediationHistoryDto? automaticHistory = null;
+        if (historicalAutomatic is not null)
+        {
+            var verified = await db.FindingResolutionEvents.AsNoTracking()
+                .CountAsync(value => value.SourceFixExecutionId == historicalAutomatic.FixExecutionId
+                    && value.EventType == FindingResolutionEventType.VerificationResolvedObserved, cancellationToken);
+            var stillDetected = await db.FindingResolutionEvents.AsNoTracking()
+                .CountAsync(value => value.SourceFixExecutionId == historicalAutomatic.FixExecutionId
+                    && value.EventType == FindingResolutionEventType.VerificationStillDetectedObserved, cancellationToken);
+            automaticHistory = new(historicalAutomatic.SourceAuditJobId,
+                historicalAutomatic.OperationCount, verified, stillDetected);
         }
         var analysisState = await db.TextCorrectionAnalyses.AsNoTracking()
             .Where(value => value.AuditJobId == auditId)
@@ -104,6 +145,8 @@ public sealed class AuditReadService(
             audit.CompletedAt,
             failure?.Code,
             failure?.Message,
+            findingDispositions,
+            automaticHistory,
             new(analysisReadiness),
             automaticSummary,
             render.Dto);
@@ -151,7 +194,9 @@ public sealed class AuditReadService(
                 value.SourceSection,
                 value.PdfPage,
                 value.PrintedPage,
-                value.SnapshotSchemaVersion))
+                value.SnapshotSchemaVersion,
+                value.ResolutionState,
+                value.ReviewState))
             .ToListAsync(cancellationToken);
         var automaticFindingIds = await AutomaticFindingIdsAsync(db, auditId, cancellationToken);
         var render = await RenderStateAsync(db,
@@ -174,6 +219,18 @@ public sealed class AuditReadService(
                 db, auditId, ownerUserId, findingId: findingId)
             .SingleOrDefaultAsync(cancellationToken);
         if (row is null) return null;
+        var latestResolution = await db.FindingResolutionCases.AsNoTracking()
+            .Where(value => value.SourceAuditFindingId == findingId)
+            .SelectMany(value => value.Events)
+            .OrderByDescending(value => value.Sequence)
+            .Select(value => (FindingResolutionEventType?)value.EventType)
+            .FirstOrDefaultAsync(cancellationToken);
+        var latestReview = await db.FindingReviewCases.AsNoTracking()
+            .Where(value => value.AuditFindingId == findingId)
+            .SelectMany(value => value.Events)
+            .OrderByDescending(value => value.Sequence)
+            .Select(value => (FindingReviewEventType?)value.EventType)
+            .FirstOrDefaultAsync(cancellationToken);
         var automaticFindingIds = await AutomaticFindingIdsAsync(db, auditId, cancellationToken);
         var render = await RenderStateAsync(db, row.DocumentVersionId, cancellationToken);
         var detailRows = new[] { new AuditFindingReadRow(row.Id, row.AuditId, row.DocumentVersionId,
@@ -195,8 +252,11 @@ public sealed class AuditReadService(
             row.Severity.ToString(),
             row.FixMode.ToString(),
             row.FindingState.ToString(),
+            FindingResolutionProjection.State(latestResolution).ToString(),
+            FindingReviewProjection.State(latestReview).ToString(),
             row.ReasonCode,
             row.ReasonCode,
+            AuditFindingPresentation.Create(row.ActualJson, row.ExpectedJson),
             Json(row.ActualJson),
             Json(row.ExpectedJson),
             Json(row.LocationJson),
@@ -220,8 +280,11 @@ public sealed class AuditReadService(
         row.Severity.ToString(),
         row.FixMode.ToString(),
         row.FindingState.ToString(),
+        row.ResolutionState,
+        row.ReviewState,
         row.ReasonCode,
         row.ReasonCode,
+        AuditFindingPresentation.Create(row.ActualJson, row.ExpectedJson),
         Json(row.ActualJson),
         Json(row.ExpectedJson),
         Json(row.LocationJson),
@@ -268,33 +331,44 @@ public sealed class AuditReadService(
         var requested = findings.Select(value => (value.Id, Location: StructuralLocation(value.LocationJson))).ToArray();
         var paragraphIndexes = requested.Where(value => value.Location.ParagraphIndex is not null)
             .Select(value => value.Location.ParagraphIndex!.Value).Distinct().ToArray();
-        if (paragraphIndexes.Length == 0) return new Dictionary<Guid, FindingPageLocationDto>();
+        var bodyIndexes = requested.Where(value => value.Location.IsSection && value.Location.BodyElementIndex is not null)
+            .Select(value => value.Location.BodyElementIndex!.Value).Distinct().ToArray();
+        if (paragraphIndexes.Length == 0 && bodyIndexes.Length == 0) return new Dictionary<Guid, FindingPageLocationDto>();
         var entries = await db.DocumentPageMapEntries.AsNoTracking()
             .Where(value => value.RenderArtifactId == render.ArtifactId
-                && value.ParagraphIndex != null && paragraphIndexes.Contains(value.ParagraphIndex.Value))
-            .Select(value => new { value.ParagraphIndex, value.RunIndex, value.PageNumber, value.Confidence })
+                && ((value.ParagraphIndex != null && paragraphIndexes.Contains(value.ParagraphIndex.Value))
+                    || (value.BodyElementIndex != null && bodyIndexes.Contains(value.BodyElementIndex.Value))))
+            .Select(value => new { value.SectionIndex, value.BodyElementIndex,
+                value.ParagraphIndex, value.RunIndex, value.PageNumber, value.Confidence })
             .ToListAsync(cancellationToken);
         var result = new Dictionary<Guid, FindingPageLocationDto>();
         foreach (var item in requested)
         {
-            if (item.Location.ParagraphIndex is null) continue;
-            var entry = entries.SingleOrDefault(value => value.ParagraphIndex == item.Location.ParagraphIndex
-                && value.RunIndex == item.Location.RunIndex);
+            var entry = item.Location.IsSection
+                ? entries.FirstOrDefault(value => value.BodyElementIndex == item.Location.BodyElementIndex
+                    && value.SectionIndex == item.Location.SectionIndex)
+                : entries.SingleOrDefault(value => value.ParagraphIndex == item.Location.ParagraphIndex
+                    && value.RunIndex == item.Location.RunIndex);
             if (entry is not null)
                 result[item.Id] = new(entry.PageNumber, entry.Confidence.ToString(), "Completed");
         }
         return result;
     }
 
-    private static (int? ParagraphIndex, int? RunIndex) StructuralLocation(string json)
+    private static (int? SectionIndex, int? BodyElementIndex, int? ParagraphIndex, int? RunIndex, bool IsSection) StructuralLocation(string json)
     {
         try
         {
             using var document = JsonDocument.Parse(json);
-            return (Integer(document.RootElement, "ParagraphIndex", "paragraphIndex"),
-                Integer(document.RootElement, "RunIndex", "runIndex"));
+            var root = document.RootElement;
+            var compact = Text(root, "CompactLocation", "compactLocation");
+            return (Integer(root, "SectionIndex", "sectionIndex"),
+                Integer(root, "BodyElementIndex", "bodyElementIndex"),
+                Integer(root, "ParagraphIndex", "paragraphIndex"),
+                Integer(root, "RunIndex", "runIndex"),
+                compact?.Split('/').Any(value => value == "kind:section") == true);
         }
-        catch (JsonException) { return (null, null); }
+        catch (JsonException) { return (null, null, null, null, false); }
     }
 
     private static int? Integer(JsonElement root, string first, string second)
@@ -305,6 +379,10 @@ public sealed class AuditReadService(
             return parsed;
         return null;
     }
+
+    private static string? Text(JsonElement root, string first, string second) =>
+        (root.TryGetProperty(first, out var value) || root.TryGetProperty(second, out value))
+        && value.ValueKind == JsonValueKind.String ? value.GetString() : null;
 
     private static FindingPageLocationDto RenderFallback(RenderReadState render) => render.State switch
     {
@@ -367,6 +445,20 @@ public sealed class AuditReadService(
             audit.IsCurrentDocumentVersion, expected);
     }
 
+    private static async Task<IReadOnlyList<Guid>> AuditLineageIdsAsync(
+        PpkiDbContext db, Guid auditId, Guid? sourceAuditId, CancellationToken cancellationToken)
+    {
+        var result = new List<Guid> { auditId };
+        var current = sourceAuditId;
+        for (var depth = 0; current is not null && depth < 16; depth++)
+        {
+            if (!result.Contains(current.Value)) result.Add(current.Value);
+            current = await db.AuditJobs.AsNoTracking().Where(value => value.Id == current.Value)
+                .Select(value => value.SourceAuditJobId).SingleOrDefaultAsync(cancellationToken);
+        }
+        return result;
+    }
+
     private sealed record AuditSummaryRow(
         Guid Id,
         AuditJobStatus Status,
@@ -377,6 +469,7 @@ public sealed class AuditReadService(
         int ApplicableRuleCount,
         DateTimeOffset? StartedAt,
         DateTimeOffset? CompletedAt,
+        Guid? SourceAuditJobId,
         Guid? SourceFixExecutionId,
         bool IsCurrentDocumentVersion);
 
@@ -411,6 +504,37 @@ public static class AuditReadQueries
             finding.source_section_snapshot as "SourceSection",
             finding.pdf_page_snapshot as "PdfPage",
             finding.printed_page_snapshot as "PrintedPage",
+            case resolution_state.event_type
+                when 'FixAppliedObserved' then 'Applied'
+                when 'ReauditPendingObserved' then 'ReauditPending'
+                when 'VerificationResolvedObserved' then 'VerifiedResolved'
+                when 'VerificationStillDetectedObserved' then 'VerifiedStillDetected'
+                else 'Open'
+            end as "ResolutionState",
+            case review_state.event_type
+                when 'ReviewRequested' then 'PendingReview'
+                when 'ManualRemediationApproved' then 'ManualRemediationApproved'
+                when 'ManualRemediationReported' then 'ManualRemediationReported'
+                when 'NeedsRevision' then 'NeedsRevision'
+                when 'Rejected' then 'Rejected'
+                when 'Ignored' then 'Ignored'
+                when 'AcceptedRisk' then 'AcceptedRisk'
+                else 'NoReview'
+            end as "ReviewState",
+            case
+                when finding.status = 'Fixed'
+                  or resolution_state.event_type = 'VerificationResolvedObserved'
+                then 0
+                when finding.status = 'Ignored'
+                  or review_state.event_type in ('Ignored', 'AcceptedRisk')
+                then 1
+                else 2
+            end as "WorkflowDisposition",
+            case when resolution_state.event_type = 'VerificationResolvedObserved'
+                and exists (
+                    select 1 from public.automatic_remediation_orchestrations as automatic
+                    where automatic.fix_execution_id = resolution_state.source_fix_execution_id
+                ) then true else false end as "AutomaticallyResolved",
             case when location_sort.body is null
                    and location_sort.section is null
                    and location_sort.paragraph is null
@@ -430,6 +554,22 @@ public static class AuditReadQueries
         join public.audit_rule_snapshots as snapshot
           on snapshot.audit_job_id = finding.audit_job_id
          and snapshot.rule_code = finding.rule_code_snapshot
+        left join lateral (
+            select event.event_type, event.source_fix_execution_id
+            from public.finding_resolution_cases as resolution_case
+            join public.finding_resolution_events as event
+              on event.resolution_case_id = resolution_case.id
+            where resolution_case.source_audit_finding_id = finding.id
+            order by event.sequence desc limit 1
+        ) as resolution_state on true
+        left join lateral (
+            select event.event_type
+            from public.finding_review_cases as review_case
+            join public.finding_review_events as event
+              on event.review_case_id = review_case.id
+            where review_case.audit_finding_id = finding.id
+            order by event.sequence desc limit 1
+        ) as review_state on true
         cross join lateral (
             select
                 coalesce(finding.location -> 'BodyElementIndex', finding.location -> 'bodyElementIndex') as body,
@@ -464,15 +604,23 @@ public static class AuditReadQueries
 
     public static IQueryable<AuditFindingDatabaseRow> DatabaseFindings(
         PpkiDbContext db,
+        Guid auditId) => db.Database.SqlQueryRaw<AuditFindingDatabaseRow>(DatabaseFindingSql)
+            .Where(value => value.AuditId == auditId);
+
+    public static IQueryable<AuditFindingDatabaseRow> DatabaseFindings(
+        PpkiDbContext db,
         Guid auditId,
         AuditFindingQuery query)
     {
-        var values = db.Database.SqlQueryRaw<AuditFindingDatabaseRow>(DatabaseFindingSql)
-            .Where(value => value.AuditId == auditId);
+        var values = DatabaseFindings(db, auditId);
         if (query.Severity is not null)
             values = values.Where(value => value.Severity == query.Severity);
         if (query.FixMode is not null)
             values = values.Where(value => value.FixMode == query.FixMode);
+        if (query.Disposition is not null)
+            values = values.Where(value => value.WorkflowDisposition == query.Disposition);
+        if (query.AutomaticallyResolved is not null)
+            values = values.Where(value => value.AutomaticallyResolved == query.AutomaticallyResolved);
         if (query.Domain is not null)
             values = values.Where(value => value.Domain == query.Domain);
         if (query.RuleCode is not null)
@@ -676,7 +824,9 @@ public sealed record AuditFindingReadRow(
     string? SourceSection,
     int? PdfPage,
     string? PrintedPage,
-    int SnapshotSchemaVersion = 1);
+    int SnapshotSchemaVersion = 1,
+    string ResolutionState = "Open",
+    string ReviewState = "NoReview");
 
 public sealed class AuditFindingDatabaseRow
 {
@@ -692,6 +842,10 @@ public sealed class AuditFindingDatabaseRow
     public RuleSeverity Severity { get; init; }
     public FixMode FixMode { get; init; }
     public FindingStatus FindingState { get; init; }
+    public AuditFindingDisposition WorkflowDisposition { get; init; }
+    public bool AutomaticallyResolved { get; init; }
+    public string ResolutionState { get; init; } = string.Empty;
+    public string ReviewState { get; init; } = string.Empty;
     public string ReasonCode { get; init; } = string.Empty;
     public string ActualJson { get; init; } = string.Empty;
     public string ExpectedJson { get; init; } = string.Empty;

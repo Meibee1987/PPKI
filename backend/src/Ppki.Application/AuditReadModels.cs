@@ -67,6 +67,44 @@ public sealed record AuditFailureSummary(string Code, string Message)
 
 public sealed record CorrectionAnalysisReadinessDto(string State);
 
+public enum AuditFindingDisposition { Resolved, Ignored, RequiresReview }
+
+public sealed record AuditFindingDispositionSummaryDto(
+    int ResolvedCount,
+    int AutomaticallyResolvedCount,
+    int IgnoredCount,
+    int RequiresReviewCount)
+{
+    public static AuditFindingDispositionSummaryDto Create(
+        int totalCount, int resolvedCount, int automaticallyResolvedCount,
+        int ignoredCount, int requiresReviewCount)
+    {
+        if (totalCount < 0 || resolvedCount < 0 || automaticallyResolvedCount < 0
+            || ignoredCount < 0 || requiresReviewCount < 0
+            || automaticallyResolvedCount > resolvedCount
+            || resolvedCount + ignoredCount + requiresReviewCount != totalCount)
+            throw new InvalidOperationException("Finding disposition counts are incoherent.");
+        return new(resolvedCount, automaticallyResolvedCount, ignoredCount, requiresReviewCount);
+    }
+}
+
+public static class AuditFindingDispositionProjection
+{
+    public static AuditFindingDisposition Resolve(
+        FindingStatus findingState,
+        FindingResolutionEventType? latestResolution,
+        FindingReviewEventType? latestReview)
+    {
+        if (findingState == FindingStatus.Fixed
+            || latestResolution == FindingResolutionEventType.VerificationResolvedObserved)
+            return AuditFindingDisposition.Resolved;
+        if (findingState == FindingStatus.Ignored
+            || latestReview is FindingReviewEventType.Ignored or FindingReviewEventType.AcceptedRisk)
+            return AuditFindingDisposition.Ignored;
+        return AuditFindingDisposition.RequiresReview;
+    }
+}
+
 public static class TextCorrectionAnalysisReadiness
 {
     public const string AwaitingAnalysis = "AwaitingAnalysis";
@@ -110,6 +148,8 @@ public sealed record AuditSummaryDto(
     DateTimeOffset? CompletedAt,
     string? FailureCode,
     string? ErrorMessage,
+    AuditFindingDispositionSummaryDto FindingDispositions,
+    AutomaticRemediationHistoryDto? AutomaticRemediationHistory,
     CorrectionAnalysisReadinessDto CorrectionAnalysis,
     AutomaticRemediationSummaryDto? AutomaticRemediation = null,
     DocumentRenderStateDto? DocumentRender = null);
@@ -118,6 +158,16 @@ public sealed record AuditFindingSourceDto(
     string? SourceSection,
     int? PdfPage,
     string? PrintedPage);
+
+public sealed record AuditFindingPresentationDto(
+    string Kind,
+    string PropertyLabel,
+    string Problem,
+    string BeforeLabel,
+    string? BeforeValue,
+    string ExpectedLabel,
+    string? ExpectedValue,
+    string EvidenceState);
 
 public sealed record AuditFindingListItemDto(
     Guid Id,
@@ -130,8 +180,11 @@ public sealed record AuditFindingListItemDto(
     string Severity,
     string FixMode,
     string FindingState,
+    string ResolutionState,
+    string ReviewState,
     string ReasonCode,
     string Message,
+    AuditFindingPresentationDto Presentation,
     JsonElement Actual,
     JsonElement Expected,
     JsonElement Location,
@@ -152,8 +205,11 @@ public sealed record AuditFindingDetailDto(
     string Severity,
     string FixMode,
     string FindingState,
+    string ResolutionState,
+    string ReviewState,
     string ReasonCode,
     string Message,
+    AuditFindingPresentationDto Presentation,
     JsonElement Actual,
     JsonElement Expected,
     JsonElement Location,
@@ -171,6 +227,8 @@ public sealed record AuditFindingPageDto(
 public sealed record AuditFindingQuery(
     RuleSeverity? Severity,
     FixMode? FixMode,
+    AuditFindingDisposition? Disposition,
+    bool? AutomaticallyResolved,
     string? Domain,
     string? RuleCode,
     string? ValidationKey,
@@ -185,6 +243,8 @@ public sealed record AuditFindingQuery(
     public static bool TryCreate(
         string? severity,
         string? fixMode,
+        string? disposition,
+        bool? automaticallyResolved,
         string? domain,
         string? ruleCode,
         string? validationKey,
@@ -197,7 +257,8 @@ public sealed record AuditFindingQuery(
         query = null!;
         errorCode = null;
         if (!TryEnum(severity, out RuleSeverity? parsedSeverity)
-            || !TryEnum(fixMode, out FixMode? parsedFixMode))
+            || !TryEnum(fixMode, out FixMode? parsedFixMode)
+            || !TryEnum(disposition, out AuditFindingDisposition? parsedDisposition))
         {
             errorCode = "finding-filter-enum-invalid";
             return false;
@@ -227,7 +288,7 @@ public sealed record AuditFindingQuery(
             return false;
         }
 
-        query = new(parsedSeverity, parsedFixMode, normalizedDomain,
+        query = new(parsedSeverity, parsedFixMode, parsedDisposition, automaticallyResolved, normalizedDomain,
             normalizedRuleCode, normalizedValidationKey, selectedPage, selectedPageSize);
         return true;
     }

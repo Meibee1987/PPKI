@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { auditFindingDetailPath, auditFindingsPath, auditSummaryPath, findingsQuery, isTextCorrectionAnalysisTransitional, normalizeFindingFilters, parseAuditFindingDetail, parseAuditFindingPage, parseAuditSummary } from "./audit-contract.ts";
+import { auditFindingDetailPath, auditFindingsPath, auditSummaryPath, findingsQuery, isTextCorrectionAnalysisTransitional, normalizeFindingFilters, parseAuditFindingDetail, parseAuditFindingPage, parseAuditSummary, parseStructuralFindingExcerpt, structuralFindingExcerptPath } from "./audit-contract.ts";
 
 const auditId = "11111111-1111-4111-8111-111111111111";
 const findingId = "22222222-2222-4222-8222-222222222222";
@@ -15,6 +15,8 @@ const summary = {
   fixModes: { auto: 0, confirm: 0, manual: 1, report: 0 }, scoreState: "NotConfigured", score: null,
   scorePolicyVersion: null, scoreBreakdown: null, scoreDiagnosticCode: "scoring-policy-not-configured",
   startedAt: "2026-08-04T10:00:00Z", completedAt: "2026-08-04T10:01:00Z", failureCode: null, errorMessage: null,
+  findingDispositions: { resolvedCount: 0, automaticallyResolvedCount: 0, ignoredCount: 0, requiresReviewCount: 1 },
+  automaticRemediationHistory: null,
   correctionAnalysis: { state: "Completed" },
   automaticRemediation: null,
   documentRender: { state: "Completed", pageCount: 7, rendererVersion: "8.34.0+libreoffice-26.2.4.2", rendererContractVersion: "docx-pdf/1.0", fontProfileVersion: "ppki-liberation-noto/1.0", pageMapVersion: "page-map/1.0", safeFailureCode: null, previewAvailable: true },
@@ -23,6 +25,8 @@ const summary = {
 const finding = {
   id: findingId, auditId, ruleOrdinal: 1, ruleCode: "PPKI-LAYOUT-001", domain: "Layout", validationKey: "page.size",
   element: "Page", severity: "Error", fixMode: "Manual", findingState: "Open", reasonCode: "page-size-invalid",
+  resolutionState: "Open", reviewState: "NoReview",
+  presentation: { kind: "Unavailable", propertyLabel: "Persyaratan dokumen", problem: "Temuan ini memerlukan pemeriksaan pada dokumen.", beforeLabel: "Sebelum", beforeValue: null, expectedLabel: "Diharapkan", expectedValue: null, evidenceState: "Unavailable" },
   message: "page-size-invalid", actual: { Property: "width", RawValue: "200" }, expected: { Property: "width", AcceptedValues: ["210"] },
   location: { CompactLocation: "document", SectionIndex: null, BodyElementIndex: null, ParagraphIndex: null, RunIndex: null },
   confidence: 1, source: { sourceSection: "Format", pdfPage: 12, printedPage: "9" }, actionAvailability: "None",
@@ -32,6 +36,14 @@ const finding = {
 test("parses a valid audit summary without calculating score", () => {
   const parsed = parseAuditSummary(summary);
   assert.equal(parsed.scoreState, "NotConfigured"); assert.equal(parsed.score, null); assert.equal(parsed.severity.error, 1);
+  assert.deepEqual(parsed.findingDispositions, { resolvedCount: 0, automaticallyResolvedCount: 0, ignoredCount: 0, requiresReviewCount: 1 });
+});
+
+test("normalizes and serializes backend finding disposition", () => {
+  const filters = normalizeFindingFilters(new URLSearchParams("disposition=requiresreview&automaticallyResolved=true&page=2&pageSize=25"));
+  assert.equal(filters.disposition, "RequiresReview");
+  assert.match(findingsQuery(filters), /disposition=RequiresReview/);
+  assert.match(findingsQuery(filters), /automaticallyResolved=true/);
 });
 
 test("parses every explicit text-correction analysis readiness state", () => {
@@ -62,6 +74,14 @@ test("parses backend-owned completed automatic lineage", () => {
   const parsed = parseAuditSummary({ ...summary, automaticRemediation: { state: "Completed", policyVersion: "auto-format/1.0", eligibleFindingCount: 2031, operationCount: 2031, verifiedResolvedCount: 2031, stillDetectedCount: 197, failureCode: null, resultDocumentVersionId, reauditJobId } });
   assert.equal(parsed.automaticRemediation?.resultDocumentVersionId, resultDocumentVersionId);
   assert.equal(parsed.automaticRemediation?.reauditJobId, reauditJobId);
+});
+
+test("parses historical verified automatic remediation separately from current dispositions", () => {
+  const parsed = parseAuditSummary({ ...summary, automaticRemediationHistory: {
+    sourceAuditJobId: auditId, operationCount: 2031, verifiedResolvedCount: 2031, stillDetectedCount: 0,
+  } });
+  assert.equal(parsed.automaticRemediationHistory?.verifiedResolvedCount, 2031);
+  assert.equal(parsed.findingDispositions.requiresReviewCount, 1);
 });
 
 test("parses the completed backend wire summary with deterministic profile UUID and null score", () => {
@@ -145,6 +165,26 @@ test("parses finding detail snapshot fields", () => {
   assert.equal(parsed.validationKey, "page.size"); assert.equal(parsed.actionAvailability, "None");
 });
 
+test("parses one bounded exact transient structural excerpt", () => {
+  const parsed = parseStructuralFindingExcerpt({ findingId, documentVersionId: versionId, status: "Exact",
+    targetType: "Heading", excerpt: "BAB 2.", targetText: "BAB 2.",
+    pageLocation: { pageNumber: 18, confidence: "Exact", state: "Completed" } });
+  assert.equal(parsed.targetText, "BAB 2.");
+  assert.equal(parsed.documentVersionId, versionId);
+});
+
+test("accepts unavailable structural excerpt only without fabricated text", () => {
+  const parsed = parseStructuralFindingExcerpt({ findingId, documentVersionId: versionId, status: "Unavailable",
+    targetType: "Other", excerpt: null, targetText: null,
+    pageLocation: { pageNumber: null, confidence: "Unavailable", state: null } });
+  assert.equal(parsed.excerpt, null);
+  assert.throws(() => parseStructuralFindingExcerpt({ ...parsed, excerpt: "fabricated" }), /kontrak/);
+});
+
+test("rejects structural excerpt above the 240-scalar privacy bound", () => assert.throws(() =>
+  parseStructuralFindingExcerpt({ findingId, documentVersionId: versionId, status: "Exact", targetType: "Paragraph",
+    excerpt: "x".repeat(241), targetText: "x", pageLocation: { pageNumber: null, confidence: "Unavailable", state: null } }), /kontrak/));
+
 test("parses exact structural page location and canonical render state", () => {
   const parsed = parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 1, items: [finding] });
   assert.deepEqual(parsed.items[0].pageLocation, { pageNumber: 2, confidence: "Exact", state: "Completed" });
@@ -167,3 +207,7 @@ test("normalizes pagination whose offset exceeds the backend cap", () => assert.
 test("bounds page size at 100", () => assert.equal(normalizeFindingFilters(new URLSearchParams("pageSize=100")).pageSize, 100));
 test("serializes supported filters and pagination", () => assert.equal(findingsQuery({ severity: "Error", ruleCode: "PPKI-1", page: 2, pageSize: 25 }), "severity=Error&ruleCode=PPKI-1&page=2&pageSize=25"));
 test("API paths contain audit and finding identifiers but never owner ID", () => { const filters = { page: 1, pageSize: 25 }; assert.equal(auditSummaryPath(auditId), `/api/audits/${auditId}`); assert.match(auditFindingsPath(auditId, filters), /findings\?page=1/); assert.match(auditFindingDetailPath(auditId, findingId), new RegExp(findingId)); assert.doesNotMatch(auditFindingsPath(auditId, filters), /owner/i); });
+test("structural excerpt path carries only immutable audit and finding identity", () => {
+  assert.equal(structuralFindingExcerptPath(auditId, findingId), `/api/audits/${auditId}/findings/${findingId}/excerpt`);
+  assert.doesNotMatch(structuralFindingExcerptPath(auditId, findingId), /text=|location=|version=/i);
+});

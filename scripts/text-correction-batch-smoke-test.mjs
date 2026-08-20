@@ -142,6 +142,55 @@ async function main() {
     const unknownAudit = await api(apiUrl, environment, users.adminA.token, `/audits/${randomUUID()}`);
     report("v2-proposals-are-read-only-after-completed-analysis-readiness", readyV2Audit.status === 200
       && readyV2Audit.body?.correctionAnalysis?.state === "Completed" && page.totalCount === 4);
+    const dispositions = readyV2Audit.body?.findingDispositions;
+    const remainingFindings = await api(apiUrl, environment, users.adminA.token,
+      `/audits/${v2AuditId}/findings?disposition=RequiresReview&page=1&pageSize=25`);
+    const structuralRules = {};
+    for (const ruleCode of ["PPKI-HDG-001", "PPKI-HDG-007", "PPKI-LAY-008", "PPKI-ABS-013"]) {
+      const findings = await api(apiUrl, environment, users.adminA.token,
+        `/audits/${v2AuditId}/findings?disposition=RequiresReview&ruleCode=${ruleCode}&page=1&pageSize=1`);
+      const finding = findings.body?.items?.[0];
+      structuralRules[ruleCode] = { findings, finding, excerpt: finding
+        ? await api(apiUrl, environment, users.adminA.token, `/audits/${v2AuditId}/findings/${finding.id}/excerpt`)
+        : null };
+    }
+    const headingExcerptA = structuralRules["PPKI-HDG-001"].excerpt;
+    const headingFinding = structuralRules["PPKI-HDG-001"].finding;
+    const headingExcerptB = await api(apiUrl, environment, users.adminB.token,
+      `/audits/${v2AuditId}/findings/${headingFinding.id}/excerpt`);
+    const headingExcerptDenied = await api(apiUrl, environment, users.student.token,
+      `/audits/${v2AuditId}/findings/${headingFinding.id}/excerpt`);
+    report("requires-review-heading-excerpt-is-exact-bounded-version-bound-and-admin-consistent",
+      headingExcerptA.status === 200 && headingExcerptA.body?.status === "Exact"
+      && headingExcerptA.body?.targetType === "Heading"
+      && headingExcerptA.body?.documentVersionId === v2Id
+      && Array.from(headingExcerptA.body?.excerpt ?? "").length > 0
+      && Array.from(headingExcerptA.body?.excerpt ?? "").length <= 240
+      && JSON.stringify(headingExcerptB.body) === JSON.stringify(headingExcerptA.body)
+      && headingExcerptDenied.status === 403);
+    const automaticHistoryA = await api(apiUrl, environment, users.adminA.token,
+      `/audits/${initialAuditId}/findings?disposition=Resolved&automaticallyResolved=true&page=1&pageSize=25`);
+    const automaticHistoryB = await api(apiUrl, environment, users.adminB.token,
+      `/audits/${initialAuditId}/findings?disposition=Resolved&automaticallyResolved=true&page=1&pageSize=25`);
+    console.log(`auto-history-evidence summary=${readyV2Audit.body?.automaticRemediationHistory?.verifiedResolvedCount ?? "none"} expected=${automatic.automaticRemediation?.verifiedResolvedCount ?? "none"} status=${automaticHistoryA.status} total=${automaticHistoryA.body?.totalCount ?? "none"} items=${automaticHistoryA.body?.items?.length ?? "none"}`);
+    console.log(`auto-history-presentation=${[...new Set((automaticHistoryA.body?.items ?? []).map(value => `${value.presentation?.propertyLabel ?? "none"}:${value.presentation?.evidenceState ?? "none"}`))].join("|")}`);
+    console.log(`auto-history-unavailable=${[...new Set((automaticHistoryA.body?.items ?? []).filter(value => value.presentation?.evidenceState === "Unavailable").map(value => `${value.ruleCode}:${value.reasonCode}`))].join("|") || "none"}`);
+    report("canonical-findings-have-one-backend-owned-visible-disposition", dispositions?.resolvedCount
+      + dispositions?.ignoredCount + dispositions?.requiresReviewCount === readyV2Audit.body?.findingCount
+      && remainingFindings.status === 200
+      && remainingFindings.body?.totalCount === dispositions?.requiresReviewCount);
+    report("historical-auto-summary-and-safe-evidence-use-verified-a1-lineage",
+      readyV2Audit.body?.automaticRemediationHistory?.sourceAuditJobId === initialAuditId
+      && readyV2Audit.body?.automaticRemediationHistory?.verifiedResolvedCount
+        === automatic.automaticRemediation?.verifiedResolvedCount
+      && automaticHistoryA.status === 200
+      && automaticHistoryA.body?.totalCount === automatic.automaticRemediation?.verifiedResolvedCount
+      && automaticHistoryA.body?.items?.every(value => value.presentation?.propertyLabel
+        && value.presentation?.problem && value.presentation?.evidenceState !== "Unavailable"));
+    report("admin-a-and-admin-b-see-identical-db-paginated-auto-history",
+      automaticHistoryB.status === 200
+      && automaticHistoryB.body?.items?.map(value => value.id).join("|")
+        === automaticHistoryA.body?.items?.map(value => value.id).join("|"));
     report("admin-a-and-admin-b-see-identical-readiness", readyV2AuditAdminB.status === 200
       && readyV2AuditAdminB.body?.correctionAnalysis?.state === readyV2Audit.body?.correctionAnalysis?.state);
     report("unknown-remains-404-and-inaccessible-remains-403", unknownAudit.status === 404
@@ -170,6 +219,9 @@ async function main() {
     report("transient-context-distinguishes-exact-occurrences", [suggestion, manual, ignored, undecided].every(Boolean)
       && suggestion.context.targetOffsetInContext < undecided.context.targetOffsetInContext
       && contexts.every(value => value.context.targetText === "di analisa"));
+    report("text-before-context-and-suggestion-remain-transient-and-actionable",
+      contexts.every(value => value.context.context?.includes(value.context.targetText)
+        && value.context.suggestedReplacement === "dianalisis"));
 
     const decisionRequests = [
       [suggestion, { action: "UseSuggestion" }],
@@ -204,6 +256,17 @@ async function main() {
       && completedSourcePage.body?.activeBatch?.reauditId === batch.reauditId
       && completedSourcePage.body?.activeBatch?.resultDocumentVersionId === batch.resultDocumentVersionId);
     report("final-a3-analysis-readiness-is-terminal-and-canonical", finalAudit.body?.correctionAnalysis?.state === "Completed");
+    report("final-a3-preserves-verified-auto-history-without-canonical-regression",
+      finalAudit.body?.automaticRemediation === null
+      && finalAudit.body?.automaticRemediationHistory?.sourceAuditJobId === initialAuditId
+      && finalAudit.body?.automaticRemediationHistory?.verifiedResolvedCount
+        === automatic.automaticRemediation?.verifiedResolvedCount);
+    const historicalHeadingExcerpt = await api(apiUrl, environment, users.adminA.token,
+      `/audits/${v2AuditId}/findings/${headingFinding.id}/excerpt`);
+    report("historical-finding-never-materializes-current-version-text",
+      historicalHeadingExcerpt.status === 200 && historicalHeadingExcerpt.body?.status === "Exact"
+      && historicalHeadingExcerpt.body?.documentVersionId === v2Id
+      && historicalHeadingExcerpt.body?.documentVersionId !== batch.resultDocumentVersionId);
     const renderV3 = await waitRender(apiUrl, environment, users.adminA.token, batch.resultDocumentVersionId);
     report("v3-render-and-page-map-completed", renderV3.pageCount >= 3);
     const renderV1 = await waitRender(apiUrl, environment, users.adminA.token, v1.id);
@@ -261,6 +324,8 @@ async function main() {
     report("all-three-versions-have-independent-canonical-render-lineage", canonicalRenderLineage === "3|3|3|3|3|0");
     const forbiddenColumns = await sql(container, `select count(*) from information_schema.columns where table_schema='public' and table_name like 'text_correction_%' and column_name in ('source_text','source_sentence','source_paragraph','source_excerpt','context');`);
     report("database-has-no-source-context-column", forbiddenColumns === "0");
+    const structuralExcerptColumns = await sql(container, `select count(*) from information_schema.columns where table_schema='public' and column_name in ('source_excerpt','document_excerpt','paragraph_text','target_text');`);
+    report("database-has-no-structural-excerpt-persistence-column", structuralExcerptColumns === "0");
     console.log("cardinality documents=1 versions=3 analyses=2 sourceProposals=4 decisions=3 batches=1 correctionExecutions=1 correctionReaudits=1 boundedRenderArtifactsV2V3=2 canonicalRenderArtifactsV1V2V3=3");
     console.log("text-correction-batch-production-e2e-completed: PASS");
   } catch (error) {

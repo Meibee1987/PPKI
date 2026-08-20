@@ -4,18 +4,18 @@ import Link from "next/link";
 import { useParams } from "next/navigation";
 import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import { ApiRequestError, apiFetchBlob } from "../lib/api";
-import { getAuditSummary, listAuditFindings } from "../lib/audit-api";
-import { isTextCorrectionAnalysisTransitional, type AuditFindingPage, type AuditSummary } from "../lib/audit-contract";
+import { getAuditSummary, getStructuralFindingExcerpt, listAuditFindings } from "../lib/audit-api";
+import { isTextCorrectionAnalysisTransitional, type AuditFinding, type AuditFindingPage, type AuditSummary, type StructuralFindingExcerpt } from "../lib/audit-contract";
 import { assertCanonicalSummary, canonicalIdentityFromCompletedBatch, canonicalIdentityFromRouteSummary, type CanonicalAuditIdentity } from "../lib/canonical-audit-identity";
 import { createTextCorrectionBatch, getDocumentPreviewState, getTextCorrectionBatch, getTextCorrectionContext, listTextCorrections, submitTextCorrectionDecision } from "../lib/text-correction-api";
 import type { CorrectionAction, CorrectionBatchStatus, DocumentPreviewState, TextCorrectionContext, TextCorrectionPage, TextCorrectionProposal } from "../lib/text-correction-contract";
 import { automaticProgress, batchProgress, contextStateCopy, decisionLabel, highlightedContext, isTerminalBatch, pageLocationLabel, previewFragment, safeCommandMessage, scalarCount, validateManualReplacement } from "../lib/streamlined-audit-presentation";
 import { ConfirmationDialog } from "./confirmation-dialog";
-import { FindingPayload } from "./finding-payload";
 import { FindingLocation } from "./finding-location";
 
 const PAGE_SIZE = 25;
 type ContextView = { state: "Loading" | "Exact" | "Stale" | "Unsupported" | "Unavailable"; value?: TextCorrectionContext };
+type StructuralExcerptView = { state: "Loading" | "Exact" | "Unavailable"; value?: StructuralFindingExcerpt };
 type CorrectionFilter = "All" | "Undecided" | "Selected" | "Ignored" | "Problem";
 
 export function StreamlinedAuditClient() {
@@ -25,9 +25,14 @@ export function StreamlinedAuditClient() {
   const canonicalAuditId = current?.identity.auditId;
   const [corrections, setCorrections] = useState<TextCorrectionPage>();
   const [manualFindings, setManualFindings] = useState<AuditFindingPage>();
+  const [automaticFindings, setAutomaticFindings] = useState<AuditFindingPage>();
   const [proposalPage, setProposalPage] = useState(1);
+  const [manualPage, setManualPage] = useState(1);
+  const [automaticPage, setAutomaticPage] = useState(1);
+  const [automaticExpanded, setAutomaticExpanded] = useState(false);
   const [filter, setFilter] = useState<CorrectionFilter>("All");
   const [contexts, setContexts] = useState<Record<string, ContextView>>({});
+  const [structuralExcerpts, setStructuralExcerpts] = useState<Record<string, StructuralExcerptView>>({});
   const [editing, setEditing] = useState<string>();
   const [manualValue, setManualValue] = useState("");
   const [manualError, setManualError] = useState("");
@@ -42,6 +47,7 @@ export function StreamlinedAuditClient() {
   const decisionKeys = useRef(new Map<string, string>());
   const batchKey = useRef<string | undefined>(undefined);
   const contextRequests = useRef(new Map<string, AbortController>());
+  const structuralExcerptRequests = useRef(new Map<string, AbortController>());
   const activeAuditId = useRef<string | undefined>(undefined);
 
   const loadCorrections = useCallback(async (signal?: AbortSignal) => {
@@ -55,7 +61,7 @@ export function StreamlinedAuditClient() {
 
   useEffect(() => {
     const controller = new AbortController();
-    setLoading(true); setError(""); setCurrent(undefined); setCorrections(undefined); setBatch(undefined); setContexts({});
+    setLoading(true); setError(""); setCurrent(undefined); setCorrections(undefined); setManualFindings(undefined); setAutomaticFindings(undefined); setBatch(undefined); setContexts({}); setStructuralExcerpts({}); setManualPage(1); setAutomaticPage(1); setAutomaticExpanded(false);
     const load = async () => {
       try {
         const routeSummary = await getAuditSummary(routeAuditId, controller.signal);
@@ -126,10 +132,21 @@ export function StreamlinedAuditClient() {
   useEffect(() => {
     if (summary?.status !== "Completed" || !canonicalAuditId) return;
     const controller = new AbortController();
-    listAuditFindings(canonicalAuditId, { fixMode: "Manual", page: 1, pageSize: 25 }, controller.signal)
+    setManualFindings(undefined);
+    listAuditFindings(canonicalAuditId, { disposition: "RequiresReview", page: manualPage, pageSize: 25 }, controller.signal)
       .then(setManualFindings).catch(() => { /* Optional legacy section fails closed. */ });
     return () => controller.abort();
-  }, [canonicalAuditId, summary?.status]);
+  }, [canonicalAuditId, summary?.status, manualPage]);
+
+  useEffect(() => {
+    const automatic = summary?.automaticRemediationHistory;
+    if (!automaticExpanded || !automatic || automatic.verifiedResolvedCount === 0) return;
+    const controller = new AbortController();
+    setAutomaticFindings(undefined);
+    listAuditFindings(automatic.sourceAuditJobId, { disposition: "Resolved", automaticallyResolved: true, page: automaticPage, pageSize: 25 }, controller.signal)
+      .then(setAutomaticFindings).catch(() => { /* Historical evidence remains optional and read-only. */ });
+    return () => controller.abort();
+  }, [automaticExpanded, automaticPage, summary?.automaticRemediationHistory]);
 
   useEffect(() => {
     if (!batch || isTerminalBatch(batch.state)) return;
@@ -181,6 +198,7 @@ export function StreamlinedAuditClient() {
   }, [batch?.state, batch?.reauditId, batch?.resultDocumentVersionId, current?.identity.auditId, finalSummary?.id]);
 
   useEffect(() => () => { for (const controller of contextRequests.current.values()) controller.abort(); contextRequests.current.clear(); }, [canonicalAuditId]);
+  useEffect(() => () => { for (const controller of structuralExcerptRequests.current.values()) controller.abort(); structuralExcerptRequests.current.clear(); }, [canonicalAuditId]);
 
   async function loadContext(proposalId: string): Promise<TextCorrectionContext | undefined> {
     const existing = contexts[proposalId]; if (existing?.value) return existing.value;
@@ -193,6 +211,22 @@ export function StreamlinedAuditClient() {
     } catch (reason) {
       if ((reason as { name?: string })?.name !== "AbortError") setContexts(current => ({ ...current, [proposalId]: { state: "Unavailable" } }));
     } finally { contextRequests.current.delete(proposalId); }
+  }
+
+  async function loadStructuralExcerpt(findingId: string) {
+    if (!canonicalAuditId || structuralExcerpts[findingId]) return;
+    const requestedAuditId = canonicalAuditId;
+    structuralExcerptRequests.current.get(findingId)?.abort();
+    const controller = new AbortController(); structuralExcerptRequests.current.set(findingId, controller);
+    setStructuralExcerpts(value => ({ ...value, [findingId]: { state: "Loading" } }));
+    try {
+      const value = await getStructuralFindingExcerpt(requestedAuditId, findingId, controller.signal);
+      if (activeAuditId.current !== requestedAuditId) return;
+      setStructuralExcerpts(current => ({ ...current, [findingId]: { state: value.status, value } }));
+    } catch (reason) {
+      if ((reason as { name?: string })?.name !== "AbortError")
+        setStructuralExcerpts(current => ({ ...current, [findingId]: { state: "Unavailable" } }));
+    } finally { structuralExcerptRequests.current.delete(findingId); }
   }
 
   async function choose(proposal: TextCorrectionProposal, action: CorrectionAction, replacement?: string) {
@@ -241,13 +275,19 @@ export function StreamlinedAuditClient() {
     <AuditProgress summary={summary} />
     {(!final || finalSummary) && <section className="summary-strip" aria-label={final ? "Ringkasan hasil akhir" : "Ringkasan hasil audit"}>
       <SummaryMetric label={final ? "Masalah tersisa" : "Masalah ditemukan"} value={summary.findingCount} />
-      <SummaryMetric label="Diperbaiki otomatis" value={summary.automaticRemediation?.verifiedResolvedCount ?? 0} />
+      <SummaryMetric label="Diperbaiki otomatis" value={summary.automaticRemediationHistory?.verifiedResolvedCount ?? 0} />
       {!final && <SummaryMetric label="Perlu keputusan" value={corrections?.summary.undecidedCount ?? 0} />}
-      <SummaryMetric label="Diabaikan" value={corrections?.summary.ignoredCount ?? 0} />
+      <SummaryMetric label="Diabaikan" value={summary.findingDispositions.ignoredCount + (corrections?.summary.ignoredCount ?? 0)} />
       {final ? <SummaryMetric label="Diperbaiki admin" value={batch.verificationCounts.VerifiedResolved ?? 0} />
-        : <SummaryMetric label="Masih perlu pemeriksaan" value={summary.automaticRemediation?.stillDetectedCount ?? summary.fixModes.manual} />}
+        : <SummaryMetric label="Masih perlu pemeriksaan" value={summary.findingDispositions.requiresReviewCount} />}
     </section>}
     {final && !finalSummary && <p className="muted" role="status">Memuat ringkasan versi akhir...</p>}
+
+    {!final && summary.automaticRemediationHistory && summary.automaticRemediationHistory.verifiedResolvedCount > 0 && <section className="panel automatic-history" aria-labelledby="automatic-history-title">
+      <button className="automatic-history-toggle" type="button" aria-expanded={automaticExpanded} onClick={() => setAutomaticExpanded(value => !value)}><span><strong id="automatic-history-title">Diperbaiki otomatis</strong><small>{summary.automaticRemediationHistory.verifiedResolvedCount} temuan dari audit sebelumnya telah diperbaiki dan diverifikasi.</small></span><span aria-hidden="true">{automaticExpanded ? "−" : "+"}</span></button>
+      {automaticExpanded && !automaticFindings && <p className="muted" role="status">Memuat bukti perbaikan terverifikasi...</p>}
+      {automaticExpanded && automaticFindings && <><ul className="evidence-card-list">{automaticFindings.items.map(item => <li key={item.id}><div><strong>{item.presentation.propertyLabel}</strong><span className="muted">{item.element} · {pageLocationLabel(item.pageLocation)}</span><FindingEvidence item={item} automatic /><span className="muted">Verifikasi: Diperbaiki dan tidak terdeteksi lagi</span></div></li>)}</ul><FindingPagination label="Navigasi riwayat perbaikan otomatis" page={automaticFindings.page} pageSize={automaticFindings.pageSize} totalCount={automaticFindings.totalCount} setPage={setAutomaticPage} /></>}
+    </section>}
 
     {batch && <BatchPanel batch={batch} preview={preview} openFinal={() => void openPreview(batch.resultDocumentVersionId, null)} />}
 
@@ -264,9 +304,35 @@ export function StreamlinedAuditClient() {
     {!final && readyCount > 0 && !batch && <aside className="batch-bar" aria-live="polite"><div><strong>{readyCount} perbaikan siap diterapkan</strong><span>Semua pilihan diterapkan ke satu versi baru.</span></div><button className="button" type="button" onClick={() => setConfirmBatch(true)}>Terapkan {readyCount} Perbaikan</button></aside>}
     {!final && corrections && readyCount === 0 && !batch && <aside className="batch-bar batch-disabled"><div><strong>Belum ada perbaikan siap diterapkan</strong><span>Pilih Gunakan Saran atau Edit Manual pada usulan.</span></div><button className="button" type="button" disabled>Terapkan Perbaikan</button></aside>}
 
-    {manualFindings && manualFindings.items.length > 0 && <details className="panel legacy-findings"><summary>Lihat temuan yang perlu pemeriksaan manual</summary><p className="muted">Workflow lama tetap tersedia pada detail temuan struktural yang belum memiliki alur khusus.</p><ul>{manualFindings.items.map(item => <li key={item.id}><div><strong>{item.element}</strong><FindingLocation value={item.location} /></div><Link className="button secondary" href={`/audits/${encodeURIComponent(canonicalAuditId ?? routeAuditId)}/findings/${encodeURIComponent(item.id)}`}>Periksa temuan</Link></li>)}</ul></details>}
+    {manualFindings && manualFindings.totalCount > 0 && <section className="panel legacy-findings" aria-labelledby="remaining-findings-title">
+      <div className="section-heading"><div><h2 id="remaining-findings-title">Masih perlu pemeriksaan</h2><p>{manualFindings.totalCount} temuan non-teks atau tanpa perbaikan otomatis yang aman.</p></div></div>
+      <ul>{manualFindings.items.map(item => <ManualFindingCard key={item.id} item={item} excerpt={structuralExcerpts[item.id]} loadExcerpt={() => void loadStructuralExcerpt(item.id)} auditId={canonicalAuditId ?? routeAuditId} />)}</ul>
+      <FindingPagination label="Navigasi temuan yang masih perlu pemeriksaan" page={manualFindings.page} pageSize={manualFindings.pageSize} totalCount={manualFindings.totalCount} setPage={setManualPage} />
+    </section>}
     <ConfirmationDialog open={confirmBatch} title={`Terapkan ${readyCount} perbaikan?`} description={`Terapkan ${readyCount} perbaikan ke satu versi baru dokumen?`} confirmLabel="Terapkan" busy={Boolean(batch && !isTerminalBatch(batch.state))} onConfirm={createBatch} onClose={() => setConfirmBatch(false)} />
   </main>;
+}
+
+function ManualFindingCard({ item, excerpt, loadExcerpt, auditId }: { item: AuditFinding; excerpt?: StructuralExcerptView; loadExcerpt: () => void; auditId: string }) {
+  return <li><div><strong>{item.presentation.propertyLabel}</strong><span className="muted">{item.element} · {item.domain} · {item.ruleCode}</span><span className="page-label">{pageLocationLabel(item.pageLocation)}</span><FindingLocation value={item.location} /><StructuralExcerpt view={excerpt} />{!excerpt && <button className="text-button excerpt-button" type="button" onClick={loadExcerpt}>Lihat bagian dokumen</button>}<FindingEvidence item={item} /><span className="muted">Resolusi: {item.resolutionState} · Review: {item.reviewState}</span></div><Link className="button secondary" href={`/audits/${encodeURIComponent(auditId)}/findings/${encodeURIComponent(item.id)}`}>Tinjau temuan / Perbaiki Manual</Link></li>;
+}
+
+function StructuralExcerpt({ view }: { view?: StructuralExcerptView }) {
+  if (!view) return null;
+  if (view.state === "Loading") return <div className="context-state" role="status">Memuat bagian dokumen...</div>;
+  if (view.state !== "Exact" || !view.value?.excerpt) return <div className="context-state" role="status">Cuplikan dokumen tidak tersedia.</div>;
+  const label = view.value.targetType === "Heading" ? "Teks pada dokumen"
+    : view.value.targetType === "Section" ? "Cuplikan bagian dokumen" : "Cuplikan paragraf";
+  return <div className="structural-excerpt"><small>{label}</small><blockquote>{view.value.excerpt}</blockquote></div>;
+}
+
+function FindingEvidence({ item, automatic = false }: { item: AuditFinding; automatic?: boolean }) {
+  const evidence = item.presentation;
+  return <div className="finding-evidence"><p><strong>Masalah</strong><span>{evidence.problem}</span></p><dl><div><dt>{evidence.beforeLabel}</dt><dd>{evidence.beforeValue ?? "Nilai aman tidak tersedia"}</dd></div><div><dt>{automatic ? "Setelah (terverifikasi)" : evidence.expectedLabel}</dt><dd>{evidence.expectedValue ?? "Nilai aman tidak tersedia"}</dd></div></dl>{evidence.evidenceState !== "Complete" && <small className="muted">Bukti aman tidak lengkap; nilai tidak diperkirakan atau dibuat.</small>}</div>;
+}
+
+function FindingPagination({ label, page, pageSize, totalCount, setPage }: { label: string; page: number; pageSize: number; totalCount: number; setPage: (update: (value: number) => number) => void }) {
+  return <nav className="pagination" aria-label={label}><button className="button secondary" type="button" disabled={page <= 1} onClick={() => setPage(value => value - 1)}>Sebelumnya</button><span>Halaman {page} dari {Math.max(1, Math.ceil(totalCount / pageSize))}</span><button className="button secondary" type="button" disabled={page * pageSize >= totalCount} onClick={() => setPage(value => value + 1)}>Berikutnya</button></nav>;
 }
 
 function CorrectionAnalysisState({ state }: { state: AuditSummary["correctionAnalysis"]["state"] }) {
@@ -311,7 +377,7 @@ function ContextBlock({ view }: { view?: ContextView }) {
   if (view.state === "Loading") return <div className="context-state" aria-live="polite">Memuat konteks...</div>;
   if (view.state !== "Exact" || !view.value) return <div className="context-state" role="status">{contextStateCopy(view.state)}</div>;
   const highlighted = highlightedContext(view.value);
-  return <div className="context-block"><div><small>Kalimat</small><p>{highlighted ? <>{highlighted.before}<mark>{highlighted.target}</mark>{highlighted.after}</> : view.value.context}</p></div><dl><div><dt>Masalah</dt><dd>{view.value.targetText}</dd></div><div><dt>Saran</dt><dd>{view.value.suggestedReplacement}</dd></div></dl></div>;
+  return <div className="context-block"><div><small>Konteks</small><p>{highlighted ? <>{highlighted.before}<mark>{highlighted.target}</mark>{highlighted.after}</> : view.value.context}</p></div><p className="context-problem"><small>Masalah</small><span>Bagian yang ditandai memerlukan keputusan perbaikan bahasa.</span></p><dl><div><dt>Sebelum</dt><dd>{view.value.targetText}</dd></div><div><dt>Saran</dt><dd>{view.value.suggestedReplacement}</dd></div></dl></div>;
 }
 
 async function openPreview(versionId: string | null, location: TextCorrectionProposal["pageLocation"]) {

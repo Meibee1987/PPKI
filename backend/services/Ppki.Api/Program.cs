@@ -42,6 +42,7 @@ builder.Services.AddScoped<IFindingResolutionService, FindingResolutionService>(
 builder.Services.AddScoped<IInternalAdminAuthorizationService, InternalAdminAuthorizationService>();
 builder.Services.AddScoped<ITextCorrectionService, TextCorrectionService>();
 builder.Services.AddScoped<ITextCorrectionContextMaterializationService, TextCorrectionContextMaterializationService>();
+builder.Services.AddScoped<IStructuralFindingExcerptService, StructuralFindingExcerptService>();
 builder.Services.AddScoped<InternalAdminEndpointFilter>();
 builder.Services.AddScoped<IFindingReviewService, FindingReviewService>();
 builder.Services.AddSingleton<IResolvedRuleSetHasher, ResolvedRuleSetHasher>();
@@ -182,10 +183,10 @@ api.MapGet("/audits/{id:guid}", async (Guid id, ClaimsPrincipal user, IAuditRead
 });
 
 api.MapGet("/audits/{id:guid}/findings", async (Guid id, ClaimsPrincipal user,
-    IAuditReadService audits, string? severity, string? fixMode, string? domain,
+    IAuditReadService audits, string? severity, string? fixMode, string? disposition, bool? automaticallyResolved, string? domain,
     string? ruleCode, string? validationKey, string? sort, int? page, int? pageSize,
     CancellationToken ct) => {
-    if(!AuditFindingQuery.TryCreate(severity,fixMode,domain,ruleCode,validationKey,
+    if(!AuditFindingQuery.TryCreate(severity,fixMode,disposition,automaticallyResolved,domain,ruleCode,validationKey,
         sort,page,pageSize,out var query,out var errorCode))
         return Results.Problem(statusCode:StatusCodes.Status400BadRequest,
             title:"Invalid findings query.",extensions:new Dictionary<string,object?>{{"code",errorCode}});
@@ -433,6 +434,15 @@ api.MapGet("/text-corrections/{proposalId:guid}/context", async (Guid proposalId
   .WithSummary("Materialize bounded exact source context transiently for an authorized admin.")
   .Produces<TextCorrectionProposalContext>(StatusCodes.Status200OK)
   .ProducesProblem(StatusCodes.Status409Conflict)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapGet("/audits/{auditId:guid}/findings/{findingId:guid}/excerpt", async (Guid auditId,
+    Guid findingId,ClaimsPrincipal user,IStructuralFindingExcerptService excerpts,CancellationToken ct) => {
+    var result=await excerpts.MaterializeAsync(auditId,findingId,UserId(user),ct);
+    return result is null?Results.NotFound():Results.Ok(result);
+}).WithName("GetStructuralFindingExcerpt")
+  .WithSummary("Materialize one bounded exact structural excerpt transiently for an authorized admin.")
+  .Produces<StructuralFindingExcerptDto>(StatusCodes.Status200OK)
   .Produces(StatusCodes.Status404NotFound);
 
 api.MapPost("/text-corrections/{proposalId:guid}/decisions", async (Guid proposalId,
