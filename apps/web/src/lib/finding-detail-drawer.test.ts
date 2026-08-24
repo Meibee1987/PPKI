@@ -118,9 +118,9 @@ test("opening detail does not alter bounded pagination or S6-T03 summary readine
   assert.doesNotMatch(drawer, /setSummary|blockingFindingCount|readinessState|pageSize:\s*(?:1000|summary)/);
 });
 
-test("drawer introduces no S6-T06 mutation, review, ignore, or approval actions", () => {
-  assert.doesNotMatch(drawer, /submitTextCorrectionDecision|requestFindingReview|method:\s*["'](?:POST|PUT|PATCH|DELETE)|onClick=.*(?:Ignore|Approve|Reject)/i);
-  assert.match(drawer, /Detail ini hanya menampilkan status authoritative/);
+test("drawer keeps review commands isolated and introduces no S6-T07 navigation", () => {
+  assert.match(drawer, /<FindingReviewActions/);
+  assert.doesNotMatch(drawer, /requestFindingReview|method:\s*["'](?:POST|PUT|PATCH|DELETE)|source.*(?:href|router\.push)/i);
 });
 
 test("dialog has accessible heading, named close, Escape handling, and focus trap", () => {

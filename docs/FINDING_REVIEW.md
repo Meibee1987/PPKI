@@ -43,8 +43,10 @@ comparison results. A new request is rejected after S4-T03 has produced
 ## Commands and transitions
 
 All command routes require an `Idempotency-Key` UUID. Actor identity comes from
-the authenticated principal. Notes are optional, trimmed, at most 1,000
-characters, and reject control characters.
+the authenticated principal. Notes are trimmed, at most 1,000 characters, and
+reject control characters. S6-T06 requires a nonblank reason for
+`ManualRemediation` and `Ignore` requests and for the final `Ignore` decision;
+other established transitions retain their existing optional-note contract.
 
 - `POST /api/audits/{auditId}/findings/{findingId}/review-requests` accepts
   `ManualRemediation`, `Ignore`, or `AcceptedRisk` from a `PPKIAdmin`.

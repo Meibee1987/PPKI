@@ -21,7 +21,7 @@ type FindingFilterDraft = {
   pageSize: "10" | "25" | "50" | "100";
 };
 
-export function AuditFindingList({ identity, summary }: { identity: CanonicalAuditIdentity; summary: AuditSummary }) {
+export function AuditFindingList({ identity, summary, refreshSummary }: { identity: CanonicalAuditIdentity; summary: AuditSummary; refreshSummary: () => Promise<void> }) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const queryKey = searchParams.toString();
@@ -34,6 +34,7 @@ export function AuditFindingList({ identity, summary }: { identity: CanonicalAud
   const [selectedFindingId, setSelectedFindingId] = useState<string>();
   const requests = useRef(createLatestFindingRequestGuard());
   const closeDetail = useCallback(() => setSelectedFindingId(undefined), []);
+  const reviewChanged = useCallback(async () => { setReload(value => value + 1); await refreshSummary(); }, [refreshSummary]);
 
   useEffect(() => setDraft(draftFrom(filters)), [filters]);
 
@@ -98,7 +99,7 @@ export function AuditFindingList({ identity, summary }: { identity: CanonicalAud
     {loading && visible && <p className="muted finding-refresh" role="status">Memperbarui daftar temuan; hasil sebelumnya tetap ditampilkan...</p>}
     {error && <div className="error-box" role="alert"><p>{error}</p><button className="text-button" type="button" onClick={() => setReload(value => value + 1)}>Coba lagi</button></div>}
     {visible && <FindingPageView summary={summary} filters={visible.filters} page={visible.page} navigate={navigate} selectFinding={setSelectedFindingId} />}
-    {visible && selectedFindingId && <FindingDetailDrawer identity={identity} findingId={selectedFindingId} pageFindingIds={visible.page.items.map(item => item.id)} onSelect={setSelectedFindingId} onClose={closeDetail} />}
+    {visible && selectedFindingId && <FindingDetailDrawer identity={identity} findingId={selectedFindingId} pageFindingIds={visible.page.items.map(item => item.id)} onSelect={setSelectedFindingId} onClose={closeDetail} onReviewChanged={reviewChanged} />}
   </section>;
 }
 

@@ -288,6 +288,17 @@ export function StreamlinedAuditClient() {
     } catch (value) { if (value instanceof ApiRequestError && value.status === 409) await loadCorrections(); setError(commandMessage(value)); }
   }
 
+  const refreshFindingReviewSummary = useCallback(async () => {
+    if (!current) return;
+    const identity = current.identity;
+    const value = assertCanonicalSummary(identity, await getAuditSummary(identity.auditId));
+    if (activeAuditId.current !== identity.auditId) return;
+    setCurrent(previous => previous?.identity.auditId === identity.auditId
+      && previous.identity.documentVersionId === identity.documentVersionId
+      ? { identity, summary: value }
+      : previous);
+  }, [current?.identity.auditId, current?.identity.documentVersionId]);
+
   const visibleItems = useMemo(() => corrections?.items.filter(item => filter === "All"
     || filter === "Undecided" && item.effectiveDecision === null
     || filter === "Selected" && ["UseSuggestion", "EditManual"].includes(item.effectiveDecision?.action ?? "")
@@ -315,7 +326,7 @@ export function StreamlinedAuditClient() {
         : <SummaryMetric label="Masih perlu pemeriksaan" value={summary.findingDispositions.requiresReviewCount} />}
     </section>}
     {final && !finalSummary && <p className="muted" role="status">Memuat ringkasan versi akhir...</p>}
-    {summary.status === "Completed" && (!final || finalSummary) && <AuditFindingList key={current.identity.auditId} identity={current.identity} summary={summary} />}
+    {summary.status === "Completed" && (!final || finalSummary) && <AuditFindingList key={current.identity.auditId} identity={current.identity} summary={summary} refreshSummary={refreshFindingReviewSummary} />}
 
     {!final && summary.automaticRemediationHistory && summary.automaticRemediationHistory.verifiedResolvedCount > 0 && <section className="panel automatic-history" aria-labelledby="automatic-history-title">
       <button className="automatic-history-toggle" type="button" aria-expanded={automaticExpanded} onClick={() => setAutomaticExpanded(value => !value)}><span><strong id="automatic-history-title">Diperbaiki otomatis</strong><small>{summary.automaticRemediationHistory.verifiedResolvedCount} temuan dari audit sebelumnya telah diperbaiki dan diverifikasi.</small></span><span aria-hidden="true">{automaticExpanded ? "−" : "+"}</span></button>

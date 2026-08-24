@@ -81,6 +81,8 @@ async function main() { console.log("SUITE finding-review-local"); try {
 
     const noReview = await getReview(apiUrl, environment, users.admin, ids.studentAudit, findings.legacy);
     report("no-review-is-read-only-and-separate-from-resolution", noReview.status === 200 && noReview.body?.reviewState === "NoReview" && noReview.body?.resolutionState === "Open" && before === await sql(container, evidenceSql()));
+    const missingReasonResponse = await localFetch(`${apiUrl}/api/audits/${ids.studentAudit}/findings/${findings.invalidNote}/review-requests`, { method: "POST", headers: headers(environment.ANON_KEY, users.admin.token, true, randomUUID()), body: JSON.stringify({ requestedDisposition: "ManualRemediation", note: "   " }) });
+    report("manual-review-reason-is-required-before-mutation", missingReasonResponse.status === 400 && before === await sql(container, evidenceSql()));
     const invalidNoteResponse = await localFetch(`${apiUrl}/api/audits/${ids.studentAudit}/findings/${findings.invalidNote}/review-requests`, { method: "POST", headers: headers(environment.ANON_KEY, users.admin.token, true, randomUUID()), body: JSON.stringify({ requestedDisposition: "Ignore", note: "line\nbreak" }) });
     report("note-validation-is-safe-and-precedes-mutation", invalidNoteResponse.status === 400 && before === await sql(container, evidenceSql()));
 
@@ -113,7 +115,7 @@ async function main() { console.log("SUITE finding-review-local"); try {
       const rejected = await decide(apiUrl, environment, users.admin, revisionCase, keys.revisionFinal, "Reject");
       report("needs-revision-resubmit-and-reject-self-workflow", needsRevision.status === 201 && resubmitted.status === 201 && rejected.status === 201 && rejected.body?.review?.reviewState === "Rejected");
 
-      const selfRequestResponse = await localFetch(`${apiUrl}/api/audits/${ids.adminAudit}/findings/${findings.adminSelf}/review-requests`, { method: "POST", headers: headers(environment.ANON_KEY, users.admin.token, true, keys.selfRequest), body: JSON.stringify({ requestedDisposition: "Ignore" }) });
+      const selfRequestResponse = await localFetch(`${apiUrl}/api/audits/${ids.adminAudit}/findings/${findings.adminSelf}/review-requests`, { method: "POST", headers: headers(environment.ANON_KEY, users.admin.token, true, keys.selfRequest), body: JSON.stringify({ requestedDisposition: "Ignore", note: "self-review reason" }) });
       const selfRequest = { status: selfRequestResponse.status, body: await responseBody(selfRequestResponse) };
       const selfDecision = await decide(apiUrl, environment, users.admin, selfRequest.body?.review?.reviewCaseId, keys.selfDecision, "Ignore");
       report("ppki-admin-can-self-review-owned-finding-with-actor-attribution", selfRequest.status === 201 && selfDecision.status === 201 && selfDecision.body?.review?.events?.every(event => event.actorUserId === users.admin.id));

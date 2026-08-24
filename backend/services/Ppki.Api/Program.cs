@@ -564,7 +564,7 @@ static bool TryIdempotencyKey(HttpRequest request,out Guid key) {
 }
 static IResult FindingReviewProblem(FindingReviewException exception) {
     var status=exception.DiagnosticCode switch {
-        "finding-review-note-invalid" or "finding-review-idempotency-key-invalid" or "finding-review-not-available"=>StatusCodes.Status400BadRequest,
+        "finding-review-note-invalid" or "finding-review-reason-required" or "finding-review-idempotency-key-invalid" or "finding-review-not-available"=>StatusCodes.Status400BadRequest,
         _=>StatusCodes.Status409Conflict};
     return Results.Problem(statusCode:status,title:"Finding review command was rejected.",
         extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});

@@ -92,6 +92,34 @@ public sealed class FindingReviewStateTests
         Assert.Equal("finding-review-note-invalid", Assert.Throws<FindingReviewException>(() =>
             FindingReviewService.NormalizeNote("line\nbreak")).DiagnosticCode);
     }
+
+    [Fact]
+    public void S6_manual_review_and_ignore_reason_is_required_and_bounded()
+    {
+        Assert.Equal("alasan aman", FindingReviewService.NormalizeRequiredReason("  alasan aman  "));
+        Assert.Equal("finding-review-reason-required", Assert.Throws<FindingReviewException>(() =>
+            FindingReviewService.NormalizeRequiredReason(null)).DiagnosticCode);
+        Assert.Equal("finding-review-reason-required", Assert.Throws<FindingReviewException>(() =>
+            FindingReviewService.NormalizeRequiredReason("   ")).DiagnosticCode);
+        Assert.Equal("finding-review-note-invalid", Assert.Throws<FindingReviewException>(() =>
+            FindingReviewService.NormalizeRequiredReason(new string('a', 1001))).DiagnosticCode);
+    }
+
+    [Theory]
+    [InlineData(FindingReviewRequestedDisposition.ManualRemediation, true)]
+    [InlineData(FindingReviewRequestedDisposition.Ignore, true)]
+    [InlineData(FindingReviewRequestedDisposition.AcceptedRisk, false)]
+    public void S6_request_reason_policy_is_explicit(FindingReviewRequestedDisposition disposition, bool expected) =>
+        Assert.Equal(expected, FindingReviewService.RequiresReason(disposition));
+
+    [Theory]
+    [InlineData(FindingReviewDecision.Ignore, true)]
+    [InlineData(FindingReviewDecision.ApproveManualRemediation, false)]
+    [InlineData(FindingReviewDecision.AcceptRisk, false)]
+    [InlineData(FindingReviewDecision.NeedsRevision, false)]
+    [InlineData(FindingReviewDecision.Reject, false)]
+    public void S6_decision_reason_policy_is_explicit(FindingReviewDecision decision, bool expected) =>
+        Assert.Equal(expected, FindingReviewService.RequiresReason(decision));
 }
 
 public sealed class FindingReviewArchitectureTests
@@ -226,6 +254,18 @@ public sealed class FindingReviewArchitectureTests
         Assert.Contains("PostgresErrorCodes.UniqueViolation", source, StringComparison.Ordinal);
         Assert.Contains("PostgresErrorCodes.SerializationFailure", source, StringComparison.Ordinal);
         Assert.Contains("PostgresErrorCodes.DeadlockDetected", source, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void S6_required_reason_is_enforced_for_manual_review_and_ignore_only()
+    {
+        var source = Source("backend", "src", "Ppki.Infrastructure", "FindingReviewService.cs");
+        Assert.Contains("FindingReviewRequestedDisposition.ManualRemediation", source, StringComparison.Ordinal);
+        Assert.Contains("FindingReviewRequestedDisposition.Ignore", source, StringComparison.Ordinal);
+        Assert.Contains("RequiresReason(request.Decision)", source, StringComparison.Ordinal);
+        Assert.Contains("NormalizeRequiredReason", source, StringComparison.Ordinal);
+        Assert.True(source.IndexOf("if (existing is not null)", StringComparison.Ordinal)
+            < source.IndexOf("if (reasonRequired)", StringComparison.Ordinal));
     }
 
     [Fact]

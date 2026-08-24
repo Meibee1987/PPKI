@@ -9,15 +9,17 @@ import { assertCanonicalFindingDetail, assertCanonicalStructuralExcerpt, finding
 import { createLatestFindingRequestGuard } from "../lib/finding-list-model";
 import { DocumentPageLocation } from "./document-page-location";
 import { FindingLocation } from "./finding-location";
+import { FindingReviewActions } from "./finding-review-actions";
 
 type ExcerptView = { state: "Idle" | "Loading" | "Exact" | "Unavailable" | "Failed"; value?: StructuralFindingExcerpt };
 
-export function FindingDetailDrawer({ identity, findingId, pageFindingIds, onSelect, onClose }: {
+export function FindingDetailDrawer({ identity, findingId, pageFindingIds, onSelect, onClose, onReviewChanged }: {
   identity: CanonicalAuditIdentity;
   findingId: string;
   pageFindingIds: string[];
   onSelect: (findingId: string) => void;
   onClose: () => void;
+  onReviewChanged: () => Promise<void>;
 }) {
   const [detail, setDetail] = useState<AuditFindingDetail>();
   const [loading, setLoading] = useState(true);
@@ -33,6 +35,7 @@ export function FindingDetailDrawer({ identity, findingId, pageFindingIds, onSel
     const previousFocus = document.activeElement instanceof HTMLElement ? document.activeElement : undefined;
     closeButton.current?.focus();
     const handleKeyDown = (event: KeyboardEvent) => {
+      if (drawer.current?.querySelector("dialog[open]")) return;
       if (event.key === "Escape") { event.preventDefault(); onClose(); return; }
       if (event.key !== "Tab" || !drawer.current) return;
       const focusable = Array.from(drawer.current.querySelectorAll<HTMLElement>("button:not([disabled]), a[href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex='-1'])"));
@@ -89,12 +92,12 @@ export function FindingDetailDrawer({ identity, findingId, pageFindingIds, onSel
       {loading && <div className="drawer-state" role="status" aria-live="polite">Memuat detail temuan...</div>}
       {!loading && error && <div className="drawer-state error-box" role="alert"><h3>{error}</h3><p>Daftar temuan tetap dapat digunakan.</p><button className="button secondary" type="button" onClick={() => setReload(value => value + 1)}>Coba lagi</button></div>}
       {!loading && !error && !detail && <div className="drawer-state empty-state"><h3>Temuan tidak lagi tersedia</h3><p>Tutup detail lalu perbarui daftar temuan.</p></div>}
-      {detail && <FindingDetailContent detail={detail} excerpt={excerpt} loadExcerpt={() => void loadExcerpt()} />}
+      {detail && <FindingDetailContent identity={identity} detail={detail} excerpt={excerpt} loadExcerpt={() => void loadExcerpt()} onReviewChanged={async () => { setReload(value => value + 1); await onReviewChanged(); }} />}
     </div>
   </div>;
 }
 
-function FindingDetailContent({ detail, excerpt, loadExcerpt }: { detail: AuditFindingDetail; excerpt: ExcerptView; loadExcerpt: () => void }) {
+function FindingDetailContent({ identity, detail, excerpt, loadExcerpt, onReviewChanged }: { identity: CanonicalAuditIdentity; detail: AuditFindingDetail; excerpt: ExcerptView; loadExcerpt: () => void; onReviewChanged: () => Promise<void> }) {
   return <div className="finding-drawer-content">
     <section className="drawer-rule" aria-labelledby="drawer-rule-title"><div><span className={`severity severity-${detail.severity.toLowerCase()}`}>{detail.severity}</span><span className="domain-label">{detail.domain}</span></div><h3 id="drawer-rule-title">{detail.presentation.propertyLabel}</h3><p>{detail.presentation.problem}</p><p className="muted">Elemen: {detail.element} · Kode aturan: <code>{detail.ruleCode}</code></p></section>
     <dl className="drawer-metadata"><div><dt>Status temuan</dt><dd>{findingStateLabel(detail.findingState)}</dd></div><div><dt>Disposisi</dt><dd>{dispositionLabel(detail.disposition)}</dd></div><div><dt>Mode perbaikan</dt><dd>{detail.fixMode}</dd></div><div><dt>Kemampuan otomatis</dt><dd>{detail.actionAvailability === "Automatic" ? "Tersedia menurut backend" : "Tidak tersedia"}</dd></div><div><dt>Status resolusi</dt><dd>{resolutionLabel(detail.resolutionState)}</dd></div><div><dt>Status review</dt><dd>{reviewLabel(detail.reviewState)}</dd></div><div><dt>Kunci validasi</dt><dd className="breakable">{detail.validationKey}</dd></div><div><dt>Keyakinan</dt><dd>{detail.confidence === null ? "Tidak tersedia" : detail.confidence}</dd></div></dl>
@@ -102,7 +105,7 @@ function FindingDetailContent({ detail, excerpt, loadExcerpt }: { detail: AuditF
     {detail.presentation.evidenceState !== "Complete" && <p className="muted">Bukti aman {detail.presentation.evidenceState === "Partial" ? "tersedia sebagian" : "tidak tersedia"}; nilai tidak diperkirakan atau dibuat.</p>}
     <section aria-labelledby="drawer-location-title"><h3 id="drawer-location-title">Lokasi dokumen</h3><div className="drawer-location"><FindingLocation value={detail.location} /><DocumentPageLocation versionId={detail.documentVersionId} value={detail.pageLocation} /></div><ExcerptPanel excerpt={excerpt} loadExcerpt={loadExcerpt} /></section>
     <section aria-labelledby="drawer-source-title"><h3 id="drawer-source-title">Referensi sumber</h3><p>{sourceLabel(detail.source)}</p></section>
-    <section className="drawer-action-placeholder" aria-labelledby="drawer-action-title"><h3 id="drawer-action-title">Tindak lanjut</h3><p>Detail ini hanya menampilkan status authoritative. Keputusan review dan remediasi dilakukan melalui alur khusus.</p></section>
+    <FindingReviewActions key={detail.id} identity={identity} findingId={detail.id} onChanged={onReviewChanged} />
   </div>;
 }
 

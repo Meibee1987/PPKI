@@ -81,7 +81,8 @@ public sealed class FindingReviewService(
         if (!Enum.IsDefined(request.RequestedDisposition))
             throw new FindingReviewException("finding-review-not-available");
         return ExecuteAsync(FindingReviewCommandKind.Request, auditId, findingId, null, actorUserId,
-            idempotencyKey, request.RequestedDisposition, null, request.Note, cancellationToken);
+            idempotencyKey, request.RequestedDisposition, null, request.Note,
+            RequiresReason(request.RequestedDisposition), cancellationToken);
     }
 
     public Task<FindingReviewCommandResult?> DecideAsync(Guid reviewCaseId, Guid actorUserId,
@@ -90,18 +91,19 @@ public sealed class FindingReviewService(
         if (!Enum.IsDefined(request.Decision))
             throw new FindingReviewException("finding-review-invalid-transition");
         return ExecuteAsync(FindingReviewCommandKind.Decision, null, null, reviewCaseId, actorUserId,
-            idempotencyKey, null, request.Decision, request.Note, cancellationToken);
+            idempotencyKey, null, request.Decision, request.Note,
+            RequiresReason(request.Decision), cancellationToken);
     }
 
     public Task<FindingReviewCommandResult?> ReportManualRemediationAsync(Guid reviewCaseId, Guid actorUserId,
         Guid idempotencyKey, ManualRemediationReportRequest request, CancellationToken cancellationToken) =>
         ExecuteAsync(FindingReviewCommandKind.ManualReport, null, null, reviewCaseId, actorUserId,
-            idempotencyKey, null, null, request.Note, cancellationToken);
+            idempotencyKey, null, null, request.Note, false, cancellationToken);
 
     private async Task<FindingReviewCommandResult?> ExecuteAsync(FindingReviewCommandKind kind,
         Guid? auditId, Guid? findingId, Guid? reviewCaseId, Guid actorUserId, Guid idempotencyKey,
         FindingReviewRequestedDisposition? disposition, FindingReviewDecision? decision, string? suppliedNote,
-        CancellationToken cancellationToken)
+        bool reasonRequired, CancellationToken cancellationToken)
     {
         if (idempotencyKey == Guid.Empty) throw new FindingReviewException("finding-review-idempotency-key-invalid");
         await authorization.RequirePpkiAdminAsync(actorUserId, cancellationToken);
@@ -111,7 +113,7 @@ public sealed class FindingReviewService(
             try
             {
                 var written = await ExecuteAttemptAsync(kind, auditId, findingId, reviewCaseId, actorUserId,
-                    idempotencyKey, disposition, decision, note, cancellationToken);
+                    idempotencyKey, disposition, decision, note, reasonRequired, cancellationToken);
                 if (written is null) return null;
                 var review = await GetAsync(written.AuditId, written.FindingId, actorUserId, cancellationToken)
                     ?? throw new FindingReviewException("finding-review-conflict");
@@ -129,7 +131,7 @@ public sealed class FindingReviewService(
     private async Task<FindingReviewWriteResult?> ExecuteAttemptAsync(FindingReviewCommandKind kind,
         Guid? auditId, Guid? findingId, Guid? reviewCaseId, Guid actorUserId, Guid idempotencyKey,
         FindingReviewRequestedDisposition? disposition, FindingReviewDecision? decision, string? note,
-        CancellationToken cancellationToken)
+        bool reasonRequired, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(IsolationLevel.Serializable, cancellationToken);
@@ -186,6 +188,8 @@ public sealed class FindingReviewService(
             throw new FindingReviewException("finding-review-idempotency-conflict");
         }
 
+        if (reasonRequired) note = NormalizeRequiredReason(note);
+
         var state = FindingReviewProjection.State(events.LastOrDefault()?.EventType);
         if (kind == FindingReviewCommandKind.Request
             && state is not (FindingReviewState.NoReview or FindingReviewState.NeedsRevision)
@@ -219,6 +223,16 @@ public sealed class FindingReviewService(
             throw new FindingReviewException("finding-review-note-invalid");
         return normalized;
     }
+
+    public static string NormalizeRequiredReason(string? note) =>
+        NormalizeNote(note) ?? throw new FindingReviewException("finding-review-reason-required");
+
+    public static bool RequiresReason(FindingReviewRequestedDisposition disposition) =>
+        disposition is FindingReviewRequestedDisposition.ManualRemediation
+            or FindingReviewRequestedDisposition.Ignore;
+
+    public static bool RequiresReason(FindingReviewDecision decision) =>
+        decision == FindingReviewDecision.Ignore;
 
     private static IQueryable<FindingReviewResource> ResourceQuery(PpkiDbContext db, Guid auditId,
         Guid findingId)

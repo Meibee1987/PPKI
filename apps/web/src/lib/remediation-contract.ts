@@ -40,7 +40,7 @@ export type AuditComparison = { sourceAuditId: string; resultAuditId: string; fi
 export type FindingResolution = { findingId: string; auditId: string; currentState: FindingResolutionState; fixExecutionId: string | null; reAuditId: string | null; comparisonStatus: AuditComparisonStatus | null; eventCount: number };
 export type FindingReviewEvent = { sequence: number; eventType: string; requestedDisposition: FindingReviewRequestType | null; decision: FindingReviewDecision | null; note: string | null; createdAt: string };
 export type FindingReview = {
-  reviewCaseId: string | null; findingId: string; auditId: string; resolutionState: FindingResolutionState;
+  reviewCaseId: string | null; findingId: string; auditId: string; sourceDocumentVersionId: string; resolutionState: FindingResolutionState;
   reviewState: FindingReviewState; requestedDisposition: FindingReviewRequestType | null;
   permissions: { canRequestReview: boolean; canReportManualRemediation: boolean; canDecide: boolean };
   allowedDecisions: FindingReviewDecision[]; events: FindingReviewEvent[];
@@ -97,7 +97,7 @@ export function parseFindingReview(value: unknown): FindingReview {
   const data = rec(value), permissions = rec(data.permissions); if (!Array.isArray(data.allowedDecisions) || !Array.isArray(data.events)) throw new ApiContractError();
   const events = data.events.map(value => { const event = rec(value); return { sequence: integer(event.sequence), eventType: str(event.eventType), requestedDisposition: nullableEnum(event.requestedDisposition, reviewRequestTypes), decision: nullableEnum(event.decision, reviewDecisions), note: nullableStr(event.note), createdAt: timestamp(event.createdAt) }; });
   if (events.some((event, index) => index > 0 && event.sequence <= events[index - 1].sequence)) throw new ApiContractError();
-  return { reviewCaseId: nullableUuid(data.reviewCaseId), findingId: uuid(data.findingId), auditId: uuid(data.auditId), resolutionState: enm(data.resolutionState, resolutionStates), reviewState: enm(data.reviewState, reviewStates), requestedDisposition: nullableEnum(data.requestedDisposition, reviewRequestTypes), permissions: { canRequestReview: bool(permissions.canRequestReview), canReportManualRemediation: bool(permissions.canReportManualRemediation), canDecide: bool(permissions.canDecide) }, allowedDecisions: data.allowedDecisions.map(value => enm(value, reviewDecisions)), events };
+  return { reviewCaseId: nullableUuid(data.reviewCaseId), findingId: uuid(data.findingId), auditId: uuid(data.auditId), sourceDocumentVersionId: uuid(data.sourceDocumentVersionId), resolutionState: enm(data.resolutionState, resolutionStates), reviewState: enm(data.reviewState, reviewStates), requestedDisposition: nullableEnum(data.requestedDisposition, reviewRequestTypes), permissions: { canRequestReview: bool(permissions.canRequestReview), canReportManualRemediation: bool(permissions.canReportManualRemediation), canDecide: bool(permissions.canDecide) }, allowedDecisions: data.allowedDecisions.map(value => enm(value, reviewDecisions)), events };
 }
 
 export function parseFindingReviewCommand(value: unknown): FindingReview { const data = rec(value); return parseFindingReview(data.review); }
