@@ -9,6 +9,7 @@
     "typecheck": "tsc --noEmit",
     "test:config": "node --test --experimental-strip-types src/lib/supabase/environment.test.ts",
     "test:api-client": "node --test --experimental-strip-types src/lib/api.test.ts src/lib/api-errors.test.ts src/lib/document-contract.test.ts",
+    "test:audit-progress": "node --test --experimental-strip-types src/lib/audit-progress.test.ts src/lib/audit-progress-ui.test.ts src/lib/document-audit-selection.test.ts",
     "test:findings-ui": "node --test --experimental-strip-types src/lib/audit-contract.test.ts src/lib/api-errors.test.ts src/lib/document-audit-selection.test.ts src/lib/document-contract.test.ts src/lib/findings-presentation.test.ts src/lib/findings-ui-architecture.test.ts src/lib/route-access.test.ts",
     "test:remediation-ui": "node --test --experimental-strip-types src/lib/remediation-contract.test.ts src/lib/remediation-ui-architecture.test.ts",
     "test:streamlined-audit-ui": "node --test --experimental-strip-types src/lib/canonical-audit-identity.test.ts src/lib/streamlined-audit-ui.test.ts"
