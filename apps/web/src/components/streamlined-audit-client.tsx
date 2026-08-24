@@ -6,6 +6,8 @@ import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react"
 import { ApiRequestError, apiFetchBlob } from "../lib/api";
 import { getAuditSummary, getStructuralFindingExcerpt, listAuditFindings } from "../lib/audit-api";
 import { isTextCorrectionAnalysisTransitional, type AuditFinding, type AuditFindingPage, type AuditSummary, type StructuralFindingExcerpt } from "../lib/audit-contract";
+import { auditProgressFromSummary, observeAuditProgress } from "../lib/audit-progress";
+import { abbreviatedRuleSetHash, readinessPresentation, readinessStateLabel, scoreLabel } from "../lib/audit-readiness-presentation";
 import { assertCanonicalSummary, canonicalIdentityFromCompletedBatch, canonicalIdentityFromRouteSummary, type CanonicalAuditIdentity } from "../lib/canonical-audit-identity";
 import { createTextCorrectionBatch, getDocumentPreviewState, getTextCorrectionBatch, getTextCorrectionContext, listTextCorrections, submitTextCorrectionDecision } from "../lib/text-correction-api";
 import type { CorrectionAction, CorrectionBatchStatus, DocumentPreviewState, TextCorrectionContext, TextCorrectionPage, TextCorrectionProposal } from "../lib/text-correction-contract";
@@ -80,10 +82,38 @@ export function StreamlinedAuditClient() {
   }, [routeAuditId, reload]);
 
   useEffect(() => {
-    if (!summary) return;
-    const state = summary?.automaticRemediation?.state;
-    if (summary?.status === "Completed" && (!state || ["NoAction", "Completed", "Failed", "Conflict"].includes(state))) return;
-    if (summary?.status === "Failed" || summary?.status === "Cancelled") return;
+    if (!current || !["Queued", "Processing"].includes(current.summary.status)) return;
+    const identity = current.identity;
+    let latestSummary: AuditSummary | undefined;
+    return observeAuditProgress({
+      auditId: identity.auditId,
+      initialStatus: current.summary.status,
+      getStatus: async (auditId, signal) => {
+        latestSummary = assertCanonicalSummary(identity, await getAuditSummary(auditId, signal));
+        return auditProgressFromSummary(latestSummary);
+      },
+      onStatus: value => {
+        if (value.status === "Completed" || !latestSummary) return;
+        setCurrent(previous => previous?.identity.auditId === identity.auditId
+          ? { identity, summary: latestSummary! }
+          : previous);
+      },
+      onCompleted: async (_value, signal) => {
+        const completed = assertCanonicalSummary(identity, await getAuditSummary(identity.auditId, signal));
+        if (activeAuditId.current !== identity.auditId) return;
+        setCurrent(previous => previous?.identity.auditId === identity.auditId
+          ? { identity, summary: completed }
+          : previous);
+      },
+      onUnavailable: () => setError("Status audit belum dapat diperbarui. Coba lagi."),
+      shouldStopAfterError: value => value instanceof ApiRequestError && value.status === 401,
+    });
+  }, [canonicalAuditId, summary?.status]);
+
+  useEffect(() => {
+    if (summary?.status !== "Completed") return;
+    const state = summary.automaticRemediation?.state;
+    if (!state || ["NoAction", "Completed", "Failed", "Conflict"].includes(state)) return;
     const timer = setTimeout(() => setReload(value => value + 1), 1500);
     return () => clearTimeout(timer);
   }, [summary?.status, summary?.automaticRemediation?.state, reload]);
@@ -273,7 +303,9 @@ export function StreamlinedAuditClient() {
     <header className="streamlined-header"><div><p className="eyebrow">{final ? "Hasil akhir" : "Hasil audit"}</p><h1>{final ? "Perbaikan selesai" : "Hasil Audit"}</h1><p className="muted">{final ? "Perbaikan telah diterapkan ke satu versi baru dan diverifikasi." : "Tinjau hanya temuan yang membutuhkan keputusan Anda."}</p></div></header>
     {error && <div className="error-box" role="alert">{error}<button className="text-button" type="button" onClick={() => setReload(value => value + 1)}>Coba lagi</button></div>}
     <AuditProgress summary={summary} />
-    {(!final || finalSummary) && <section className="summary-strip" aria-label={final ? "Ringkasan hasil akhir" : "Ringkasan hasil audit"}>
+    <AuditReadinessPanel summary={summary} />
+    {summary.status === "Completed" && (!final || finalSummary) && <AuditSummaryPanel summary={summary} />}
+    {summary.status === "Completed" && (!final || finalSummary) && <section className="summary-strip" aria-label={final ? "Ringkasan hasil akhir" : "Ringkasan hasil audit"}>
       <SummaryMetric label={final ? "Masalah tersisa" : "Masalah ditemukan"} value={summary.findingCount} />
       <SummaryMetric label="Diperbaiki otomatis" value={summary.automaticRemediationHistory?.verifiedResolvedCount ?? 0} />
       {!final && <SummaryMetric label="Perlu keputusan" value={corrections?.summary.undecidedCount ?? 0} />}
@@ -346,10 +378,40 @@ function CorrectionAnalysisState({ state }: { state: AuditSummary["correctionAna
 }
 
 function AuditProgress({ summary }: { summary: AuditSummary }) {
-  if (summary.status !== "Completed") return <section className="panel progress-panel" aria-live="polite"><h2>Memeriksa dokumen...</h2><p>{summary.status === "Failed" ? "Audit tidak dapat diselesaikan." : "Audit sedang diproses."}</p></section>;
+  if (summary.status !== "Completed") return <section className="panel progress-panel" aria-live="polite"><h2>Memeriksa dokumen...</h2><p>{summary.status === "Failed" ? "Audit tidak dapat diselesaikan." : summary.status === "Cancelled" ? "Audit dibatalkan." : "Audit sedang diproses."}</p></section>;
   if (!summary.automaticRemediation) return null;
   const failed = summary.automaticRemediation.state === "Failed" || summary.automaticRemediation.state === "Conflict";
   return <section className={`panel progress-panel${failed ? " progress-failed" : ""}`} aria-live="polite" aria-busy={["Pending", "Queued", "Processing", "ReauditPending"].includes(summary.automaticRemediation.state)}><h2>Progres dokumen</h2><ProgressList steps={automaticProgress(summary.automaticRemediation.state)} />{summary.automaticRemediation.state === "Completed" && <p className="success-copy">✓ {summary.automaticRemediation.verifiedResolvedCount} masalah format diperbaiki dan diverifikasi otomatis.</p>}{failed && <p>{summary.automaticRemediation.state === "Conflict" ? "Dokumen telah berubah. Muat ulang hasil audit." : "Perbaikan format otomatis tidak dapat diselesaikan. Dokumen asli tetap aman."}</p>}</section>;
+}
+
+function AuditReadinessPanel({ summary }: { summary: AuditSummary }) {
+  const presentation = readinessPresentation(summary);
+  return <section className={`panel readiness-panel readiness-${presentation.tone}`} aria-live="polite">
+    <p className="eyebrow">Kesiapan review</p>
+    <h2>{presentation.title}</h2>
+    <p>{presentation.message}</p>
+    {summary.readinessState === "NeedsFix" && <strong>{summary.blockingFindingCount} temuan penghambat</strong>}
+  </section>;
+}
+
+function AuditSummaryPanel({ summary }: { summary: AuditSummary }) {
+  return <section className="panel audit-summary-panel" aria-labelledby="authoritative-summary-title">
+    <div className="section-heading"><div><h2 id="authoritative-summary-title">Ringkasan audit</h2><p>Semua nilai berasal dari audit canonical yang sama.</p></div></div>
+    <div className="audit-summary-grid">
+      <SummaryMetric label="Skor" value={scoreLabel(summary.score)} />
+      <SummaryMetric label="Error" value={summary.errorCount} />
+      <SummaryMetric label="Warning" value={summary.warningCount} />
+      <SummaryMetric label="Info" value={summary.infoCount} />
+      <SummaryMetric label="Temuan penghambat" value={summary.blockingFindingCount} />
+      <SummaryMetric label="Aturan berlaku" value={summary.applicableRuleCount} />
+      <SummaryMetric label="Versi profil" value={summary.profileVersionNo} />
+      <SummaryMetric label="Status review" value={readinessStateLabel(summary.readinessState)} />
+    </div>
+    <dl className="audit-summary-metadata">
+      <div><dt>Set aturan</dt><dd><code title={summary.resolvedRuleSetHash ?? undefined}>{abbreviatedRuleSetHash(summary.resolvedRuleSetHash)}</code></dd></div>
+      <div><dt>Kebijakan kesiapan</dt><dd>{summary.readinessPolicyVersion ?? "Belum tersedia"}</dd></div>
+    </dl>
+  </section>;
 }
 
 function BatchPanel({ batch, preview, openFinal }: { batch: CorrectionBatchStatus; preview?: DocumentPreviewState; openFinal: () => void }) {
@@ -358,7 +420,7 @@ function BatchPanel({ batch, preview, openFinal }: { batch: CorrectionBatchStatu
 }
 
 function ProgressList({ steps }: { steps: ReturnType<typeof automaticProgress> }) { return <ol className="progress-list">{steps.map(item => <li key={item.label} className={`progress-${item.tone}`}><span aria-hidden="true">{item.tone === "done" ? "✓" : item.tone === "active" ? "…" : item.tone === "failed" ? "!" : "○"}</span><strong>{item.label}</strong><small>{item.status}</small></li>)}</ol>; }
-function SummaryMetric({ label, value }: { label: string; value: number }) { return <article><strong>{value}</strong><span>{label}</span></article>; }
+function SummaryMetric({ label, value }: { label: string; value: string | number }) { return <article><strong>{value}</strong><span>{label}</span></article>; }
 
 function CorrectionCard(props: { proposal: TextCorrectionProposal; context?: ContextView; editing: boolean; manualValue: string; manualError: string; busy: boolean; previewReady: boolean; onContext: () => void; onUse: () => void; onEdit: () => void; onIgnore: () => void; onManualChange: (value: string) => void; onSave: () => void; onCancel: () => void; openPreview: () => void }) {
   const { proposal, context, editing, manualValue, manualError, busy } = props;

@@ -9,7 +9,9 @@ const profileId = "44444444-4444-4444-8444-444444444444";
 
 const summary = {
   id: auditId, status: "Completed", documentVersionId: versionId, profileVersionId: profileId,
-  documentKindSnapshot: "Skripsi", resolvedRuleSetHash: "abcdef", applicableRuleCount: 10, totalRules: 10,
+  profileVersionNo: 4, documentKindSnapshot: "Skripsi", resolvedRuleSetHash: "a".repeat(64), applicableRuleCount: 10,
+  blockingFindingCount: 1, readinessState: "NeedsFix", readinessReason: null,
+  readinessPolicyVersion: "ppki-ipb-2019-review-readiness-v1", totalRules: 10,
   persistedFindingCount: 1, findingCount: 1, errorCount: 1, warningCount: 0, infoCount: 0,
   severity: { error: 1, warning: 0, info: 0 }, domains: [{ domain: "Layout", findingCount: 1 }],
   fixModes: { auto: 0, confirm: 0, manual: 1, report: 0 }, scoreState: "NotConfigured", score: null,
@@ -37,6 +39,28 @@ test("parses a valid audit summary without calculating score", () => {
   const parsed = parseAuditSummary(summary);
   assert.equal(parsed.scoreState, "NotConfigured"); assert.equal(parsed.score, null); assert.equal(parsed.severity.error, 1);
   assert.deepEqual(parsed.findingDispositions, { resolvedCount: 0, automaticallyResolvedCount: 0, ignoredCount: 0, requiresReviewCount: 1 });
+});
+
+test("parses authoritative review-readiness fields without deriving from severity", () => {
+  const parsed = parseAuditSummary({ ...summary, errorCount: 99, severity: { error: 99, warning: 0, info: 0 }, blockingFindingCount: 1 });
+  assert.equal(parsed.blockingFindingCount, 1);
+  assert.equal(parsed.readinessState, "NeedsFix");
+  assert.equal(parsed.profileVersionNo, 4);
+});
+
+test("parses every backend readiness state and typed Unknown reason", () => {
+  assert.equal(parseAuditSummary({ ...summary, readinessState: "AuditInProgress", readinessPolicyVersion: null }).readinessState, "AuditInProgress");
+  assert.equal(parseAuditSummary({ ...summary, blockingFindingCount: 0, readinessState: "ReadyForReview" }).readinessState, "ReadyForReview");
+  for (const reason of ["AuditFailed", "AuditCancelled", "PolicyUnknown", "NoApplicableRules"])
+    assert.equal(parseAuditSummary({ ...summary, readinessState: "Unknown", readinessReason: reason, readinessPolicyVersion: null }).readinessReason, reason);
+});
+
+test("rejects missing malformed or incoherent readiness fields", () => {
+  assert.throws(() => parseAuditSummary({ ...summary, blockingFindingCount: undefined }), /kontrak/);
+  assert.throws(() => parseAuditSummary({ ...summary, profileVersionNo: 0 }), /kontrak/);
+  assert.throws(() => parseAuditSummary({ ...summary, readinessState: "ReadyForExport" }), /kontrak/);
+  assert.throws(() => parseAuditSummary({ ...summary, readinessState: "Unknown", readinessReason: null, readinessPolicyVersion: null }), /kontrak/);
+  assert.throws(() => parseAuditSummary({ ...summary, resolvedRuleSetHash: "abcdef" }), /kontrak/);
 });
 
 test("normalizes and serializes backend finding disposition", () => {

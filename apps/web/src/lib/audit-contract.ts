@@ -8,6 +8,8 @@ export const textCorrectionAnalysisStates = ["AwaitingAnalysis", "Pending", "Pro
 export const documentRenderStates = ["Pending", "Processing", "Completed", "Failed"] as const;
 export const pageLocationConfidences = ["Exact", "Estimated", "Unavailable"] as const;
 export const findingDispositions = ["Resolved", "Ignored", "RequiresReview"] as const;
+export const reviewReadinessStates = ["AuditInProgress", "NeedsFix", "ReadyForReview", "Unknown"] as const;
+export const reviewReadinessReasons = ["AuditFailed", "AuditCancelled", "PolicyUnknown", "NoApplicableRules"] as const;
 
 export type AuditStatus = (typeof auditStatuses)[number];
 export type Severity = (typeof severities)[number];
@@ -19,6 +21,8 @@ export type TextCorrectionAnalysisState = (typeof textCorrectionAnalysisStates)[
 export type DocumentRenderState = (typeof documentRenderStates)[number];
 export type PageLocationConfidence = (typeof pageLocationConfidences)[number];
 export type FindingDisposition = (typeof findingDispositions)[number];
+export type ReviewReadinessState = (typeof reviewReadinessStates)[number];
+export type ReviewReadinessReason = (typeof reviewReadinessReasons)[number];
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
 
 export function isTextCorrectionAnalysisTransitional(state: TextCorrectionAnalysisState): boolean {
@@ -85,9 +89,14 @@ export type AuditSummary = {
   status: AuditStatus;
   documentVersionId: string;
   profileVersionId: string;
+  profileVersionNo: number;
   documentKindSnapshot: string | null;
   resolvedRuleSetHash: string | null;
   applicableRuleCount: number;
+  blockingFindingCount: number;
+  readinessState: ReviewReadinessState;
+  readinessReason: ReviewReadinessReason | null;
+  readinessPolicyVersion: string | null;
   totalRules: number;
   persistedFindingCount: number;
   findingCount: number;
@@ -157,6 +166,13 @@ function uuid(value: unknown): string {
 
 function nullableUuid(value: unknown): string | null {
   return value === null ? null : uuid(value);
+}
+
+function nullableSha256(value: unknown): string | null {
+  if (value === null) return null;
+  const parsed = string(value);
+  if (!/^[0-9a-f]{64}$/.test(parsed)) throw new ApiContractError();
+  return parsed;
 }
 
 function finiteNumber(value: unknown): number {
@@ -250,12 +266,22 @@ export function parseAuditSummary(value: unknown): AuditSummary {
   const findingDispositionCounts = record(data.findingDispositions);
   const correctionAnalysis = record(data.correctionAnalysis);
   const documentRender = record(data.documentRender);
+  const readinessState = enumValue(data.readinessState, reviewReadinessStates);
+  const readinessReason = data.readinessReason === null ? null : enumValue(data.readinessReason, reviewReadinessReasons);
+  const readinessPolicyVersion = nullableString(data.readinessPolicyVersion);
+  if ((readinessState === "Unknown") !== (readinessReason !== null)) throw new ApiContractError();
+  if ((readinessState === "NeedsFix" || readinessState === "ReadyForReview") !== (readinessPolicyVersion !== null))
+    throw new ApiContractError();
   return {
     id: uuid(data.id), status: enumValue(data.status, auditStatuses),
     documentVersionId: uuid(data.documentVersionId), profileVersionId: uuid(data.profileVersionId),
+    profileVersionNo: positiveInteger(data.profileVersionNo),
     documentKindSnapshot: nullableString(data.documentKindSnapshot),
-    resolvedRuleSetHash: nullableString(data.resolvedRuleSetHash),
-    applicableRuleCount: nonNegativeInteger(data.applicableRuleCount), totalRules: nonNegativeInteger(data.totalRules),
+    resolvedRuleSetHash: nullableSha256(data.resolvedRuleSetHash),
+    applicableRuleCount: nonNegativeInteger(data.applicableRuleCount),
+    blockingFindingCount: nonNegativeInteger(data.blockingFindingCount),
+    readinessState, readinessReason, readinessPolicyVersion,
+    totalRules: nonNegativeInteger(data.totalRules),
     persistedFindingCount: nonNegativeInteger(data.persistedFindingCount), findingCount: nonNegativeInteger(data.findingCount),
     errorCount: nonNegativeInteger(data.errorCount), warningCount: nonNegativeInteger(data.warningCount), infoCount: nonNegativeInteger(data.infoCount),
     severity: { error: nonNegativeInteger(severity.error), warning: nonNegativeInteger(severity.warning), info: nonNegativeInteger(severity.info) },

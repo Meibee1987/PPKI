@@ -18,7 +18,9 @@ const component = await readFile(new URL("../components/streamlined-audit-client
 function summary(id: string, version: string, automaticRemediation: unknown = null) {
   return parseAuditSummary({
     id, status: "Completed", documentVersionId: version, profileVersionId: profile,
-    documentKindSnapshot: "Skripsi", resolvedRuleSetHash: "a".repeat(64), applicableRuleCount: 1,
+    profileVersionNo: 4, documentKindSnapshot: "Skripsi", resolvedRuleSetHash: "a".repeat(64), applicableRuleCount: 1,
+    blockingFindingCount: 197, readinessState: "NeedsFix", readinessReason: null,
+    readinessPolicyVersion: "ppki-ipb-2019-review-readiness-v1",
     totalRules: 1, persistedFindingCount: 197, findingCount: 197, errorCount: 197, warningCount: 0,
     infoCount: 0, severity: { error: 197, warning: 0, info: 0 }, domains: [],
     fixModes: { auto: 0, confirm: 0, manual: 197, report: 0 }, scoreState: "NotConfigured", score: null,
@@ -50,6 +52,15 @@ test("summary and correction endpoints share canonical A2", () => {
   assert.equal(textCorrectionsPath(identity.auditId, 1, 25), `/api/audits/${a2}/text-corrections?page=1&pageSize=25`);
   assert.equal(textCorrectionBatchPath(identity.auditId), `/api/audits/${a2}/text-correction-batches`);
   assert.doesNotMatch(textCorrectionsPath(identity.auditId, 1, 25), new RegExp(a1));
+});
+
+test("summary fields cannot be accepted from a different canonical audit identity", () => {
+  const identity = { routeAuditId: a1, auditId: a2, documentVersionId: v2 };
+  assert.throws(() => assertCanonicalSummary(identity, summary(a1, v1)), /canonical-audit-lineage-invalid/);
+  const accepted = assertCanonicalSummary(identity, summary(a2, v2));
+  assert.equal(accepted.blockingFindingCount, 197);
+  assert.equal(accepted.profileVersionNo, 4);
+  assert.equal(accepted.resolvedRuleSetHash, "a".repeat(64));
 });
 
 test("completed correction batch advances A2/v2 to A3/v3", () => {

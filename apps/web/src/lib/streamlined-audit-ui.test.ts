@@ -8,6 +8,7 @@ const component = await readFile(new URL("../components/streamlined-audit-client
 const api = await readFile(new URL("./text-correction-api.ts", import.meta.url), "utf8");
 const auditApi = await readFile(new URL("./audit-api.ts", import.meta.url), "utf8");
 const presentation = await readFile(new URL("./streamlined-audit-presentation.ts", import.meta.url), "utf8");
+const readinessPresentationSource = await readFile(new URL("./audit-readiness-presentation.ts", import.meta.url), "utf8");
 const backendService = await readFile(new URL("../../../../backend/src/Ppki.Infrastructure/TextCorrectionService.cs", import.meta.url), "utf8");
 const id = "11111111-1111-1111-1111-111111111111";
 const id2 = "22222222-2222-2222-2222-222222222222";
@@ -134,6 +135,18 @@ const cases: Array<[string, () => void]> = [
   ["116 current unresolved structural finding keeps before and expected semantics", () => { assert.match(component, /<FindingEvidence item=\{item\}/); assert.doesNotMatch(component, /StructuralExcerpt[\s\S]*Sesudah/); }],
   ["117 structural materialization does not create a language decision", () => assert.doesNotMatch(auditApi, /submitTextCorrectionDecision|text-correction-batches/)],
   ["118 requires-review list remains one paginated request plus on-demand excerpt", () => { assert.match(component, /disposition: "RequiresReview", page: manualPage/); assert.match(component, /loadStructuralExcerpt\(item\.id\)/); }],
+  ["119 authoritative score is displayed directly", () => assert.match(component, /scoreLabel\(summary\.score\)/)],
+  ["120 severity totals display independently", () => { assert.match(component, /label="Error" value=\{summary\.errorCount\}/); assert.match(component, /label="Warning" value=\{summary\.warningCount\}/); assert.match(component, /label="Info" value=\{summary\.infoCount\}/); }],
+  ["121 blocking count is backend summary owned", () => assert.match(component, /label="Temuan penghambat" value=\{summary\.blockingFindingCount\}/)],
+  ["122 applicable rules and human profile version are displayed", () => { assert.match(component, /summary\.applicableRuleCount/); assert.match(component, /summary\.profileVersionNo/); assert.doesNotMatch(component, />\{summary\.profileVersionId\}</); }],
+  ["123 canonical hash is abbreviated by one deterministic presenter", () => assert.match(component, /abbreviatedRuleSetHash\(summary\.resolvedRuleSetHash\)/)],
+  ["124 backend readiness state is rendered directly", () => { assert.match(component, /readinessPresentation\(summary\)/); assert.match(component, /readinessStateLabel\(summary\.readinessState\)/); }],
+  ["125 blocking is never calculated from severity or findings", () => { assert.doesNotMatch(readinessPresentationSource, /severity|findings|errorCount|warningCount/); assert.doesNotMatch(component, /blockingFindingCount\s*=|\.filter\([^\n]*severity/); }],
+  ["126 completion refetches and installs authoritative canonical summary", () => { const completion = component.slice(component.indexOf("onCompleted:"), component.indexOf("onUnavailable:")); assert.match(component, /observeAuditProgress/); assert.match(completion, /assertCanonicalSummary\(identity, await getAuditSummary\(identity\.auditId, signal\)\)/); assert.match(completion, /setCurrent/); }],
+  ["127 active and terminal incomplete audits never render completed metrics", () => assert.match(component, /summary\.status === "Completed" && \(!final \|\| finalSummary\) && <AuditSummaryPanel/)],
+  ["128 audit polling uses the bounded shared observer without setInterval", () => { assert.match(component, /observeAuditProgress/); assert.doesNotMatch(component, /setInterval/); }],
+  ["129 review readiness never claims export eligibility", () => assert.doesNotMatch(component + readinessPresentationSource, /ReadyForExport|siap (untuk )?diekspor/i)],
+  ["130 displayed policy version is canonical summary owned", () => assert.match(component, /summary\.readinessPolicyVersion/)],
 ];
 
 for (const [name, body] of cases) test(name, body);
