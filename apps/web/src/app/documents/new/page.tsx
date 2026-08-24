@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
-import { apiFetch } from "../../../lib/api";
+import { createDocument } from "../../../lib/document-api";
 
 export default function NewDocumentPage() {
   const router = useRouter();
@@ -14,7 +14,7 @@ export default function NewDocumentPage() {
     event.preventDefault(); setBusy(true); setError("");
     const form = new FormData(event.currentTarget);
     try {
-      const result = await apiFetch<{ id: string }>("/api/documents", { method: "POST", body: form });
+      const result = await createDocument(form);
       router.push(`/documents/${result.id}`);
     } catch (e) { setError(e instanceof Error ? e.message : "Upload gagal"); setBusy(false); }
   }

@@ -8,7 +8,7 @@ function audit(id: string, createdAt: string): DocumentAudit {
 }
 
 function version(versionNo: number, audits: DocumentAudit[]): DocumentVersion {
-  return { id: `version-${versionNo}`, versionNo, originalFilename: "fixture.docx", sizeBytes: 1, sha256: "fixture", createdAt: "2026-08-01T00:00:00Z", audits };
+  return { id: `version-${versionNo}`, versionNo, parentVersionId: null, originalFilename: "fixture.docx", sizeBytes: 1, sha256: "fixture", createdAt: "2026-08-01T00:00:00Z", audits };
 }
 
 test("documents detail API formally projects versions and nested audits newest-first", () => {

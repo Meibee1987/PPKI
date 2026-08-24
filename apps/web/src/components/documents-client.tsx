@@ -2,17 +2,20 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { apiFetch } from "../lib/api";
-
-type DocumentRow = {
-  id: string; title: string; documentType: string; currentVersionNo: number;
-  updatedAt: string; latestAudit?: { id: string; status: string; score?: number; errorCount: number; warningCount: number };
-};
+import { isApiRequestAborted } from "../lib/api";
+import { listDocuments } from "../lib/document-api";
+import type { DocumentListItem } from "../lib/document-contract";
 
 export function DocumentsClient() {
-  const [rows, setRows] = useState<DocumentRow[]>([]);
+  const [rows, setRows] = useState<DocumentListItem[]>([]);
   const [error, setError] = useState("");
-  useEffect(() => { apiFetch<DocumentRow[]>("/api/documents").then(setRows).catch(e => setError(e.message)); }, []);
+  useEffect(() => {
+    const controller = new AbortController();
+    listDocuments(controller.signal).then(setRows).catch(value => {
+      if (!isApiRequestAborted(value)) setError(value instanceof Error ? value.message : "Dokumen tidak dapat dimuat.");
+    });
+    return () => controller.abort();
+  }, []);
   if (error) return <p className="error-box">{error}</p>;
   return (
     <section className="panel">

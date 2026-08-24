@@ -2,34 +2,47 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { useCallback, useEffect, useState } from "react";
-import { apiFetch } from "../../../lib/api";
+import { useCallback, useEffect, useRef, useState } from "react";
+import { isApiRequestAborted } from "../../../lib/api";
+import { getAuditStatus, getDocument, startAudit } from "../../../lib/document-api";
 import { selectLatestAudit, type DocumentDetail } from "../../../lib/document-contract";
-
-type AuditRunStatus = { id: string; status: string };
 
 export default function DocumentPage() {
   const id = String(useParams().id);
   const [doc, setDoc] = useState<DocumentDetail>();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
-  const load = useCallback(async () => {
-    const detail = await apiFetch<DocumentDetail>(`/api/documents/${id}`);
+  const auditRequest = useRef<AbortController | undefined>(undefined);
+  const load = useCallback(async (signal?: AbortSignal) => {
+    const detail = await getDocument(id, signal);
     setDoc(detail);
   }, [id]);
-  useEffect(() => { load().catch(e => setError(e.message)); }, [load]);
+  useEffect(() => {
+    const controller = new AbortController();
+    load(controller.signal).catch(value => {
+      if (!isApiRequestAborted(value)) setError(value instanceof Error ? value.message : "Dokumen tidak dapat dimuat.");
+    });
+    return () => { controller.abort(); auditRequest.current?.abort(); };
+  }, [load]);
 
   async function runAudit() {
     if (!doc) return;
     setBusy(true); setError("");
     const version = doc.versions.find(v => v.versionNo === doc.currentVersionNo)!;
-    const audit = await apiFetch<AuditRunStatus>(`/api/document-versions/${version.id}/audits`, { method: "POST" });
-    for (let i = 0; i < 60; i++) {
-      await new Promise(r => setTimeout(r, 2000));
-      const status = await apiFetch<AuditRunStatus>(`/api/audits/${audit.id}`);
-      if (status.status === "Completed" || status.status === "Failed") break;
+    const controller = new AbortController(); auditRequest.current?.abort(); auditRequest.current = controller;
+    try {
+      const audit = await startAudit(version.id, controller.signal);
+      for (let i = 0; i < 60; i++) {
+        await wait(2000, controller.signal);
+        const current = await getAuditStatus(audit.id, controller.signal);
+        if (["Completed", "Failed", "Cancelled"].includes(current.status)) break;
+      }
+      await load(controller.signal);
+    } catch (value) {
+      if (!isApiRequestAborted(value)) setError(value instanceof Error ? value.message : "Audit tidak dapat dijalankan.");
+    } finally {
+      if (auditRequest.current === controller) { auditRequest.current = undefined; setBusy(false); }
     }
-    await load(); setBusy(false);
   }
 
   if (!doc) return <main className="page-shell"><p>{error || "Memuat..."}</p></main>;
@@ -48,4 +61,13 @@ export default function DocumentPage() {
       <section className="panel"><h2>Hasil audit</h2>{latest ? <><p>Lihat ringkasan, filter, dan temuan historis untuk audit terbaru.</p><Link className="button secondary" href={`/audits/${latest.id}`}>Buka hasil audit</Link></> : <p>Belum ada audit.</p>}</section>
     </main>
   );
+}
+
+function wait(milliseconds: number, signal: AbortSignal): Promise<void> {
+  return new Promise((resolve, reject) => {
+    const finish = () => { signal.removeEventListener("abort", abort); resolve(); };
+    const abort = () => { window.clearTimeout(timer); reject(new DOMException("Aborted", "AbortError")); };
+    const timer = window.setTimeout(finish, milliseconds);
+    signal.addEventListener("abort", abort, { once: true });
+  });
 }
