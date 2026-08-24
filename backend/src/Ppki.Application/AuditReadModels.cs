@@ -67,6 +67,64 @@ public sealed record AuditFailureSummary(string Code, string Message)
 
 public sealed record CorrectionAnalysisReadinessDto(string State);
 
+public enum ReviewReadinessState { AuditInProgress, NeedsFix, ReadyForReview, Unknown }
+public enum ReviewReadinessReason { AuditFailed, AuditCancelled, PolicyUnknown, NoApplicableRules }
+
+public sealed record ReviewReadinessSnapshot(
+    int SnapshotSchemaVersion,
+    ReviewBlockingPolicy? ReviewBlockingPolicy,
+    string? ReadinessPolicyVersion);
+
+public sealed record ReviewReadinessFinding(
+    ReviewBlockingPolicy? ReviewBlockingPolicy,
+    FindingStatus FindingStatus,
+    FindingResolutionEventType? LatestResolution,
+    FindingReviewEventType? LatestReview);
+
+public sealed record ReviewReadinessResult(
+    ReviewReadinessState State,
+    ReviewReadinessReason? Reason,
+    int BlockingFindingCount,
+    string? PolicyVersion);
+
+public static class ReviewReadinessProjection
+{
+    public static ReviewReadinessResult Resolve(
+        AuditJobStatus status,
+        int applicableRuleCount,
+        IEnumerable<ReviewReadinessSnapshot> snapshots,
+        IEnumerable<ReviewReadinessFinding> findings)
+    {
+        ArgumentNullException.ThrowIfNull(snapshots);
+        ArgumentNullException.ThrowIfNull(findings);
+        if (status is AuditJobStatus.Queued or AuditJobStatus.Processing)
+            return new(ReviewReadinessState.AuditInProgress, null, 0, null);
+        if (status == AuditJobStatus.Failed)
+            return new(ReviewReadinessState.Unknown, ReviewReadinessReason.AuditFailed, 0, null);
+        if (status == AuditJobStatus.Cancelled)
+            return new(ReviewReadinessState.Unknown, ReviewReadinessReason.AuditCancelled, 0, null);
+        if (applicableRuleCount == 0)
+            return new(ReviewReadinessState.Unknown, ReviewReadinessReason.NoApplicableRules, 0, null);
+
+        var policies = snapshots.ToArray();
+        var versions = policies.Select(value => value.ReadinessPolicyVersion)
+            .Distinct(StringComparer.Ordinal).ToArray();
+        if (policies.Length != applicableRuleCount
+            || policies.Any(value => value.SnapshotSchemaVersion < 2
+                || value.ReviewBlockingPolicy is not (ReviewBlockingPolicy.Blocking or ReviewBlockingPolicy.NonBlocking)
+                || string.IsNullOrWhiteSpace(value.ReadinessPolicyVersion))
+            || versions.Length != 1)
+            return new(ReviewReadinessState.Unknown, ReviewReadinessReason.PolicyUnknown, 0, null);
+
+        var blockingCount = findings.Count(value =>
+            value.ReviewBlockingPolicy == ReviewBlockingPolicy.Blocking
+            && value.LatestResolution != FindingResolutionEventType.VerificationResolvedObserved);
+        return blockingCount > 0
+            ? new(ReviewReadinessState.NeedsFix, null, blockingCount, versions[0])
+            : new(ReviewReadinessState.ReadyForReview, null, 0, versions[0]);
+    }
+}
+
 public enum AuditFindingDisposition { Resolved, Ignored, RequiresReview }
 
 public sealed record AuditFindingDispositionSummaryDto(
@@ -152,7 +210,12 @@ public sealed record AuditSummaryDto(
     AutomaticRemediationHistoryDto? AutomaticRemediationHistory,
     CorrectionAnalysisReadinessDto CorrectionAnalysis,
     AutomaticRemediationSummaryDto? AutomaticRemediation = null,
-    DocumentRenderStateDto? DocumentRender = null);
+    DocumentRenderStateDto? DocumentRender = null,
+    int ProfileVersionNo = 0,
+    int BlockingFindingCount = 0,
+    string ReadinessState = "Unknown",
+    string? ReadinessReason = null,
+    string? ReadinessPolicyVersion = null);
 
 public sealed record AuditFindingSourceDto(
     string? SourceSection,

@@ -8,7 +8,7 @@ namespace Ppki.RuleEngine;
 
 public sealed class ResolvedRuleSetSnapshotBuilder : IResolvedRuleSetSnapshotBuilder
 {
-    public const int CurrentSchemaVersion = 1;
+    public const int CurrentSchemaVersion = 2;
 
     public IReadOnlyList<AuditRuleSnapshot> Build(
         Guid auditJobId,
@@ -18,7 +18,16 @@ public sealed class ResolvedRuleSetSnapshotBuilder : IResolvedRuleSetSnapshotBui
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(layer);
 
-        return resolvedRules
+        var rules = resolvedRules.ToArray();
+        if (rules.Any(rule => rule.ReviewBlockingPolicy == ReviewBlockingPolicy.PendingApproval))
+            throw new ReviewReadinessPolicyResolutionException("review-readiness-policy-pending-approval");
+        var invalid = rules.FirstOrDefault(rule => rule.ReviewBlockingPolicy is null
+            or ReviewBlockingPolicy.Unknown
+            || !string.Equals(rule.ReadinessPolicyVersion, ReviewReadinessPolicy.Version, StringComparison.Ordinal));
+        if (invalid is not null)
+            throw new ReviewReadinessPolicyResolutionException("review-readiness-policy-not-applicable");
+
+        return rules
             .OrderBy(rule => rule.RuleCode, StringComparer.Ordinal)
             .ThenBy(rule => rule.AppliesTo, StringComparer.Ordinal)
             .ThenBy(rule => rule.ValidationKey, StringComparer.Ordinal)
@@ -40,6 +49,8 @@ public sealed class ResolvedRuleSetSnapshotBuilder : IResolvedRuleSetSnapshotBui
                 ValidationJson = "{}",
                 Severity = rule.Severity,
                 FixMode = rule.FixMode,
+                ReviewBlockingPolicy = rule.ReviewBlockingPolicy,
+                ReadinessPolicyVersion = rule.ReadinessPolicyVersion,
                 SourceReferenceJson = JsonSerializer.Serialize(new
                 {
                     sourceSection = rule.SourceSection,
@@ -81,6 +92,13 @@ public sealed class ResolvedRuleSetHasher : IResolvedRuleSetHasher
                 WriteCanonicalJson(writer, snapshot.ValidationJson);
                 writer.WriteString("severity", snapshot.Severity.ToString());
                 writer.WriteString("fix_mode", snapshot.FixMode.ToString());
+                if (snapshot.SnapshotSchemaVersion >= 2)
+                {
+                    if (!ReviewReadinessPolicy.IsPolicyAwareSnapshot(snapshot))
+                        throw new InvalidOperationException("Policy-aware snapshot is incomplete.");
+                    writer.WriteString("review_blocking_policy", snapshot.ReviewBlockingPolicy!.Value.ToString());
+                    writer.WriteString("readiness_policy_version", snapshot.ReadinessPolicyVersion);
+                }
                 writer.WritePropertyName("source_reference");
                 WriteCanonicalJson(writer, snapshot.SourceReferenceJson);
                 writer.WriteString("layer", snapshot.Layer);
@@ -138,4 +156,10 @@ public sealed class ResolvedRuleSetHasher : IResolvedRuleSetHasher
                 throw new InvalidOperationException("Unsupported snapshot JSON value.");
         }
     }
+}
+
+public sealed class ReviewReadinessPolicyResolutionException(string diagnosticCode)
+    : InvalidOperationException(diagnosticCode)
+{
+    public string DiagnosticCode { get; } = diagnosticCode;
 }

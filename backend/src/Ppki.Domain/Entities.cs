@@ -139,6 +139,8 @@ public sealed class RuleDefinition : Entity
     public required string ExpectedValuePattern { get; set; }
     public RuleSeverity Severity { get; set; }
     public FixMode FixMode { get; set; }
+    public ReviewBlockingPolicy? ReviewBlockingPolicy { get; set; }
+    public string? ReadinessPolicyVersion { get; set; }
     public required string ValidationKey { get; set; }
     public bool IsImplemented { get; set; }
     public int? PdfPage { get; set; }
@@ -204,6 +206,9 @@ public sealed class AuditRuleSnapshot : Entity
     public required string ValidationJson { get; set; }
     public RuleSeverity Severity { get; set; }
     public FixMode FixMode { get; set; }
+    // Null represents a legacy snapshot whose review-readiness policy is unknown.
+    public ReviewBlockingPolicy? ReviewBlockingPolicy { get; set; }
+    public string? ReadinessPolicyVersion { get; set; }
     public required string SourceReferenceJson { get; set; }
     public required string Layer { get; set; }
     public int Precedence { get; set; }

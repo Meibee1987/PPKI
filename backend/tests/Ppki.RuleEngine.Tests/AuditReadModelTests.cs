@@ -34,6 +34,30 @@ public sealed class AuditReadModelTests
     }
 
     [Fact]
+    public void Summary_projects_profile_version_and_authoritative_readiness_fields()
+    {
+        var summary = new AuditSummaryDto(
+            Guid.NewGuid(), "Completed", Guid.NewGuid(), Guid.NewGuid(), "Skripsi",
+            new string('a', 64), 1, 1, 1, 1, 1, 0, 0,
+            new(1, 0, 0), [new("LAY", 1)], new(1, 0, 0, 0),
+            AuditScoreState.NotConfigured, null, null, null, "scoring-policy-not-configured",
+            DateTimeOffset.UtcNow, DateTimeOffset.UtcNow, null, null,
+            new(0, 0, 0, 1), null, new("Completed"),
+            ProfileVersionNo: 4, BlockingFindingCount: 1,
+            ReadinessState: "NeedsFix", ReadinessPolicyVersion: ReviewReadinessPolicy.Version);
+
+        using var json = JsonDocument.Parse(JsonSerializer.Serialize(
+            summary, new JsonSerializerOptions(JsonSerializerDefaults.Web)));
+
+        Assert.Equal(4, json.RootElement.GetProperty("profileVersionNo").GetInt32());
+        Assert.Equal(1, json.RootElement.GetProperty("blockingFindingCount").GetInt32());
+        Assert.Equal("NeedsFix", json.RootElement.GetProperty("readinessState").GetString());
+        Assert.Equal(ReviewReadinessPolicy.Version,
+            json.RootElement.GetProperty("readinessPolicyVersion").GetString());
+        Assert.Equal(1, json.RootElement.GetProperty("errorCount").GetInt32());
+    }
+
+    [Fact]
     public void Summary_counts_are_consistent_across_severity_domain_and_fix_mode()
     {
         var result = AuditSummaryCounts.FromBuckets([

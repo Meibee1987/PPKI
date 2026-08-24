@@ -18,6 +18,8 @@
   </ItemGroup>
   <ItemGroup>
     <None Include="../fixtures/docx/**" Link="fixtures/docx/%(RecursiveDir)%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../rules/ppki-ipb-2019/rules.json" Link="policy-fixtures/rules.json" CopyToOutputDirectory="PreserveNewest" />
+    <None Include="../../../supabase/migrations/202608240001_review_readiness_policy.sql" Link="policy-fixtures/202608240001_review_readiness_policy.sql" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.NET.Test.Sdk" />

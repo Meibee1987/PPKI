@@ -80,6 +80,8 @@ public static class ReauditCreationContract
             ValidationJson = value.ValidationJson,
             Severity = value.Severity,
             FixMode = value.FixMode,
+            ReviewBlockingPolicy = value.ReviewBlockingPolicy,
+            ReadinessPolicyVersion = value.ReadinessPolicyVersion,
             SourceReferenceJson = value.SourceReferenceJson,
             Layer = value.Layer,
             Precedence = value.Precedence,

@@ -42,17 +42,16 @@ public static class RuleCatalogImporter
         string catalogPath,
         CancellationToken cancellationToken = default)
     {
+        var json = await File.ReadAllTextAsync(catalogPath, cancellationToken);
+        var catalog = ParseAndValidate(json);
         var existingRules = await db.Rules.ToListAsync(cancellationToken);
         if (existingRules.Count > 0)
         {
-            if (ReconcileImplementedMappings(existingRules) > 0)
-                await db.SaveChangesAsync(cancellationToken);
+            var changed = ReconcileImplementedMappings(existingRules);
+            changed += ReconcileReviewPolicies(existingRules, catalog.Rules);
+            if (changed > 0) await db.SaveChangesAsync(cancellationToken);
             return;
         }
-
-        var json = await File.ReadAllTextAsync(catalogPath, cancellationToken);
-        var catalog = JsonSerializer.Deserialize<RuleCatalog>(json)
-            ?? throw new InvalidOperationException("Rule catalog could not be parsed.");
 
         foreach (var source in catalog.Rules)
         {
@@ -68,6 +67,8 @@ public static class RuleCatalogImporter
                 ExpectedValuePattern = source.ExpectedValuePattern,
                 Severity = Enum.Parse<RuleSeverity>(source.Severity, ignoreCase: true),
                 FixMode = Enum.Parse<FixMode>(source.FixMode, ignoreCase: true),
+                ReviewBlockingPolicy = ReviewReadinessPolicy.ParseCatalogValue(source.ReviewBlockingPolicy),
+                ReadinessPolicyVersion = ReviewReadinessPolicy.Version,
                 ValidationKey = validationKey ?? "manual.not-implemented",
                 IsImplemented = implemented,
                 PdfPage = source.PdfPage,
@@ -77,6 +78,22 @@ public static class RuleCatalogImporter
         }
 
         await db.SaveChangesAsync(cancellationToken);
+    }
+
+    internal static RuleCatalog ParseAndValidate(string json)
+    {
+        ArgumentException.ThrowIfNullOrWhiteSpace(json);
+        var catalog = JsonSerializer.Deserialize<RuleCatalog>(json)
+            ?? throw new InvalidOperationException("Rule catalog could not be parsed.");
+        if (catalog.Rules is null || catalog.Rules.Count == 0)
+            throw new InvalidOperationException("Rule catalog must contain rules.");
+        if (catalog.Rules.Any(value => string.IsNullOrWhiteSpace(value.RuleId)))
+            throw new InvalidOperationException("Every catalog rule must have a rule_id.");
+        if (catalog.Rules.Select(value => value.RuleId).Distinct(StringComparer.Ordinal).Count() != catalog.Rules.Count)
+            throw new InvalidOperationException("Rule catalog contains duplicate rule_id values.");
+        foreach (var rule in catalog.Rules)
+            _ = ReviewReadinessPolicy.ParseCatalogValue(rule.ReviewBlockingPolicy);
+        return catalog;
     }
 
     internal static int ReconcileImplementedMappings(IEnumerable<RuleDefinition> rules)
@@ -97,10 +114,33 @@ public static class RuleCatalogImporter
         return changed;
     }
 
-    private sealed record RuleCatalog(
+    internal static int ReconcileReviewPolicies(
+        IEnumerable<RuleDefinition> rules,
+        IEnumerable<RuleSource> sources)
+    {
+        ArgumentNullException.ThrowIfNull(rules);
+        ArgumentNullException.ThrowIfNull(sources);
+        var byCode = sources.ToDictionary(value => value.RuleId, StringComparer.Ordinal);
+        var changed = 0;
+        foreach (var rule in rules)
+        {
+            if (!byCode.TryGetValue(rule.RuleCode, out var source))
+                throw new InvalidOperationException($"Persisted rule '{rule.RuleCode}' is absent from the authoritative catalog.");
+            var policy = ReviewReadinessPolicy.ParseCatalogValue(source.ReviewBlockingPolicy);
+            if (rule.ReviewBlockingPolicy == policy
+                && string.Equals(rule.ReadinessPolicyVersion, ReviewReadinessPolicy.Version, StringComparison.Ordinal))
+                continue;
+            rule.ReviewBlockingPolicy = policy;
+            rule.ReadinessPolicyVersion = ReviewReadinessPolicy.Version;
+            changed++;
+        }
+        return changed;
+    }
+
+    internal sealed record RuleCatalog(
         [property: JsonPropertyName("rules")] IReadOnlyList<RuleSource> Rules);
 
-    private sealed record RuleSource(
+    internal sealed record RuleSource(
         [property: JsonPropertyName("rule_id")] string RuleId,
         [property: JsonPropertyName("domain")] string Domain,
         [property: JsonPropertyName("subdomain")] string? Subdomain,
@@ -110,6 +150,7 @@ public static class RuleCatalogImporter
         [property: JsonPropertyName("expected_value_pattern")] string ExpectedValuePattern,
         [property: JsonPropertyName("severity")] string Severity,
         [property: JsonPropertyName("fix_mode")] string FixMode,
+        [property: JsonPropertyName("review_blocking_policy")] string? ReviewBlockingPolicy,
         [property: JsonPropertyName("pdf_page")] int? PdfPage,
         [property: JsonPropertyName("printed_page")] JsonElement? PrintedPage,
         [property: JsonPropertyName("source_section")] string? SourceSection);

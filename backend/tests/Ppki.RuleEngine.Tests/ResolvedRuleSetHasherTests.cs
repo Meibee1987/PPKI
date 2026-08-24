@@ -72,6 +72,33 @@ public sealed class ResolvedRuleSetHasherTests
         Assert.Equal(_hasher.Hash(first), _hasher.Hash(second));
         Assert.DoesNotContain("document", first[0].RequirementJson, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("user", first[0].RequirementJson, StringComparison.OrdinalIgnoreCase);
+        Assert.Equal(2, first[0].SnapshotSchemaVersion);
+        Assert.Equal(ReviewBlockingPolicy.Blocking, first[0].ReviewBlockingPolicy);
+        Assert.Equal(ReviewReadinessPolicy.Version, first[0].ReadinessPolicyVersion);
+    }
+
+    [Fact]
+    public void Schema_v1_hash_behavior_excludes_new_policy_fields()
+    {
+        var legacy = Snapshot("RULE-A", 1);
+        var decoratedLegacy = Clone(legacy,
+            reviewPolicy: ReviewBlockingPolicy.Blocking,
+            readinessPolicyVersion: ReviewReadinessPolicy.Version);
+
+        Assert.Equal(_hasher.Hash([legacy]), _hasher.Hash([decoratedLegacy]));
+    }
+
+    [Fact]
+    public void Schema_v2_hash_includes_review_policy_and_policy_version()
+    {
+        var baseline = Clone(Snapshot("RULE-A", 1), snapshotSchemaVersion: 2,
+            reviewPolicy: ReviewBlockingPolicy.Blocking,
+            readinessPolicyVersion: ReviewReadinessPolicy.Version);
+        var changedPolicy = Clone(baseline, reviewPolicy: ReviewBlockingPolicy.NonBlocking);
+        var changedVersion = Clone(baseline, readinessPolicyVersion: "later-policy-v2");
+
+        Assert.NotEqual(_hasher.Hash([baseline]), _hasher.Hash([changedPolicy]));
+        Assert.NotEqual(_hasher.Hash([baseline]), _hasher.Hash([changedVersion]));
     }
 
     private static AuditRuleSnapshot Snapshot(string code, int ordinal) => new()
@@ -101,7 +128,10 @@ public sealed class ResolvedRuleSetHasherTests
         string? validationJson = null,
         RuleSeverity? severity = null,
         FixMode? fixMode = null,
-        int? precedence = null) => new()
+        int? precedence = null,
+        int? snapshotSchemaVersion = null,
+        ReviewBlockingPolicy? reviewPolicy = null,
+        string? readinessPolicyVersion = null) => new()
     {
         AuditJobId = source.AuditJobId,
         RuleId = source.RuleId,
@@ -115,11 +145,13 @@ public sealed class ResolvedRuleSetHasherTests
         ValidationJson = validationJson ?? source.ValidationJson,
         Severity = severity ?? source.Severity,
         FixMode = fixMode ?? source.FixMode,
+        ReviewBlockingPolicy = reviewPolicy ?? source.ReviewBlockingPolicy,
+        ReadinessPolicyVersion = readinessPolicyVersion ?? source.ReadinessPolicyVersion,
         SourceReferenceJson = source.SourceReferenceJson,
         Layer = source.Layer,
         Precedence = precedence ?? source.Precedence,
         Ordinal = source.Ordinal,
-        SnapshotSchemaVersion = source.SnapshotSchemaVersion,
+        SnapshotSchemaVersion = snapshotSchemaVersion ?? source.SnapshotSchemaVersion,
         CreatedAt = source.CreatedAt
     };
 
@@ -134,6 +166,8 @@ public sealed class ResolvedRuleSetHasherTests
         Severity = RuleSeverity.Error,
         FixMode = FixMode.Report,
         ValidationKey = "section.page-size-a4",
-        IsImplemented = true
+        IsImplemented = true,
+        ReviewBlockingPolicy = ReviewBlockingPolicy.Blocking,
+        ReadinessPolicyVersion = ReviewReadinessPolicy.Version
     };
 }

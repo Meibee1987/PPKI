@@ -123,6 +123,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.Property(x => x.ExpectedValuePattern).HasColumnName("expected_value_pattern").IsRequired();
             entity.Property(x => x.Severity).HasColumnName("severity").HasConversion<string>();
             entity.Property(x => x.FixMode).HasColumnName("fix_mode").HasConversion<string>();
+            entity.Property(x => x.ReviewBlockingPolicy).HasColumnName("review_blocking_policy").HasConversion<string>();
+            entity.Property(x => x.ReadinessPolicyVersion).HasColumnName("readiness_policy_version");
             entity.Property(x => x.ValidationKey).HasColumnName("validation_key").IsRequired();
             entity.Property(x => x.IsImplemented).HasColumnName("is_implemented");
             entity.Property(x => x.PdfPage).HasColumnName("pdf_page");
@@ -190,6 +192,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.Property(x => x.ValidationJson).HasColumnName("validation_json").HasColumnType("jsonb").IsRequired();
             entity.Property(x => x.Severity).HasColumnName("severity").HasConversion<string>();
             entity.Property(x => x.FixMode).HasColumnName("fix_mode").HasConversion<string>();
+            entity.Property(x => x.ReviewBlockingPolicy).HasColumnName("review_blocking_policy").HasConversion<string>();
+            entity.Property(x => x.ReadinessPolicyVersion).HasColumnName("readiness_policy_version");
             entity.Property(x => x.SourceReferenceJson).HasColumnName("source_reference_json").HasColumnType("jsonb").IsRequired();
             entity.Property(x => x.Layer).HasColumnName("layer").IsRequired();
             entity.Property(x => x.Precedence).HasColumnName("precedence");

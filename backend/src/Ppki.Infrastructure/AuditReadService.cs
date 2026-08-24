@@ -23,6 +23,7 @@ public sealed class AuditReadService(
                 value.Status,
                 value.DocumentVersionId,
                 value.ProfileVersionId,
+                value.ProfileVersion!.VersionNo,
                 value.DocumentKindSnapshot,
                 value.ResolvedRuleSetHash,
                 value.ApplicableRuleCount,
@@ -33,6 +34,44 @@ public sealed class AuditReadService(
                 value.DocumentVersion!.VersionNo == value.DocumentVersion.Document!.CurrentVersionNo))
             .SingleOrDefaultAsync(cancellationToken);
         if (audit is null) return null;
+
+        var snapshotPolicies = await db.AuditRuleSnapshots.AsNoTracking()
+            .Where(value => value.AuditJobId == auditId)
+            .OrderBy(value => value.Ordinal)
+            .Select(value => new ReviewReadinessSnapshot(
+                value.SnapshotSchemaVersion,
+                value.ReviewBlockingPolicy,
+                value.ReadinessPolicyVersion))
+            .ToListAsync(cancellationToken);
+        var readinessFindingRows = await (
+            from finding in db.AuditFindings.AsNoTracking()
+            join snapshot in db.AuditRuleSnapshots.AsNoTracking()
+                on new { finding.AuditJobId, RuleCode = finding.RuleCodeSnapshot }
+                equals new { snapshot.AuditJobId, RuleCode = snapshot.RuleCode }
+            where finding.AuditJobId == auditId
+            select new
+            {
+                snapshot.ReviewBlockingPolicy,
+                finding.Status,
+                LatestResolution = db.FindingResolutionCases.AsNoTracking()
+                    .Where(value => value.SourceAuditFindingId == finding.Id)
+                    .SelectMany(value => value.Events)
+                    .OrderByDescending(value => value.Sequence)
+                    .Select(value => (FindingResolutionEventType?)value.EventType)
+                    .FirstOrDefault(),
+                LatestReview = db.FindingReviewCases.AsNoTracking()
+                    .Where(value => value.AuditFindingId == finding.Id)
+                    .SelectMany(value => value.Events)
+                    .OrderByDescending(value => value.Sequence)
+                    .Select(value => (FindingReviewEventType?)value.EventType)
+                    .FirstOrDefault()
+            }).ToListAsync(cancellationToken);
+        var readiness = ReviewReadinessProjection.Resolve(
+            audit.Status,
+            audit.ApplicableRuleCount,
+            snapshotPolicies,
+            readinessFindingRows.Select(value => new ReviewReadinessFinding(
+                value.ReviewBlockingPolicy, value.Status, value.LatestResolution, value.LatestReview)));
 
         var countBuckets = await AuditReadQueries.OwnedSummaryBuckets(
                 db, auditId, ownerUserId)
@@ -149,7 +188,12 @@ public sealed class AuditReadService(
             automaticHistory,
             new(analysisReadiness),
             automaticSummary,
-            render.Dto);
+            render.Dto,
+            audit.ProfileVersionNo,
+            readiness.BlockingFindingCount,
+            readiness.State.ToString(),
+            readiness.Reason?.ToString(),
+            readiness.PolicyVersion);
     }
 
     public async Task<AuditFindingPageDto?> GetFindingsAsync(
@@ -464,6 +508,7 @@ public sealed class AuditReadService(
         AuditJobStatus Status,
         Guid DocumentVersionId,
         Guid ProfileVersionId,
+        int ProfileVersionNo,
         DocumentKind? DocumentKindSnapshot,
         string? ResolvedRuleSetHash,
         int ApplicableRuleCount,

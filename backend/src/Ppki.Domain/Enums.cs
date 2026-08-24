@@ -76,6 +76,18 @@ public enum FixMode
     Report
 }
 
+/// <summary>
+/// PPKI Smart Formatter product policy for review readiness. This is not an
+/// official IPB rule classification.
+/// </summary>
+public enum ReviewBlockingPolicy
+{
+    Unknown,
+    Blocking,
+    NonBlocking,
+    PendingApproval
+}
+
 public enum FixExecutionState
 {
     Queued,

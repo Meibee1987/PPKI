@@ -67,6 +67,8 @@ public sealed class AuditRunner(
                 : [];
             var ownerUserId = audit.DocumentVersion!.Document!.OwnerUserId;
             var snapshots = await EnsureRuleSnapshotsAsync(auditJobId, ownerUserId, proposedSnapshots, cancellationToken);
+            if (snapshots.Any(value => value.ReviewBlockingPolicy == ReviewBlockingPolicy.PendingApproval))
+                throw new ReviewReadinessPolicyResolutionException("review-readiness-policy-pending-approval");
 
             var filePath = await fileStorage.MaterializeToTempFileAsync(
                 audit.DocumentVersion!.StorageBucket,

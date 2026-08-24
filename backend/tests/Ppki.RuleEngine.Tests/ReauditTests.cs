@@ -112,6 +112,8 @@ public sealed class ReauditCreationContractTests
             Assert.Equal(before.ValidationJson, after.ValidationJson);
             Assert.Equal(before.Severity, after.Severity);
             Assert.Equal(before.FixMode, after.FixMode);
+            Assert.Equal(before.ReviewBlockingPolicy, after.ReviewBlockingPolicy);
+            Assert.Equal(before.ReadinessPolicyVersion, after.ReadinessPolicyVersion);
             Assert.Equal(before.SourceReferenceJson, after.SourceReferenceJson);
             Assert.Equal(before.Layer, after.Layer);
             Assert.Equal(before.Precedence, after.Precedence);
@@ -183,11 +185,13 @@ public sealed class ReauditCreationContractTests
         ValidationJson = "{\"enabled\":true}",
         Severity = RuleSeverity.Error,
         FixMode = FixMode.Auto,
+        ReviewBlockingPolicy = ReviewBlockingPolicy.Blocking,
+        ReadinessPolicyVersion = ReviewReadinessPolicy.Version,
         SourceReferenceJson = "{\"sourceSection\":\"synthetic\"}",
         Layer = "profile",
         Precedence = 0,
         Ordinal = ordinal,
-        SnapshotSchemaVersion = 1
+        SnapshotSchemaVersion = 2
     };
 }
 
