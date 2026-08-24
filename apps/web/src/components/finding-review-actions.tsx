@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useRef, useState } from "react";
 import { ApiRequestError, isApiRequestAborted } from "../lib/api";
 import type { CanonicalAuditIdentity } from "../lib/canonical-audit-identity";
 import { assertCanonicalFindingReview, findingReviewIdentityKey, maximumFindingReviewReasonLength, validateFindingReviewReason } from "../lib/finding-review-model";
@@ -26,6 +26,10 @@ export function FindingReviewActions({ identity, findingId, onChanged }: {
   const [reasonError, setReasonError] = useState("");
   const [pending, setPending] = useState<ReviewAction>();
   const [reload, setReload] = useState(0);
+  const reasonId = useId();
+  const reasonHelpId = `${reasonId}-help`;
+  const reasonCountId = `${reasonId}-count`;
+  const reasonErrorId = `${reasonId}-error`;
   const requestGuard = useRef(createLatestFindingRequestGuard());
   const commandController = useRef<AbortController | undefined>(undefined);
   const commandInFlight = useRef(false);
@@ -117,7 +121,7 @@ export function FindingReviewActions({ identity, findingId, onChanged }: {
     {latestEvent && <div className="review-latest"><small>Event review terakhir</small><strong>{latestEvent.eventType}</strong>{latestEvent.note && <p>{latestEvent.note}</p>}<time dateTime={latestEvent.createdAt}>{new Date(latestEvent.createdAt).toLocaleString("id-ID")}</time></div>}
     {error && <p className="error-box" role="alert">{error}</p>}
     {success && <p className="success-box" role="status">{success}</p>}
-    {(canRequest || canDecideIgnore) && <div className="review-reason-field"><label htmlFor="drawer-review-reason">Alasan wajib<textarea id="drawer-review-reason" value={reason} maxLength={maximumFindingReviewReasonLength} disabled={busy} aria-invalid={Boolean(reasonError)} aria-describedby="drawer-review-reason-help drawer-review-reason-error" onChange={event => { setReason(event.target.value); if (reasonError) setReasonError(""); }} /></label><div className="note-meta"><span id="drawer-review-reason-help">Teks biasa satu baris; maksimum 1.000 karakter. Alasan tidak disimpan di URL.</span><output aria-live="polite">{reason.length}/1000</output></div>{reasonError && <p id="drawer-review-reason-error" className="error-box">{reasonError}</p>}</div>}
+    {(canRequest || canDecideIgnore) && <div className="review-reason-field"><label htmlFor={reasonId}>Alasan wajib<textarea id={reasonId} value={reason} maxLength={maximumFindingReviewReasonLength} disabled={busy} aria-invalid={Boolean(reasonError)} aria-describedby={`${reasonHelpId} ${reasonCountId}${reasonError ? ` ${reasonErrorId}` : ""}`} aria-errormessage={reasonError ? reasonErrorId : undefined} onChange={event => { setReason(event.target.value); if (reasonError) setReasonError(""); }} /></label><div className="note-meta"><span id={reasonHelpId}>Teks biasa satu baris; maksimum 1.000 karakter. Alasan tidak disimpan di URL.</span><output id={reasonCountId} aria-label="Jumlah karakter alasan">{reason.length}/1000</output></div>{reasonError && <p id={reasonErrorId} className="error-box" role="alert">{reasonError}</p>}</div>}
     {canRequest && <div className="drawer-review-buttons" aria-label="Tindakan review yang diizinkan server"><button className="button secondary" type="button" disabled={busy} onClick={() => prepare("ManualReviewRequest")}>Tandai untuk review manual</button><button className="button danger" type="button" disabled={busy} onClick={() => prepare("IgnoreRequest")}>Ajukan Ignore</button></div>}
     {canDecideIgnore && <div className="drawer-review-buttons"><button className="button danger" type="button" disabled={busy} onClick={() => prepare("IgnoreDecision")}>Konfirmasi Ignore</button></div>}
     {!canRequest && !canDecideIgnore && <p className="muted">Tidak ada tindakan ManualReview atau Ignore yang diizinkan oleh workflow saat ini.</p>}

@@ -54,7 +54,7 @@ const checks:[string,()=>void][]=[
 ["governance is lazy on detail",()=>assert.match(detail,/FindingGovernancePanel/)],
 ["no synthetic page or line",()=>assert.doesNotMatch(workflow,/pageIndex|lineIndex/)],
 ["location fallback is explicit",()=>assert.match(presentation,/Lokasi rinci tidak tersedia/)],
-["dialog title and description are linked",()=>assert.match(dialog,/aria-labelledby="confirm-title" aria-describedby="confirm-description"/)],
+["dialog title and description use unique linked IDs",()=>{assert.match(dialog,/const titleId = useId\(\)/);assert.match(dialog,/aria-labelledby=\{titleId\} aria-describedby=\{descriptionId\}/)}],
 ["dialog supports Escape",()=>assert.match(dialog,/onCancel=/)],
 ["dialog restores focus",()=>assert.match(dialog,/trigger\.current\?\.focus/)],
 ["visible button focus exists",()=>assert.match(css,/button:focus-visible/)],

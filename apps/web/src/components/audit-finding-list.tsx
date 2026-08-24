@@ -86,7 +86,7 @@ export function AuditFindingList({ identity, summary, refreshSummary }: { identi
 
   return <section className="panel finding-log" aria-labelledby="finding-log-title" aria-busy={loading}>
     <div className="section-heading"><div><h2 id="finding-log-title">Daftar temuan audit</h2><p>Daftar ini dipaginasi dan difilter oleh backend; ringkasan audit di atas tidak berubah.</p></div></div>
-    <form className="finding-filter-grid" role="search" onSubmit={apply}>
+    <form className="finding-filter-grid" role="search" aria-label="Cari dan filter temuan audit" onSubmit={apply}>
       <label className="finding-search">Cari kode atau elemen aturan<input type="search" maxLength={128} value={draft.search} onChange={event => setDraft({ ...draft, search: event.target.value })} placeholder="Contoh: PPKI-LAYOUT" /></label>
       <label>Keparahan<select value={draft.severity} onChange={event => setDraft({ ...draft, severity: event.target.value as Severity | "" })}><option value="">Semua</option>{severities.map(value => <option key={value} value={value}>{value}</option>)}</select></label>
       <label>Mode perbaikan<select value={draft.fixMode} onChange={event => setDraft({ ...draft, fixMode: event.target.value as FixMode | "" })}><option value="">Semua</option>{fixModes.map(value => <option key={value} value={value}>{value}</option>)}</select></label>

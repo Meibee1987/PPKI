@@ -17,7 +17,7 @@ const checks: [string, () => void][] = [
   ["final Ignore uses the exact allowed decision", () => assert.match(actions, /review\.permissions\.canDecide && review\.allowedDecisions\.includes\("Ignore"\)/)],
   ["reason is required before opening confirmation", () => assert.match(actions, /validateFindingReviewReason\(reason\)[\s\S]*if \(validation/)],
   ["reason maximum is shared with the model", () => assert.match(actions, /maxLength=\{maximumFindingReviewReasonLength\}/)],
-  ["reason is accessible", () => { assert.match(actions, /htmlFor="drawer-review-reason"/); assert.match(actions, /aria-describedby="drawer-review-reason-help drawer-review-reason-error"/); }],
+  ["reason is accessible", () => { assert.match(actions, /htmlFor=\{reasonId\}/); assert.match(actions, /aria-describedby=\{`\$\{reasonHelpId\} \$\{reasonCountId\}/); assert.match(actions, /aria-errormessage=\{reasonError \? reasonErrorId : undefined\}/); }],
   ["reason is React text and never HTML", () => { assert.match(actions, /\{latestEvent\.note\}/); assert.doesNotMatch(actions, /dangerouslySetInnerHTML/); }],
   ["reason is absent from URLs", () => { assert.doesNotMatch(api, /apiFetch\(`[^`]*\$\{(?:note|reason)/i); assert.match(api, /JSON\.stringify\(\{ requestedDisposition, note:/); }],
   ["duplicate submissions have a synchronous guard", () => assert.match(actions, /commandInFlight\.current/)],

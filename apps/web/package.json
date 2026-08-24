@@ -7,6 +7,7 @@
     "build": "next build",
     "start": "next start",
     "typecheck": "tsc --noEmit",
+    "test": "npm run test:audit-ui-accessibility",
     "test:config": "node --test --experimental-strip-types src/lib/supabase/environment.test.ts",
     "test:api-client": "node --test --experimental-strip-types src/lib/api.test.ts src/lib/api-errors.test.ts src/lib/document-contract.test.ts",
     "test:audit-progress": "node --test --experimental-strip-types src/lib/audit-progress.test.ts src/lib/audit-progress-ui.test.ts src/lib/document-audit-selection.test.ts",
@@ -15,6 +16,7 @@
     "test:finding-detail": "node --test --experimental-strip-types src/lib/finding-detail-model.test.ts src/lib/finding-detail-drawer.test.ts src/lib/finding-list-model.test.ts src/lib/finding-list-ui.test.ts src/lib/audit-contract.test.ts src/lib/findings-presentation.test.ts src/lib/canonical-audit-identity.test.ts",
     "test:finding-review-ui": "node --test --experimental-strip-types src/lib/finding-review-model.test.ts src/lib/finding-review-actions.test.ts src/lib/remediation-contract.test.ts src/lib/finding-detail-model.test.ts src/lib/finding-list-model.test.ts src/lib/canonical-audit-identity.test.ts",
     "test:source-reference": "node --test --experimental-strip-types src/lib/source-reference.test.ts src/lib/finding-detail-model.test.ts src/lib/finding-detail-drawer.test.ts src/lib/audit-contract.test.ts src/lib/canonical-audit-identity.test.ts",
+    "test:audit-ui-accessibility": "node --test --experimental-strip-types src/lib/audit-ui-accessibility.test.ts src/lib/finding-detail-drawer.test.ts src/lib/finding-review-actions.test.ts src/lib/finding-list-ui.test.ts src/lib/audit-progress-ui.test.ts src/lib/source-reference.test.ts src/lib/canonical-audit-identity.test.ts",
     "test:findings-ui": "node --test --experimental-strip-types src/lib/audit-contract.test.ts src/lib/api-errors.test.ts src/lib/document-audit-selection.test.ts src/lib/document-contract.test.ts src/lib/findings-presentation.test.ts src/lib/findings-ui-architecture.test.ts src/lib/route-access.test.ts",
     "test:remediation-ui": "node --test --experimental-strip-types src/lib/remediation-contract.test.ts src/lib/remediation-ui-architecture.test.ts",
     "test:streamlined-audit-ui": "node --test --experimental-strip-types src/lib/canonical-audit-identity.test.ts src/lib/streamlined-audit-ui.test.ts"
