@@ -102,7 +102,7 @@ public sealed class AuditReadModelTests
     {
         Assert.True(AuditFindingQuery.TryCreate(
             "warning", "manual", "requiresreview", true, " Layout ", " RULE-A ", " page.size ",
-            "default", null, null, out var query, out var error));
+            " heading ", "default", null, null, out var query, out var error));
 
         Assert.Null(error);
         Assert.Equal(RuleSeverity.Warning, query.Severity);
@@ -112,6 +112,7 @@ public sealed class AuditReadModelTests
         Assert.Equal("Layout", query.Domain);
         Assert.Equal("RULE-A", query.RuleCode);
         Assert.Equal("page.size", query.ValidationKey);
+        Assert.Equal("heading", query.Search);
         Assert.Equal(1, query.Page);
         Assert.Equal(AuditFindingQuery.DefaultPageSize, query.PageSize);
     }
@@ -131,7 +132,7 @@ public sealed class AuditReadModelTests
         string expectedCode)
     {
         var valid = AuditFindingQuery.TryCreate(
-            severity, fixMode, null, null, null, null, null, sort, 1, pageSize,
+            severity, fixMode, null, null, null, null, null, null, sort, 1, pageSize,
             out _, out var error);
 
         Assert.False(valid);
@@ -142,7 +143,7 @@ public sealed class AuditReadModelTests
     public void Findings_query_limits_the_result_window_to_the_finding_cap()
     {
         var valid = AuditFindingQuery.TryCreate(
-            null, null, null, null, null, null, null, null, 101, 100,
+            null, null, null, null, null, null, null, null, null, 101, 100,
             out _, out var error);
 
         Assert.False(valid);
@@ -242,13 +243,46 @@ public sealed class AuditReadModelTests
     public void Findings_query_accepts_explicit_page_and_maximum_page_size()
     {
         var valid = AuditFindingQuery.TryCreate(
-            null, null, null, null, null, null, null, "default", 2, 100,
+            null, null, null, null, null, null, null, null, "default", 2, 100,
             out var query, out var error);
 
         Assert.True(valid);
         Assert.Null(error);
         Assert.Equal(2, query.Page);
         Assert.Equal(100, query.PageSize);
+    }
+
+    [Fact]
+    public void Findings_page_carries_canonical_audit_and_document_version_identity()
+    {
+        var auditId = Id(90);
+        var documentVersionId = Id(91);
+        var page = new AuditFindingPageDto(auditId, documentVersionId, 2, 25, 2_228, []);
+
+        Assert.Equal(auditId, page.AuditId);
+        Assert.Equal(documentVersionId, page.DocumentVersionId);
+        Assert.Equal(2, page.Page);
+        Assert.Equal(25, page.PageSize);
+        Assert.Equal(2_228, page.TotalCount);
+    }
+
+    [Fact]
+    public void Findings_search_is_bounded_and_matches_only_safe_rule_metadata()
+    {
+        var rows = new[]
+        {
+            Row(1, "PPKI-LAYOUT-001", "Layout", "page.size", RuleSeverity.Error, FixMode.Manual, "{}"),
+            Row(2, "PPKI-TYPE-001", "Typography", "font.size", RuleSeverity.Warning, FixMode.Report, "{}")
+        }.AsQueryable();
+
+        var result = AuditReadQueries.ApplyFilters(rows,
+            new(null, null, null, null, null, null, null, 1, 25, "layout")).Single();
+
+        Assert.Equal(Id(1), result.Id);
+        Assert.Equal("%100\\%\\_safe\\\\value%", AuditReadQueries.SearchPattern("100%_safe\\value"));
+        Assert.False(AuditFindingQuery.TryCreate(null, null, null, null, null, null, null,
+            new string('a', 129), null, 1, 25, out _, out var error));
+        Assert.Equal("finding-filter-text-invalid", error);
     }
 
     [Fact]

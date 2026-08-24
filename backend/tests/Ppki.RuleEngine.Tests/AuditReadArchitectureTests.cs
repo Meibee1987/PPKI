@@ -36,6 +36,10 @@ public sealed class AuditReadArchitectureTests
         Assert.Contains("ApplyDatabaseOrdering(filtered)", service, StringComparison.Ordinal);
         Assert.Contains(".Skip(offset)", service, StringComparison.Ordinal);
         Assert.Contains(".Take(query.PageSize)", service, StringComparison.Ordinal);
+        Assert.Contains("EF.Functions.ILike(value.RuleCode", service, StringComparison.Ordinal);
+        Assert.Contains("EF.Functions.ILike(value.Element", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("ActualJson, pattern", service, StringComparison.Ordinal);
+        Assert.DoesNotContain("ExpectedJson, pattern", service, StringComparison.Ordinal);
     }
 
     [Fact]

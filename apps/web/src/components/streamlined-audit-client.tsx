@@ -13,6 +13,7 @@ import { createTextCorrectionBatch, getDocumentPreviewState, getTextCorrectionBa
 import type { CorrectionAction, CorrectionBatchStatus, DocumentPreviewState, TextCorrectionContext, TextCorrectionPage, TextCorrectionProposal } from "../lib/text-correction-contract";
 import { automaticProgress, batchProgress, contextStateCopy, decisionLabel, highlightedContext, isTerminalBatch, pageLocationLabel, previewFragment, safeCommandMessage, scalarCount, validateManualReplacement } from "../lib/streamlined-audit-presentation";
 import { ConfirmationDialog } from "./confirmation-dialog";
+import { AuditFindingList } from "./audit-finding-list";
 import { FindingLocation } from "./finding-location";
 
 const PAGE_SIZE = 25;
@@ -314,6 +315,7 @@ export function StreamlinedAuditClient() {
         : <SummaryMetric label="Masih perlu pemeriksaan" value={summary.findingDispositions.requiresReviewCount} />}
     </section>}
     {final && !finalSummary && <p className="muted" role="status">Memuat ringkasan versi akhir...</p>}
+    {summary.status === "Completed" && (!final || finalSummary) && <AuditFindingList key={current.identity.auditId} identity={current.identity} summary={summary} />}
 
     {!final && summary.automaticRemediationHistory && summary.automaticRemediationHistory.verifiedResolvedCount > 0 && <section className="panel automatic-history" aria-labelledby="automatic-history-title">
       <button className="automatic-history-toggle" type="button" aria-expanded={automaticExpanded} onClick={() => setAutomaticExpanded(value => !value)}><span><strong id="automatic-history-title">Diperbaiki otomatis</strong><small>{summary.automaticRemediationHistory.verifiedResolvedCount} temuan dari audit sebelumnya telah diperbaiki dan diverifikasi.</small></span><span aria-hidden="true">{automaticExpanded ? "−" : "+"}</span></button>

@@ -130,8 +130,15 @@ test("rejects a stale numeric scoreState from the backend", () => {
 
 test("parses a paginated findings response and preserves backend ordering", () => {
   const second = { ...finding, id: "55555555-5555-4555-8555-555555555555", ruleOrdinal: 2 };
-  const parsed = parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 2, items: [finding, second] });
+  const parsed = parseAuditFindingPage({ auditId, documentVersionId: versionId, page: 1, pageSize: 25, totalCount: 2, items: [finding, second] });
   assert.deepEqual(parsed.items.map(item => item.id), [finding.id, second.id]);
+  assert.equal(parsed.auditId, auditId);
+  assert.equal(parsed.documentVersionId, versionId);
+});
+
+test("rejects a finding page whose item belongs to another audit", () => {
+  const stale = { ...finding, auditId: "55555555-5555-4555-8555-555555555555" };
+  assert.throws(() => parseAuditFindingPage({ auditId, documentVersionId: versionId, page: 1, pageSize: 25, totalCount: 1, items: [stale] }), /kontrak/);
 });
 
 test("parses a bounded first page when findings exceed one page", () => {
@@ -139,7 +146,7 @@ test("parses a bounded first page when findings exceed one page", () => {
     ...finding,
     id: `55555555-5555-4555-8555-${String(index + 1).padStart(12, "0")}`,
   }));
-  const parsed = parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 2228, items });
+  const parsed = parseAuditFindingPage({ auditId, documentVersionId: versionId, page: 1, pageSize: 25, totalCount: 2228, items });
   assert.equal(parsed.page, 1);
   assert.equal(parsed.pageSize, 25);
   assert.equal(parsed.totalCount, 2228);
@@ -148,6 +155,8 @@ test("parses a bounded first page when findings exceed one page", () => {
 
 test("parses explicit null and empty safe finding variants", () => {
   const parsed = parseAuditFindingPage({
+    auditId,
+    documentVersionId: versionId,
     page: 2,
     pageSize: 25,
     totalCount: 2228,
@@ -176,7 +185,7 @@ test("does not parse a problem response as a success DTO", () => {
 });
 
 test("finding wire shape excludes raw transport and sensitive top-level fields", () => {
-  const parsed = parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 1, items: [finding] });
+  const parsed = parseAuditFindingPage({ auditId, documentVersionId: versionId, page: 1, pageSize: 25, totalCount: 1, items: [finding] });
   const keys = Object.keys(parsed.items[0]);
   for (const forbidden of ["actualJson", "expectedJson", "actualValueJson", "expectedValueJson", "path", "filename", "text", "xml", "url", "secret"])
     assert.equal(keys.includes(forbidden), false);
@@ -210,21 +219,24 @@ test("rejects structural excerpt above the 240-scalar privacy bound", () => asse
     excerpt: "x".repeat(241), targetText: "x", pageLocation: { pageNumber: null, confidence: "Unavailable", state: null } }), /kontrak/));
 
 test("parses exact structural page location and canonical render state", () => {
-  const parsed = parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 1, items: [finding] });
+  const parsed = parseAuditFindingPage({ auditId, documentVersionId: versionId, page: 1, pageSize: 25, totalCount: 1, items: [finding] });
   assert.deepEqual(parsed.items[0].pageLocation, { pageNumber: 2, confidence: "Exact", state: "Completed" });
   assert.equal(parseAuditSummary(summary).documentRender.pageMapVersion, "page-map/1.0");
 });
 
-test("rejects fabricated zero page numbers", () => assert.throws(() => parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 1, items: [{ ...finding, pageLocation: { pageNumber: 0, confidence: "Exact", state: "Completed" } }] }), /kontrak/));
+test("rejects fabricated zero page numbers", () => assert.throws(() => parseAuditFindingPage({ auditId, documentVersionId: versionId, page: 1, pageSize: 25, totalCount: 1, items: [{ ...finding, pageLocation: { pageNumber: 0, confidence: "Exact", state: "Completed" } }] }), /kontrak/));
 
 test("rejects invalid summary enum with a controlled error", () => assert.throws(() => parseAuditSummary({ ...summary, status: "Unknown" }), /kontrak/));
-test("rejects invalid finding enum with a controlled error", () => assert.throws(() => parseAuditFindingPage({ page: 1, pageSize: 25, totalCount: 1, items: [{ ...finding, severity: "Critical" }] }), /kontrak/));
-test("rejects malformed pagination shape", () => assert.throws(() => parseAuditFindingPage({ page: 0, pageSize: 101, totalCount: 0, items: [] }), /kontrak/));
+test("rejects invalid finding enum with a controlled error", () => assert.throws(() => parseAuditFindingPage({ auditId, documentVersionId: versionId, page: 1, pageSize: 25, totalCount: 1, items: [{ ...finding, severity: "Critical" }] }), /kontrak/));
+test("rejects malformed pagination shape", () => assert.throws(() => parseAuditFindingPage({ auditId, documentVersionId: versionId, page: 0, pageSize: 101, totalCount: 0, items: [] }), /kontrak/));
 test("rejects invalid UUIDs", () => assert.throws(() => parseAuditFindingDetail({ ...finding, documentVersionId: "bad" }), /kontrak/));
 
 test("normalizes default page and page size", () => assert.deepEqual(normalizeFindingFilters(new URLSearchParams()), { page: 1, pageSize: 25 }));
 test("normalizes enum filters case-insensitively", () => { const value = normalizeFindingFilters(new URLSearchParams("severity=warning&fixMode=manual")); assert.equal(value.severity, "Warning"); assert.equal(value.fixMode, "Manual"); });
 test("preserves exact text filters", () => { const value = normalizeFindingFilters(new URLSearchParams("domain=Layout&ruleCode=PPKI-1&validationKey=page.size")); assert.equal(value.domain, "Layout"); assert.equal(value.ruleCode, "PPKI-1"); assert.equal(value.validationKey, "page.size"); });
+test("normalizes and serializes bounded server search", () => { const value = normalizeFindingFilters(new URLSearchParams("search=%20heading%20&page=7&pageSize=50")); assert.equal(value.search, "heading"); assert.match(findingsQuery(value), /search=heading/); assert.equal(value.page, 7); });
+test("empty search restores the ordinary unfiltered query", () => { const value = normalizeFindingFilters(new URLSearchParams("search=%20%20&page=1&pageSize=25")); assert.equal(value.search, undefined); assert.equal(findingsQuery(value), "page=1&pageSize=25"); });
+test("ignores overlong search instead of issuing an unbounded query", () => assert.equal(normalizeFindingFilters(new URLSearchParams(`search=${"x".repeat(129)}`)).search, undefined));
 test("ignores unknown enum and overlong text filters", () => { const value = normalizeFindingFilters(new URLSearchParams(`severity=Critical&domain=${"x".repeat(129)}`)); assert.equal(value.severity, undefined); assert.equal(value.domain, undefined); });
 test("normalizes invalid page values safely", () => { assert.equal(normalizeFindingFilters(new URLSearchParams("page=-1&pageSize=101")).page, 1); assert.equal(normalizeFindingFilters(new URLSearchParams("page=-1&pageSize=101")).pageSize, 25); });
 test("normalizes pagination whose offset exceeds the backend cap", () => assert.equal(normalizeFindingFilters(new URLSearchParams("page=401&pageSize=25")).page, 1));

@@ -282,6 +282,8 @@ public sealed record AuditFindingDetailDto(
     FindingPageLocationDto? PageLocation = null);
 
 public sealed record AuditFindingPageDto(
+    Guid AuditId,
+    Guid DocumentVersionId,
     int Page,
     int PageSize,
     int TotalCount,
@@ -296,7 +298,8 @@ public sealed record AuditFindingQuery(
     string? RuleCode,
     string? ValidationKey,
     int Page,
-    int PageSize)
+    int PageSize,
+    string? Search = null)
 {
     public const int DefaultPageSize = 25;
     public const int MaximumPageSize = 100;
@@ -311,6 +314,7 @@ public sealed record AuditFindingQuery(
         string? domain,
         string? ruleCode,
         string? validationKey,
+        string? search,
         string? sort,
         int? page,
         int? pageSize,
@@ -345,14 +349,15 @@ public sealed record AuditFindingQuery(
 
         if (!TryFilter(domain, 128, out var normalizedDomain)
             || !TryFilter(ruleCode, 128, out var normalizedRuleCode)
-            || !TryFilter(validationKey, 256, out var normalizedValidationKey))
+            || !TryFilter(validationKey, 256, out var normalizedValidationKey)
+            || !TryFilter(search, 128, out var normalizedSearch))
         {
             errorCode = "finding-filter-text-invalid";
             return false;
         }
 
         query = new(parsedSeverity, parsedFixMode, parsedDisposition, automaticallyResolved, normalizedDomain,
-            normalizedRuleCode, normalizedValidationKey, selectedPage, selectedPageSize);
+            normalizedRuleCode, normalizedValidationKey, selectedPage, selectedPageSize, normalizedSearch);
         return true;
     }
 

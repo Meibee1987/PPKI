@@ -78,6 +78,8 @@ export type StructuralFindingExcerpt = {
 };
 
 export type AuditFindingPage = {
+  auditId: string;
+  documentVersionId: string;
   page: number;
   pageSize: number;
   totalCount: number;
@@ -130,6 +132,7 @@ export type FindingFilters = {
   domain?: string;
   ruleCode?: string;
   validationKey?: string;
+  search?: string;
   page: number;
   pageSize: number;
 };
@@ -325,7 +328,11 @@ export function parseAuditFindingPage(value: unknown): AuditFindingPage {
   const page = nonNegativeInteger(data.page);
   const pageSize = nonNegativeInteger(data.pageSize);
   if (page < 1 || pageSize < 1 || pageSize > 100) throw new ApiContractError();
-  return { page, pageSize, totalCount: nonNegativeInteger(data.totalCount), items: data.items.map(finding) };
+  const auditId = uuid(data.auditId);
+  const documentVersionId = uuid(data.documentVersionId);
+  const items = data.items.map(finding);
+  if (items.some(item => item.auditId !== auditId)) throw new ApiContractError();
+  return { auditId, documentVersionId, page, pageSize, totalCount: nonNegativeInteger(data.totalCount), items };
 }
 
 export function parseAuditFindingDetail(value: unknown): AuditFindingDetail {
@@ -368,6 +375,7 @@ export function normalizeFindingFilters(input: URLSearchParams): FindingFilters 
     ...optionalBoundedFilter("domain", input.get("domain"), 128),
     ...optionalBoundedFilter("ruleCode", input.get("ruleCode"), 128),
     ...optionalBoundedFilter("validationKey", input.get("validationKey"), 256),
+    ...optionalBoundedFilter("search", input.get("search"), 128),
     page,
     pageSize,
   };
@@ -378,7 +386,7 @@ function enumValueOrUndefined<const T extends readonly string[]>(value: string |
   return allowed.find(candidate => candidate.toLowerCase() === value.trim().toLowerCase());
 }
 
-function optionalBoundedFilter(key: "domain" | "ruleCode" | "validationKey", value: string | null, max: number): Partial<FindingFilters> {
+function optionalBoundedFilter(key: "domain" | "ruleCode" | "validationKey" | "search", value: string | null, max: number): Partial<FindingFilters> {
   const normalized = value?.trim();
   return normalized && normalized.length <= max ? { [key]: normalized } : {};
 }
@@ -398,6 +406,7 @@ export function findingsQuery(filters: FindingFilters): string {
   if (filters.domain) query.set("domain", filters.domain);
   if (filters.ruleCode) query.set("ruleCode", filters.ruleCode);
   if (filters.validationKey) query.set("validationKey", filters.validationKey);
+  if (filters.search) query.set("search", filters.search);
   query.set("page", String(filters.page));
   query.set("pageSize", String(filters.pageSize));
   return query.toString();

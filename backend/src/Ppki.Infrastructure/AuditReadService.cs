@@ -204,10 +204,11 @@ public sealed class AuditReadService(
     {
         ArgumentNullException.ThrowIfNull(query);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var owned = await db.AuditJobs.AsNoTracking().AnyAsync(value =>
-            value.Id == auditId,
-            cancellationToken);
-        if (!owned) return null;
+        var documentVersionId = await db.AuditJobs.AsNoTracking()
+            .Where(value => value.Id == auditId)
+            .Select(value => (Guid?)value.DocumentVersionId)
+            .SingleOrDefaultAsync(cancellationToken);
+        if (documentVersionId is null) return null;
 
         var filtered = AuditReadQueries.DatabaseFindings(db, auditId, query);
         var totalCount = await filtered.CountAsync(cancellationToken);
@@ -247,7 +248,7 @@ public sealed class AuditReadService(
             rows.Select(value => value.DocumentVersionId).FirstOrDefault(), cancellationToken);
         var pageLocations = await PageLocationsAsync(db, render, rows, cancellationToken);
 
-        return new(query.Page, query.PageSize, totalCount,
+        return new(auditId, documentVersionId.Value, query.Page, query.PageSize, totalCount,
             rows.Select(row => ToListItem(row, automaticFindingIds,
                 pageLocations.GetValueOrDefault(row.Id, RenderFallback(render)))).ToArray());
     }
@@ -672,8 +673,20 @@ public static class AuditReadQueries
             values = values.Where(value => value.RuleCode == query.RuleCode);
         if (query.ValidationKey is not null)
             values = values.Where(value => value.ValidationKey == query.ValidationKey);
+        if (query.Search is not null)
+        {
+            var pattern = SearchPattern(query.Search);
+            values = values.Where(value =>
+                EF.Functions.ILike(value.RuleCode, pattern, "\\")
+                || EF.Functions.ILike(value.Element, pattern, "\\"));
+        }
         return values;
     }
+
+    internal static string SearchPattern(string value) =>
+        $"%{value.Replace("\\", "\\\\", StringComparison.Ordinal)
+            .Replace("%", "\\%", StringComparison.Ordinal)
+            .Replace("_", "\\_", StringComparison.Ordinal)}%";
 
     public static IOrderedQueryable<AuditFindingDatabaseRow> ApplyDatabaseOrdering(
         IQueryable<AuditFindingDatabaseRow> values) => values
@@ -772,6 +785,9 @@ public static class AuditReadQueries
             values = values.Where(value => value.RuleCode == query.RuleCode);
         if (query.ValidationKey is not null)
             values = values.Where(value => value.ValidationKey == query.ValidationKey);
+        if (query.Search is not null)
+            values = values.Where(value => value.RuleCode.Contains(query.Search, StringComparison.OrdinalIgnoreCase)
+                || value.Element.Contains(query.Search, StringComparison.OrdinalIgnoreCase));
         return values;
     }
 

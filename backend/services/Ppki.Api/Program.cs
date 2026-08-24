@@ -184,9 +184,9 @@ api.MapGet("/audits/{id:guid}", async (Guid id, ClaimsPrincipal user, IAuditRead
 
 api.MapGet("/audits/{id:guid}/findings", async (Guid id, ClaimsPrincipal user,
     IAuditReadService audits, string? severity, string? fixMode, string? disposition, bool? automaticallyResolved, string? domain,
-    string? ruleCode, string? validationKey, string? sort, int? page, int? pageSize,
+    string? ruleCode, string? validationKey, string? search, string? sort, int? page, int? pageSize,
     CancellationToken ct) => {
-    if(!AuditFindingQuery.TryCreate(severity,fixMode,disposition,automaticallyResolved,domain,ruleCode,validationKey,
+    if(!AuditFindingQuery.TryCreate(severity,fixMode,disposition,automaticallyResolved,domain,ruleCode,validationKey,search,
         sort,page,pageSize,out var query,out var errorCode))
         return Results.Problem(statusCode:StatusCodes.Status400BadRequest,
             title:"Invalid findings query.",extensions:new Dictionary<string,object?>{{"code",errorCode}});
