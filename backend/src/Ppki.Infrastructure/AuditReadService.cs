@@ -241,7 +241,8 @@ public sealed class AuditReadService(
                 value.PrintedPage,
                 value.SnapshotSchemaVersion,
                 value.ResolutionState,
-                value.ReviewState))
+                value.ReviewState,
+                value.WorkflowDisposition))
             .ToListAsync(cancellationToken);
         var automaticFindingIds = await AutomaticFindingIdsAsync(db, auditId, cancellationToken);
         var render = await RenderStateAsync(db,
@@ -284,6 +285,9 @@ public sealed class AuditReadService(
             row.LocationJson, row.Confidence, row.SourceSection, row.PdfPage, row.PrintedPage,
             row.SnapshotSchemaVersion) };
         var pageLocations = await PageLocationsAsync(db, render, detailRows, cancellationToken);
+        var resolutionState = FindingResolutionProjection.State(latestResolution);
+        var reviewState = FindingReviewProjection.State(latestReview);
+        var disposition = AuditFindingDispositionProjection.Resolve(row.FindingState, latestResolution, latestReview);
 
         return new(
             row.Id,
@@ -297,8 +301,9 @@ public sealed class AuditReadService(
             row.Severity.ToString(),
             row.FixMode.ToString(),
             row.FindingState.ToString(),
-            FindingResolutionProjection.State(latestResolution).ToString(),
-            FindingReviewProjection.State(latestReview).ToString(),
+            disposition.ToString(),
+            resolutionState.ToString(),
+            reviewState.ToString(),
             row.ReasonCode,
             row.ReasonCode,
             AuditFindingPresentation.Create(row.ActualJson, row.ExpectedJson),
@@ -325,6 +330,7 @@ public sealed class AuditReadService(
         row.Severity.ToString(),
         row.FixMode.ToString(),
         row.FindingState.ToString(),
+        row.Disposition.ToString(),
         row.ResolutionState,
         row.ReviewState,
         row.ReasonCode,
@@ -887,7 +893,8 @@ public sealed record AuditFindingReadRow(
     string? PrintedPage,
     int SnapshotSchemaVersion = 1,
     string ResolutionState = "Open",
-    string ReviewState = "NoReview");
+    string ReviewState = "NoReview",
+    AuditFindingDisposition Disposition = AuditFindingDisposition.RequiresReview);
 
 public sealed class AuditFindingDatabaseRow
 {

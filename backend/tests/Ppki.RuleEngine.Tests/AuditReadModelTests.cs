@@ -267,6 +267,19 @@ public sealed class AuditReadModelTests
     }
 
     [Fact]
+    public void Finding_detail_contract_exposes_authoritative_workflow_disposition()
+    {
+        Assert.Equal(typeof(string), typeof(AuditFindingDetailDto).GetProperty("Disposition")!.PropertyType);
+        Assert.Equal(typeof(string), typeof(AuditFindingListItemDto).GetProperty("Disposition")!.PropertyType);
+        Assert.Equal(AuditFindingDisposition.Resolved,
+            AuditFindingDispositionProjection.Resolve(FindingStatus.Open,
+                FindingResolutionEventType.VerificationResolvedObserved, null));
+        Assert.Equal(AuditFindingDisposition.Ignored,
+            AuditFindingDispositionProjection.Resolve(FindingStatus.Open, null,
+                FindingReviewEventType.AcceptedRisk));
+    }
+
+    [Fact]
     public void Findings_search_is_bounded_and_matches_only_safe_rule_metadata()
     {
         var rows = new[]

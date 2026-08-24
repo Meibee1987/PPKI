@@ -26,7 +26,7 @@ const summary = {
 
 const finding = {
   id: findingId, auditId, ruleOrdinal: 1, ruleCode: "PPKI-LAYOUT-001", domain: "Layout", validationKey: "page.size",
-  element: "Page", severity: "Error", fixMode: "Manual", findingState: "Open", reasonCode: "page-size-invalid",
+  element: "Page", severity: "Error", fixMode: "Manual", findingState: "Open", disposition: "RequiresReview", reasonCode: "page-size-invalid",
   resolutionState: "Open", reviewState: "NoReview",
   presentation: { kind: "Unavailable", propertyLabel: "Persyaratan dokumen", problem: "Temuan ini memerlukan pemeriksaan pada dokumen.", beforeLabel: "Sebelum", beforeValue: null, expectedLabel: "Diharapkan", expectedValue: null, evidenceState: "Unavailable" },
   message: "page-size-invalid", actual: { Property: "width", RawValue: "200" }, expected: { Property: "width", AcceptedValues: ["210"] },
@@ -196,6 +196,13 @@ test("finding wire shape excludes raw transport and sensitive top-level fields",
 test("parses finding detail snapshot fields", () => {
   const parsed = parseAuditFindingDetail({ ...finding, documentVersionId: versionId });
   assert.equal(parsed.validationKey, "page.size"); assert.equal(parsed.actionAvailability, "None");
+  assert.equal(parsed.findingState, "Open"); assert.equal(parsed.disposition, "RequiresReview");
+  assert.equal(parsed.resolutionState, "Open"); assert.equal(parsed.reviewState, "NoReview");
+});
+
+test("rejects untyped finding workflow state or disposition", () => {
+  for (const change of [{ findingState: "Unknown" }, { disposition: "Blocked" }, { resolutionState: "Done" }, { reviewState: "Approved" }])
+    assert.throws(() => parseAuditFindingDetail({ ...finding, ...change, documentVersionId: versionId }), /kontrak/);
 });
 
 test("parses one bounded exact transient structural excerpt", () => {

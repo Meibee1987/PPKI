@@ -8,6 +8,9 @@ export const textCorrectionAnalysisStates = ["AwaitingAnalysis", "Pending", "Pro
 export const documentRenderStates = ["Pending", "Processing", "Completed", "Failed"] as const;
 export const pageLocationConfidences = ["Exact", "Estimated", "Unavailable"] as const;
 export const findingDispositions = ["Resolved", "Ignored", "RequiresReview"] as const;
+export const findingStates = ["Open", "Fixed", "Ignored", "ManualReview"] as const;
+export const findingResolutionStates = ["Open", "Applied", "ReauditPending", "VerifiedResolved", "VerifiedStillDetected"] as const;
+export const findingReviewStates = ["NoReview", "PendingReview", "NeedsRevision", "ManualRemediationApproved", "ManualRemediationReported", "Rejected", "Ignored", "AcceptedRisk"] as const;
 export const reviewReadinessStates = ["AuditInProgress", "NeedsFix", "ReadyForReview", "Unknown"] as const;
 export const reviewReadinessReasons = ["AuditFailed", "AuditCancelled", "PolicyUnknown", "NoApplicableRules"] as const;
 
@@ -21,6 +24,9 @@ export type TextCorrectionAnalysisState = (typeof textCorrectionAnalysisStates)[
 export type DocumentRenderState = (typeof documentRenderStates)[number];
 export type PageLocationConfidence = (typeof pageLocationConfidences)[number];
 export type FindingDisposition = (typeof findingDispositions)[number];
+export type FindingState = (typeof findingStates)[number];
+export type FindingResolutionState = (typeof findingResolutionStates)[number];
+export type FindingReviewState = (typeof findingReviewStates)[number];
 export type ReviewReadinessState = (typeof reviewReadinessStates)[number];
 export type ReviewReadinessReason = (typeof reviewReadinessReasons)[number];
 export type JsonValue = null | boolean | number | string | JsonValue[] | { [key: string]: JsonValue };
@@ -45,9 +51,10 @@ export type AuditFinding = {
   element: string;
   severity: Severity;
   fixMode: FixMode;
-  findingState: string;
-  resolutionState: string;
-  reviewState: string;
+  findingState: FindingState;
+  disposition: FindingDisposition;
+  resolutionState: FindingResolutionState;
+  reviewState: FindingReviewState;
   reasonCode: string;
   message: string;
   presentation: {
@@ -236,7 +243,8 @@ function finding(value: unknown): AuditFinding {
     element: string(data.element),
     severity: enumValue(data.severity, severities),
     fixMode: enumValue(data.fixMode, fixModes),
-    findingState: string(data.findingState), resolutionState: string(data.resolutionState), reviewState: string(data.reviewState),
+    findingState: enumValue(data.findingState, findingStates), disposition: enumValue(data.disposition, findingDispositions),
+    resolutionState: enumValue(data.resolutionState, findingResolutionStates), reviewState: enumValue(data.reviewState, findingReviewStates),
     reasonCode: string(data.reasonCode),
     message: string(data.message),
     presentation: {

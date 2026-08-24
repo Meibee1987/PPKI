@@ -1,8 +1,7 @@
 "use client";
 
-import Link from "next/link";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { FormEvent, useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ApiRequestError, isApiRequestAborted } from "../lib/api";
 import { listAuditFindings } from "../lib/audit-api";
 import { findingDispositions, findingsQuery, fixModes, normalizeFindingFilters, severities, type AuditFindingPage, type AuditSummary, type FindingDisposition, type FindingFilters, type FixMode, type Severity } from "../lib/audit-contract";
@@ -10,6 +9,7 @@ import type { CanonicalAuditIdentity } from "../lib/canonical-audit-identity";
 import { assertCanonicalFindingPage, createLatestFindingRequestGuard, findingRequestKey, hasFindingQuery } from "../lib/finding-list-model";
 import { pageRange } from "../lib/findings-presentation";
 import { DocumentPageLocation } from "./document-page-location";
+import { FindingDetailDrawer } from "./finding-detail-drawer";
 import { FindingLocation } from "./finding-location";
 
 type FindingFilterDraft = {
@@ -31,7 +31,9 @@ export function AuditFindingList({ identity, summary }: { identity: CanonicalAud
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [reload, setReload] = useState(0);
+  const [selectedFindingId, setSelectedFindingId] = useState<string>();
   const requests = useRef(createLatestFindingRequestGuard());
+  const closeDetail = useCallback(() => setSelectedFindingId(undefined), []);
 
   useEffect(() => setDraft(draftFrom(filters)), [filters]);
 
@@ -43,7 +45,10 @@ export function AuditFindingList({ identity, summary }: { identity: CanonicalAud
     listAuditFindings(identity.auditId, filters, controller.signal)
       .then(value => assertCanonicalFindingPage(identity, value))
       .then(value => {
-        if (requests.current.isCurrent(token)) setLoaded({ page: value, filters });
+        if (requests.current.isCurrent(token)) {
+          setLoaded({ page: value, filters });
+          setSelectedFindingId(selected => selected && value.items.some(item => item.id === selected) ? selected : undefined);
+        }
       })
       .catch(value => {
         if (requests.current.isCurrent(token) && !isApiRequestAborted(value))
@@ -92,11 +97,12 @@ export function AuditFindingList({ identity, summary }: { identity: CanonicalAud
     {loading && !visible && <div className="finding-list-state" role="status">Memuat halaman pertama temuan...</div>}
     {loading && visible && <p className="muted finding-refresh" role="status">Memperbarui daftar temuan; hasil sebelumnya tetap ditampilkan...</p>}
     {error && <div className="error-box" role="alert"><p>{error}</p><button className="text-button" type="button" onClick={() => setReload(value => value + 1)}>Coba lagi</button></div>}
-    {visible && <FindingPageView identity={identity} summary={summary} filters={visible.filters} page={visible.page} navigate={navigate} />}
+    {visible && <FindingPageView summary={summary} filters={visible.filters} page={visible.page} navigate={navigate} selectFinding={setSelectedFindingId} />}
+    {visible && selectedFindingId && <FindingDetailDrawer identity={identity} findingId={selectedFindingId} pageFindingIds={visible.page.items.map(item => item.id)} onSelect={setSelectedFindingId} onClose={closeDetail} />}
   </section>;
 }
 
-function FindingPageView({ identity, summary, filters, page, navigate }: { identity: CanonicalAuditIdentity; summary: AuditSummary; filters: FindingFilters; page: AuditFindingPage; navigate: (filters: FindingFilters) => void }) {
+function FindingPageView({ summary, filters, page, navigate, selectFinding }: { summary: AuditSummary; filters: FindingFilters; page: AuditFindingPage; navigate: (filters: FindingFilters) => void; selectFinding: (findingId: string) => void }) {
   const range = pageRange(page.page, page.pageSize, page.totalCount);
   if (summary.findingCount === 0)
     return <div className="finding-list-state empty-state"><h3>Audit ini tidak memiliki temuan</h3><p>Audit selesai tanpa temuan yang tersimpan.</p></div>;
@@ -104,14 +110,13 @@ function FindingPageView({ identity, summary, filters, page, navigate }: { ident
     return <div className="finding-list-state empty-state"><h3>Tidak ada temuan yang cocok</h3><p>Ubah pencarian atau filter untuk melihat hasil lain. Ringkasan audit tetap menunjukkan seluruh temuan.</p></div>;
   if (page.items.length === 0)
     return <div className="finding-list-state empty-state"><h3>Halaman tidak tersedia</h3><p>Jumlah halaman berubah setelah filter diterapkan.</p><button className="button secondary" type="button" onClick={() => navigate({ ...filters, page: 1 })}>Kembali ke halaman pertama</button></div>;
-  const detailQuery = findingsQuery(filters);
   return <>
     <p className="finding-range" aria-live="polite">Menampilkan {range.start}–{range.end} dari {page.totalCount} hasil{hasFindingQuery(filters) ? " yang cocok" : ""}.</p>
     <ol className="finding-log-list" start={range.start}>{page.items.map(item => <li key={item.id}><article>
       <header><div><span className={`severity severity-${item.severity.toLowerCase()}`}>{item.severity}</span><strong>{item.ruleCode}</strong><span className="domain-label">{item.domain}</span></div><DocumentPageLocation versionId={page.documentVersionId} value={item.pageLocation} /></header>
       <h3>{item.presentation.propertyLabel}</h3><p>{item.presentation.problem}</p>
       <dl><div><dt>Elemen</dt><dd>{item.element}</dd></div><div><dt>Mode perbaikan</dt><dd>{item.fixMode}</dd></div><div><dt>Lokasi</dt><dd><FindingLocation value={item.location} /></dd></div></dl>
-      <Link className="button secondary" href={`/audits/${encodeURIComponent(identity.auditId)}/findings/${encodeURIComponent(item.id)}?${detailQuery}`}>Lihat detail</Link>
+      <button className="button secondary" type="button" aria-label={`Lihat detail ${item.ruleCode}`} onClick={() => selectFinding(item.id)}>Lihat detail</button>
     </article></li>)}</ol>
     <nav className="pagination" aria-label="Navigasi halaman daftar temuan"><button className="button secondary" type="button" aria-label="Halaman temuan sebelumnya" disabled={page.page <= 1} onClick={() => navigate({ ...filters, page: page.page - 1 })}>Sebelumnya</button><span>Halaman {page.page} dari {range.totalPages}</span><button className="button secondary" type="button" aria-label="Halaman temuan berikutnya" disabled={page.page >= range.totalPages} onClick={() => navigate({ ...filters, page: page.page + 1 })}>Berikutnya</button></nav>
   </>;
