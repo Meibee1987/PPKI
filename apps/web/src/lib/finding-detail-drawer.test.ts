@@ -4,6 +4,7 @@ import test from "node:test";
 
 const read = (relative: string) => readFileSync(new URL(relative, import.meta.url), "utf8");
 const drawer = read("../components/finding-detail-drawer.tsx");
+const sourceReference = read("../components/source-reference.tsx");
 const list = read("../components/audit-finding-list.tsx");
 const contract = read("./audit-contract.ts");
 const api = read("./api.ts");
@@ -51,7 +52,7 @@ test("location and page presentation use authoritative components without fabric
 
 test("missing evidence, confidence, source, and excerpt render safe unavailable states", () => {
   for (const copy of ["Nilai aman tidak tersedia", "Tidak tersedia", "Referensi sumber tidak tersedia", "Cuplikan dokumen tidak tersedia"])
-    assert.match(drawer, new RegExp(copy));
+    assert.match(drawer + sourceReference, new RegExp(copy));
 });
 
 test("closing detail preserves filter, search, page, and list results", () => {
@@ -103,9 +104,10 @@ test("excerpt is bound to selected finding and document version and kept only in
 });
 
 test("source section, PDF page, and printed page are shown only when present", () => {
-  assert.match(drawer, /source\.sourceSection/);
-  assert.match(drawer, /source\.pdfPage !== null/);
-  assert.match(drawer, /source\.printedPage/);
+  assert.match(drawer, /<SourceReference source=\{detail\.source\}/);
+  assert.match(sourceReference, /reference\.sourceSection !== null/);
+  assert.match(sourceReference, /reference\.pdfPage !== null/);
+  assert.match(sourceReference, /reference\.printedPage !== null/);
 });
 
 test("automatic capability is backend-owned and never derived from severity", () => {
@@ -118,9 +120,9 @@ test("opening detail does not alter bounded pagination or S6-T03 summary readine
   assert.doesNotMatch(drawer, /setSummary|blockingFindingCount|readinessState|pageSize:\s*(?:1000|summary)/);
 });
 
-test("drawer keeps review commands isolated and introduces no S6-T07 navigation", () => {
+test("drawer keeps review commands isolated and source metadata introduces no mutation", () => {
   assert.match(drawer, /<FindingReviewActions/);
-  assert.doesNotMatch(drawer, /requestFindingReview|method:\s*["'](?:POST|PUT|PATCH|DELETE)|source.*(?:href|router\.push)/i);
+  assert.doesNotMatch(sourceReference, /requestFindingReview|method:\s*["'](?:POST|PUT|PATCH|DELETE)|href|router\.push/i);
 });
 
 test("dialog has accessible heading, named close, Escape handling, and focus trap", () => {

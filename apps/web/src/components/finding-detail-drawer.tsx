@@ -10,6 +10,7 @@ import { createLatestFindingRequestGuard } from "../lib/finding-list-model";
 import { DocumentPageLocation } from "./document-page-location";
 import { FindingLocation } from "./finding-location";
 import { FindingReviewActions } from "./finding-review-actions";
+import { SourceReference } from "./source-reference";
 
 type ExcerptView = { state: "Idle" | "Loading" | "Exact" | "Unavailable" | "Failed"; value?: StructuralFindingExcerpt };
 
@@ -104,7 +105,7 @@ function FindingDetailContent({ identity, detail, excerpt, loadExcerpt, onReview
     <div className="drawer-comparison"><EvidenceValue title="Aktual (Actual)" label={detail.presentation.beforeLabel} value={detail.presentation.beforeValue} /><EvidenceValue title="Diharapkan (Expected)" label={detail.presentation.expectedLabel} value={detail.presentation.expectedValue} /></div>
     {detail.presentation.evidenceState !== "Complete" && <p className="muted">Bukti aman {detail.presentation.evidenceState === "Partial" ? "tersedia sebagian" : "tidak tersedia"}; nilai tidak diperkirakan atau dibuat.</p>}
     <section aria-labelledby="drawer-location-title"><h3 id="drawer-location-title">Lokasi dokumen</h3><div className="drawer-location"><FindingLocation value={detail.location} /><DocumentPageLocation versionId={detail.documentVersionId} value={detail.pageLocation} /></div><ExcerptPanel excerpt={excerpt} loadExcerpt={loadExcerpt} /></section>
-    <section aria-labelledby="drawer-source-title"><h3 id="drawer-source-title">Referensi sumber</h3><p>{sourceLabel(detail.source)}</p></section>
+    <SourceReference source={detail.source} severity={detail.severity} fixMode={detail.fixMode} />
     <FindingReviewActions key={detail.id} identity={identity} findingId={detail.id} onChanged={onReviewChanged} />
   </div>;
 }
@@ -119,11 +120,6 @@ function ExcerptPanel({ excerpt, loadExcerpt }: { excerpt: ExcerptView; loadExce
   if (excerpt.state === "Failed") return <div className="context-state" role="status">Bagian dokumen tidak dapat dimuat.</div>;
   if (excerpt.state !== "Exact" || !excerpt.value?.excerpt) return <div className="context-state" role="status">Cuplikan dokumen tidak tersedia.</div>;
   return <div className="structural-excerpt"><small>{excerpt.value.targetType === "Heading" ? "Teks pada dokumen" : excerpt.value.targetType === "Section" ? "Cuplikan bagian dokumen" : "Cuplikan paragraf"}</small><blockquote>{excerpt.value.excerpt}</blockquote></div>;
-}
-
-function sourceLabel(source: AuditFindingDetail["source"]): string {
-  const parts = [source.sourceSection, source.pdfPage !== null ? `PDF halaman ${source.pdfPage}` : null, source.printedPage ? `halaman cetak ${source.printedPage}` : null].filter(Boolean);
-  return parts.length ? parts.join(" · ") : "Referensi sumber tidak tersedia.";
 }
 
 function findingStateLabel(value: FindingState): string { return value === "Open" ? "Terbuka" : value === "Fixed" ? "Diperbaiki" : value === "Ignored" ? "Diabaikan" : "Perlu review manual"; }
