@@ -402,6 +402,48 @@ public sealed class FixPlanItemRecord : Entity
     };
 }
 
+public sealed class FixPlanApprovalSnapshotRecord : Entity
+{
+    private FixPlanApprovalSnapshotRecord() { }
+
+    public Guid FixPlanId { get; private set; }
+    public FixPlanRecord? FixPlan { get; private set; }
+    public string SchemaVersion { get; private set; } = string.Empty;
+    public string PlanHash { get; private set; } = string.Empty;
+    public string ApprovalRequestHash { get; private set; } = string.Empty;
+    public string SourceVersionSha256 { get; private set; } = string.Empty;
+    public string SnapshotJson { get; private set; } = string.Empty;
+    public Guid ApprovedByUserId { get; private set; }
+    public DateTimeOffset ApprovedAt { get; private set; }
+
+    public static FixPlanApprovalSnapshotRecord Create(Guid fixPlanId, string schemaVersion,
+        string planHash, string approvalRequestHash, string sourceVersionSha256,
+        string snapshotJson, Guid approvedByUserId, DateTimeOffset approvedAt)
+    {
+        if (fixPlanId == Guid.Empty || approvedByUserId == Guid.Empty)
+            throw new ArgumentException("Fix plan approval identity is required.");
+        if (string.IsNullOrWhiteSpace(schemaVersion) || !ValidSha(planHash)
+            || !ValidSha(approvalRequestHash) || !ValidSha(sourceVersionSha256)
+            || string.IsNullOrWhiteSpace(snapshotJson))
+            throw new ArgumentException("Fix plan approval snapshot is invalid.");
+        return new()
+        {
+            FixPlanId = fixPlanId,
+            SchemaVersion = schemaVersion,
+            PlanHash = planHash,
+            ApprovalRequestHash = approvalRequestHash,
+            SourceVersionSha256 = sourceVersionSha256,
+            SnapshotJson = snapshotJson,
+            ApprovedByUserId = approvedByUserId,
+            ApprovedAt = approvedAt,
+            CreatedAt = approvedAt
+        };
+    }
+
+    private static bool ValidSha(string value) => value is { Length: 64 }
+        && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+}
+
 public sealed class FixExecutionJob : Entity
 {
     public Guid AuditJobId { get; set; }

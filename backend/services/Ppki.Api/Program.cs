@@ -36,7 +36,11 @@ builder.Services.AddScoped<IFixPlanSourceReader, FixPlanSourceReader>();
 builder.Services.AddScoped<IFixPlanPreviewService, FixPlanPreviewService>();
 builder.Services.AddScoped<IFixPlanDraftRepository, FixPlanDraftRepository>();
 builder.Services.AddScoped<IFixPlanDraftService, FixPlanDraftService>();
-builder.Services.AddScoped<IFixPlanDraftPreviewService, FixPlanDraftPreviewService>();
+builder.Services.AddScoped<FixPlanDraftPreviewService>();
+builder.Services.AddScoped<IFixPlanDraftPreviewService>(provider => provider.GetRequiredService<FixPlanDraftPreviewService>());
+builder.Services.AddScoped<IFixPlanApprovalPreviewBuilder>(provider => provider.GetRequiredService<FixPlanDraftPreviewService>());
+builder.Services.AddScoped<IFixPlanApprovalRepository, FixPlanApprovalRepository>();
+builder.Services.AddScoped<IFixPlanApprovalService, FixPlanApprovalService>();
 builder.Services.AddSingleton<IFixPlanConflictAnalyzer, DeterministicFixPlanConflictAnalyzer>();
 builder.Services.AddScoped<IFixExecutionRepository, FixExecutionRepository>();
 builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();
@@ -272,6 +276,31 @@ api.MapGet("/audits/{id:guid}/fix-plans/{planId:guid}/preview", async (Guid id, 
 }).WithName("PreviewAuditDraftFixPlan")
   .WithSummary("Explain the deterministic changes proposed by an owned draft fix plan.")
   .Produces<FixPlanDraftPreviewDto>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status409Conflict)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapPost("/audits/{id:guid}/fix-plans/{planId:guid}/approval", async (Guid id, Guid planId,
+    ClaimsPrincipal user, FixPlanApprovalRequest? request, IFixPlanApprovalService approvals,
+    CancellationToken ct) => {
+    if(request is null)
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid fix plan approval request.",
+            extensions:new Dictionary<string,object?>{{"code","fix-plan-approval-request-invalid"}});
+    var ids=new List<Guid>();
+    foreach(var value in request.ApprovedConfirmItemIds??[]) {
+        if(!Guid.TryParse(value,out var parsed)||parsed==Guid.Empty||ids.Contains(parsed))
+            return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid fix plan approval request.",
+                extensions:new Dictionary<string,object?>{{"code","fix-plan-confirm-approval-invalid"}});
+        ids.Add(parsed);
+    }
+    try {
+        var result=await approvals.ApproveAsync(id,planId,UserId(user),ids,ct);
+        return result is null?Results.NotFound():Results.Ok(result);
+    } catch(FixPlanApprovalException exception) { return FixPlanApprovalProblem(exception); }
+}).WithName("ApproveAuditFixPlan")
+  .WithSummary("Explicitly approve an owned ready fix plan and freeze its immutable snapshot.")
+  .Accepts<FixPlanApprovalRequest>("application/json")
+  .Produces<FixPlanApprovalDto>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
   .ProducesProblem(StatusCodes.Status409Conflict)
   .Produces(StatusCodes.Status404NotFound);
 
@@ -662,6 +691,15 @@ static IResult FixPlanDraftProblem(FixPlanDraftException exception) {
     return Results.Problem(statusCode:badRequest?StatusCodes.Status400BadRequest:StatusCodes.Status409Conflict,
         title:badRequest?"Invalid draft fix plan request.":"Draft fix plan request conflicts with authoritative state.",
         extensions:extensions);
+}
+
+static IResult FixPlanApprovalProblem(FixPlanApprovalException exception) {
+    var badRequest=exception.DiagnosticCode is "fix-plan-approval-identity-invalid"
+        or "fix-plan-approval-request-invalid" or "fix-plan-confirm-approval-invalid"
+        or "fix-plan-confirm-approval-required";
+    return Results.Problem(statusCode:badRequest?StatusCodes.Status400BadRequest:StatusCodes.Status409Conflict,
+        title:badRequest?"Invalid fix plan approval request.":"Fix plan approval conflicts with authoritative state.",
+        extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
 }
 
 static IResult TextCorrectionProblem(TextCorrectionException exception) {

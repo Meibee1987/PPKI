@@ -30,6 +30,7 @@ public static class AuditActions
     public const string AuditCompleted = "audit.completed";
     public const string AuditFailed = "audit.failed";
     public const string AuditCancelled = "audit.cancelled";
+    public const string FixPlanApproved = "fix_plan.approved";
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -44,7 +45,8 @@ public static class AuditActions
         AuditRuleSnapshotCreated,
         AuditCompleted,
         AuditFailed,
-        AuditCancelled
+        AuditCancelled,
+        FixPlanApproved
     };
 }
 
@@ -56,6 +58,7 @@ public static class AuditResourceTypes
     public const string AuditRuleSnapshot = "audit_rule_snapshot";
     public const string AuditFinding = "audit_finding";
     public const string StorageObject = "storage_object";
+    public const string FixPlan = "fix_plan";
 
     public static readonly IReadOnlySet<string> All = new HashSet<string>(StringComparer.Ordinal)
     {
@@ -64,7 +67,8 @@ public static class AuditResourceTypes
         AuditJob,
         AuditRuleSnapshot,
         AuditFinding,
-        StorageObject
+        StorageObject,
+        FixPlan
     };
 }
 
@@ -82,7 +86,10 @@ public sealed class AuditEventMetadata
         "mime_type",
         "failure_category",
         "cleanup_reason",
-        "download_kind"
+        "download_kind",
+        "plan_hash",
+        "snapshot_schema_version",
+        "item_count"
     };
 
     private AuditEventMetadata(string json) => Json = json;

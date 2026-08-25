@@ -80,7 +80,8 @@ public static class FixPlanSourceQueries
             finding.ActualValueJson,
             finding.ExpectedValueJson,
             finding.LocationJson,
-            snapshot.SnapshotSchemaVersion);
+            snapshot.SnapshotSchemaVersion,
+            snapshot.SourceReferenceJson);
 }
 
 public sealed record FixPlanAuditSourceRow(

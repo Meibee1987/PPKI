@@ -106,7 +106,8 @@ public sealed record FixPlanFindingSnapshot(
     string ActualJson,
     string ExpectedJson,
     string LocationJson,
-    int SnapshotSchemaVersion);
+    int SnapshotSchemaVersion,
+    string? SourceReferenceJson = null);
 
 public sealed record FixPlanItem(
     Guid FindingId,

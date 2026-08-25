@@ -371,7 +371,7 @@ public sealed class FixPlanDraftServiceTests
 public sealed class FixPlanDraftApiArchitectureTests
 {
     [Fact]
-    public void Api_exposes_only_create_get_update_delete_draft_routes_with_safe_problem_details()
+    public void Api_exposes_draft_routes_and_the_separate_explicit_approval_command()
     {
         var api = Source("backend", "services", "Ppki.Api", "Program.cs");
 
@@ -383,7 +383,8 @@ public sealed class FixPlanDraftApiArchitectureTests
         Assert.Contains("StatusCodes.Status400BadRequest", api, StringComparison.Ordinal);
         Assert.Contains("exception.DiagnosticCode", api, StringComparison.Ordinal);
         Assert.DoesNotContain("exception.Message", api, StringComparison.Ordinal);
-        Assert.DoesNotContain("ApproveAuditFixPlan", api, StringComparison.Ordinal);
+        Assert.Contains("ApproveAuditFixPlan", api, StringComparison.Ordinal);
+        Assert.Contains("FixPlanApprovalProblem", api, StringComparison.Ordinal);
     }
 
     [Fact]

@@ -159,7 +159,7 @@ public sealed class FixPlanDraftRepository(
         }
     }
 
-    private static async Task<FixPlanDraftSource?> LoadSourceAsync(
+    internal static async Task<FixPlanDraftSource?> LoadSourceAsync(
         PpkiDbContext db,
         Guid auditId,
         IReadOnlyList<Guid> findingIds,
@@ -204,7 +204,7 @@ public sealed class FixPlanDraftRepository(
                 finding.Id, snapshot.Ordinal, snapshot.RuleCode, snapshot.Domain, snapshot.Element,
                 snapshot.ValidationKey, snapshot.Severity, snapshot.FixMode, finding.Status,
                 finding.ActualValueJson, finding.ExpectedValueJson, finding.LocationJson,
-                snapshot.SnapshotSchemaVersion),
+                snapshot.SnapshotSchemaVersion, snapshot.SourceReferenceJson),
                 FindingResolutionProjection.State(resolution?.EventType),
                 FindingReviewProjection.State(review?.EventType));
         }).OrderBy(value => value.Snapshot.RuleOrdinal).ThenBy(value => value.Finding.Id).ToArray();
@@ -232,7 +232,7 @@ public sealed class FixPlanDraftRepository(
             ? new(existing, true)
             : new(null, false, "fix-plan-idempotency-conflict");
 
-    private static Task<bool> SourceCurrentAsync(PpkiDbContext db, Guid sourceVersionId,
+    internal static Task<bool> SourceCurrentAsync(PpkiDbContext db, Guid sourceVersionId,
         CancellationToken cancellationToken) => db.DocumentVersions.AsNoTracking()
         .AnyAsync(value => value.Id == sourceVersionId
             && value.Document!.Status == DocumentStatus.Active

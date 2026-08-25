@@ -8,7 +8,7 @@ public sealed class FixPlanDraftPreviewService(
     IFixEligibilityService eligibility,
     IRemediationCapabilityRegistry previewCapabilities,
     FixApplyCapabilityRegistry applyCapabilities,
-    IFixPlanConflictAnalyzer? conflictAnalyzer = null) : IFixPlanDraftPreviewService
+    IFixPlanConflictAnalyzer? conflictAnalyzer = null) : IFixPlanDraftPreviewService, IFixPlanApprovalPreviewBuilder
 {
     public const string SchemaVersion = "fix-plan-draft-preview/1.0";
 
@@ -20,6 +20,11 @@ public sealed class FixPlanDraftPreviewService(
     {
         var aggregate = await repository.LoadOwnedAsync(auditId, planId, ownerUserId, cancellationToken);
         if (aggregate is null) return null;
+        return Build(aggregate, auditId).Preview;
+    }
+
+    public FixPlanApprovalEvaluation Build(FixPlanDraftAggregate aggregate, Guid auditId)
+    {
         ValidatePlan(aggregate, auditId);
 
         var sourceByFinding = aggregate.Source.Findings.ToDictionary(value => value.Finding.Id);
@@ -45,9 +50,26 @@ public sealed class FixPlanDraftPreviewService(
             FixPlanMutationAnalysisState.Stale => FixPlanDraftPreviewState.Stale,
             _ => state
         };
-        return new(SchemaVersion, aggregate.Plan.Id, auditId, aggregate.Plan.SourceDocumentVersionId,
+        var preview = new FixPlanDraftPreviewDto(SchemaVersion, aggregate.Plan.Id, auditId, aggregate.Plan.SourceDocumentVersionId,
             aggregate.Source.Audit.DocumentVersion!.Sha256, aggregate.Plan.State, state,
             items.Length, previewable, ineligible, unavailable, items, analysis);
+        var analysisByItem = analysis.Items.ToDictionary(value => value.ItemId);
+        var materials = outcomes.Where(value => value.Capability is not null && value.Operation is not null
+                && value.Change is not null && analysisByItem.ContainsKey(value.Item.ItemId))
+            .Select(value => new FixPlanApprovalItemMaterial(value.Item.ItemId, value.Finding.Snapshot,
+                value.Finding.Finding.Confidence, value.Finding.Finding.SourceSectionSnapshot,
+                value.Finding.Finding.PdfPageSnapshot, value.Finding.Finding.PrintedPageSnapshot,
+                value.Item.RequiresExplicitApproval,
+                value.Capability!.CapabilityId, value.Capability.CapabilityVersion,
+                new(value.Capability.OperationKind, value.Capability.CapabilityId,
+                    value.Capability.CapabilityVersion, value.Finding.Snapshot.RuleCode,
+                    value.Finding.Snapshot.ValidationKey, [value.Finding.Finding.Id], value.Operation!.Target,
+                    value.Operation.PropertyIdentifier, value.Operation.Expected,
+                    value.Finding.Snapshot.FixMode == FixMode.Confirm,
+                    analysisByItem[value.Item.ItemId].ExecutionOrdinal ?? 0,
+                    value.Operation.PreconditionCode, value.Operation.SummaryCode),
+                value.Item, value.Change!, analysisByItem[value.Item.ItemId])).ToArray();
+        return new(preview, materials);
     }
 
     private PreviewOutcome PreviewItem(
@@ -112,7 +134,7 @@ public sealed class FixPlanDraftPreviewService(
             operation is null ? null : new(operation.Target.Scope, operation.Target.BodyElementIndex,
                 operation.Target.SectionIndex, operation.Target.ParagraphIndex, operation.Target.RunIndex),
             change), new(sourceDocumentVersionId, item.Id, finding.Finding.Id, finding.Snapshot.FixMode,
-                state, reason, capability, operation));
+                state, reason, capability, operation), finding, capability, operation, change);
 
     private static void ValidatePlan(FixPlanDraftAggregate aggregate, Guid routeAuditId)
     {
@@ -144,5 +166,9 @@ public sealed class FixPlanDraftPreviewService(
 
     private sealed record PreviewOutcome(
         FixPlanDraftPreviewItemDto Item,
-        FixPlanMutationCandidate Candidate);
+        FixPlanMutationCandidate Candidate,
+        FixPlanDraftFindingSource Finding,
+        RemediationCapability? Capability,
+        FixOperationDraft? Operation,
+        FixPlanDraftBeforeAfterDto? Change);
 }

@@ -21,6 +21,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
     public DbSet<AuditFinding> AuditFindings => Set<AuditFinding>();
     public DbSet<FixPlanRecord> FixPlans => Set<FixPlanRecord>();
     public DbSet<FixPlanItemRecord> FixPlanItems => Set<FixPlanItemRecord>();
+    public DbSet<FixPlanApprovalSnapshotRecord> FixPlanApprovalSnapshots => Set<FixPlanApprovalSnapshotRecord>();
     public DbSet<FixExecutionJob> FixExecutionJobs => Set<FixExecutionJob>();
     public DbSet<AutomaticRemediationOrchestration> AutomaticRemediationOrchestrations => Set<AutomaticRemediationOrchestration>();
     public DbSet<FindingResolutionCase> FindingResolutionCases => Set<FindingResolutionCase>();
@@ -270,6 +271,24 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
                 .HasDatabaseName("uq_fix_plan_items_plan_finding");
             entity.HasIndex(x => x.FindingId).HasDatabaseName("ix_fix_plan_items_finding");
             entity.HasOne(x => x.Finding).WithMany().HasForeignKey(x => x.FindingId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<FixPlanApprovalSnapshotRecord>(entity =>
+        {
+            entity.ToTable("fix_plan_approval_snapshots");
+            Common(entity);
+            entity.Property(x => x.FixPlanId).HasColumnName("fix_plan_id").IsRequired();
+            entity.Property(x => x.SchemaVersion).HasColumnName("schema_version").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.PlanHash).HasColumnName("plan_hash").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.ApprovalRequestHash).HasColumnName("approval_request_hash").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.SourceVersionSha256).HasColumnName("source_version_sha256").HasMaxLength(64).IsRequired();
+            entity.Property(x => x.SnapshotJson).HasColumnName("snapshot").HasColumnType("jsonb").IsRequired();
+            entity.Property(x => x.ApprovedByUserId).HasColumnName("approved_by_user_id").IsRequired();
+            entity.Property(x => x.ApprovedAt).HasColumnName("approved_at").HasColumnType("timestamp with time zone").IsRequired();
+            entity.Property(x => x.CreatedAt).HasColumnType("timestamp with time zone");
+            entity.HasIndex(x => x.FixPlanId).IsUnique().HasDatabaseName("uq_fix_plan_approval_snapshots_plan");
+            entity.HasOne(x => x.FixPlan).WithOne().HasForeignKey<FixPlanApprovalSnapshotRecord>(x => x.FixPlanId)
+                .OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<DocumentRenderJob>(entity =>
@@ -718,6 +737,10 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
 
     private void ValidateFixPlanMutations()
     {
+        if (ChangeTracker.Entries<FixPlanApprovalSnapshotRecord>()
+            .Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Approved fix plan snapshots are append-only.");
+
         foreach (var entry in ChangeTracker.Entries<FixPlanRecord>())
         {
             if (entry.State == EntityState.Added)
