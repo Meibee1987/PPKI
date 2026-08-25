@@ -48,10 +48,11 @@ public sealed class FixExecutionProcessor(
         }
 
         string? materialized = null;
-        string? workspace = null;
+        FixExecutionWorkspace? workspace = null;
         string? existingResult = null;
         StoredFile? uploaded = null;
         var ownsUploadedObject = false;
+        Exception? operationFailure = null;
         try
         {
             await faults.CheckpointAsync(RemediationCheckpoint.BeforeSourceDownload, claim.ExecutionId,
@@ -63,13 +64,9 @@ public sealed class FixExecutionProcessor(
             var sourceInfo = new FileInfo(materialized);
             if (!sourceInfo.Exists || sourceInfo.Length is <= 0 or > MaximumBytes)
                 throw new FixExecutionException(FixFailureCategory.InvalidSource, "source-size-invalid");
-            if (!string.Equals(await Sha256Async(materialized, cancellationToken), source.SourceSha256, StringComparison.Ordinal))
-                throw new FixExecutionException("source-hash-mismatch");
-
-            workspace = Path.Combine(Path.GetTempPath(), $"ppki-fix-{Guid.NewGuid():N}");
-            Directory.CreateDirectory(workspace);
-            var working = Path.Combine(workspace, "working.docx");
-            File.Copy(materialized, working, false);
+            workspace = FixExecutionWorkspace.Create();
+            var working = await workspace.MaterializeAsync(
+                materialized, source.SourceSha256, cancellationToken);
             DocxPackageIntegritySnapshot packageSnapshot;
             ParsedDocument before;
             try
@@ -200,8 +197,29 @@ public sealed class FixExecutionProcessor(
             catch (DbUpdateException exception) when (UniqueViolation(exception))
             { throw new FixExecutionException(FixFailureCategory.Conflict, "fix-concurrent-publish-conflict", exception); }
         }
+        catch (Exception exception)
+        {
+            operationFailure = exception;
+            throw;
+        }
         finally
         {
+            var cleanupFailures = new List<(string Code, Exception Failure)>();
+            if (workspace is not null)
+            {
+                try { await workspace.DisposeAsync(); }
+                catch (Exception exception) { cleanupFailures.Add(("workspace-cleanup-failed", exception)); }
+            }
+            if (materialized is not null)
+            {
+                try { File.Delete(materialized); }
+                catch (Exception exception) { cleanupFailures.Add(("workspace-cleanup-failed", exception)); }
+            }
+            if (existingResult is not null)
+            {
+                try { File.Delete(existingResult); }
+                catch (Exception exception) { cleanupFailures.Add(("workspace-cleanup-failed", exception)); }
+            }
             if (uploaded is not null && ownsUploadedObject)
             {
                 try
@@ -213,12 +231,19 @@ public sealed class FixExecutionProcessor(
                         await storage.DeleteAsync(uploaded.StorageBucket, uploaded.StorageKey, CancellationToken.None);
                     }
                 }
-                catch (Exception exception)
-                { throw new FixExecutionException(FixFailureCategory.TerminalInfrastructure, "result-cleanup-failed", exception); }
+                catch (Exception exception) { cleanupFailures.Add(("result-cleanup-failed", exception)); }
             }
-            if (materialized is not null) try { File.Delete(materialized); } catch { }
-            if (existingResult is not null) try { File.Delete(existingResult); } catch { }
-            if (workspace is not null) try { Directory.Delete(workspace, true); } catch { }
+            if (cleanupFailures.Count > 0)
+            {
+                var code = cleanupFailures.Any(value => value.Code == "result-cleanup-failed")
+                    ? "result-cleanup-failed" : "workspace-cleanup-failed";
+                if (operationFailure is null)
+                    throw new FixExecutionException(FixFailureCategory.TerminalInfrastructure,
+                        code, cleanupFailures[0].Failure);
+                logger.LogError(
+                    "Fix execution cleanup failed; ExecutionId={ExecutionId}; Attempt={Attempt}; Code={Code}; FailureCount={FailureCount}.",
+                    claim.ExecutionId, claim.AttemptNumber, code, cleanupFailures.Count);
+            }
         }
     }
 

@@ -17,6 +17,7 @@ public static class FixFailureCatalog
             ["source-storage-object-missing"] = FixFailureCategory.InvalidSource,
             ["source-size-invalid"] = FixFailureCategory.InvalidSource,
             ["source-hash-mismatch"] = FixFailureCategory.InvalidSource,
+            ["fix-execution-clone-hash-mismatch"] = FixFailureCategory.InvalidSource,
             ["source-package-invalid"] = FixFailureCategory.InvalidSource,
             ["approved-plan-invalid"] = FixFailureCategory.InvalidPlan,
             ["approved-plan-hash-invalid"] = FixFailureCategory.InvalidPlan,
@@ -33,7 +34,9 @@ public static class FixFailureCatalog
             ["worker-interrupted"] = FixFailureCategory.TransientInfrastructure,
             ["storage-upload-terminal"] = FixFailureCategory.TerminalInfrastructure,
             ["database-finalization-terminal"] = FixFailureCategory.TerminalInfrastructure,
-            ["result-cleanup-failed"] = FixFailureCategory.TerminalInfrastructure
+            ["result-cleanup-failed"] = FixFailureCategory.TerminalInfrastructure,
+            ["workspace-cleanup-failed"] = FixFailureCategory.TerminalInfrastructure,
+            ["workspace-path-invalid"] = FixFailureCategory.TerminalInfrastructure
         };
 
     public static FixFailureCategory Classify(string code)
