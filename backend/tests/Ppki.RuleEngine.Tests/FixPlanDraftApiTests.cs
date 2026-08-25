@@ -93,6 +93,19 @@ public sealed class FixPlanDraftServiceTests
         Assert.Null(repository.Plan);
     }
 
+    [Fact]
+    public async Task Mixed_audit_or_missing_finding_is_rejected_without_partial_plan_or_items()
+    {
+        var repository = new FakeRepository(Source());
+
+        var result = await Service(repository).CreateAsync(Id(1), Id(9), Id(8), Selection(3, 4), default);
+
+        Assert.Null(result);
+        Assert.Null(repository.Plan);
+        Assert.Equal(0, repository.ExecutionsQueued);
+        Assert.Equal(0, repository.DocumentVersionsCreated);
+    }
+
     [Theory]
     [InlineData("fix-plan-source-version-unavailable")]
     [InlineData("fix-plan-source-version-superseded")]
@@ -165,6 +178,25 @@ public sealed class FixPlanDraftServiceTests
         repository.ReplayReplace = true;
         var replay = await service.UpdateAsync(Id(1), repository.Plan.Id, Id(9), Selection(4), default);
         Assert.True(replay!.Replayed);
+    }
+
+    [Theory]
+    [InlineData(FixMode.Manual, FixEligibilityReasonCode.ManualFixMode)]
+    [InlineData(FixMode.Report, FixEligibilityReasonCode.ReportFixMode)]
+    public async Task Update_cannot_introduce_manual_or_report_items(FixMode mode,
+        FixEligibilityReasonCode expectedReason)
+    {
+        var repository = new FakeRepository(Source());
+        var service = Service(repository);
+        await service.CreateAsync(Id(1), Id(9), Id(8), Selection(3), default);
+        repository.Source = Source(mode, findingId: 4);
+
+        var error = await Assert.ThrowsAsync<FixPlanDraftException>(() => service.UpdateAsync(
+            Id(1), repository.Plan!.Id, Id(9), Selection(4), default));
+
+        Assert.Equal("fix-plan-item-ineligible", error.DiagnosticCode);
+        Assert.Equal(expectedReason, error.EligibilityReason);
+        Assert.Equal(Id(3), Assert.Single(repository.Plan!.Items).FindingId);
     }
 
     [Fact]

@@ -201,6 +201,7 @@ async function main() {
     await executeSql(container, cleanupSql);
     for (const user of users) await deleteSyntheticUser(environment, user.email);
     createdUsers = await Promise.all(users.map((user) => createUser(environment, user)));
+    await executeSql(container, `update public.user_profiles set role='PPKIAdmin' where id in ('${createdUsers[0].id}','${createdUsers[1].id}');`);
     const [tokenA, tokenB] = await Promise.all(users.map((user) => signIn(environment, user)));
     await executeSql(container, sql(createdUsers[0].id, createdUsers[1].id));
     setupComplete = true;
@@ -220,8 +221,9 @@ async function main() {
         visibleIds(environment, tokenA, table, [idA, idB]),
         visibleIds(environment, tokenB, table, [idA, idB]),
       ]);
-      passed = report(`${table}-owner-a-isolated`, JSON.stringify(visibleA) === JSON.stringify([idA])) && passed;
-      passed = report(`${table}-owner-b-isolated`, JSON.stringify(visibleB) === JSON.stringify([idB])) && passed;
+      const shared = [idA, idB].sort();
+      passed = report(`${table}-shared-ppki-admin-a`, JSON.stringify(visibleA) === JSON.stringify(shared)) && passed;
+      passed = report(`${table}-shared-ppki-admin-b`, JSON.stringify(visibleB) === JSON.stringify(shared)) && passed;
     }
 
     const blockedDocumentInsert = await request(`${environment.API_URL}/rest/v1/documents`, {

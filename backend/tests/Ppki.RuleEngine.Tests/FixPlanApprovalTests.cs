@@ -2,6 +2,7 @@ using System.Text.Json;
 using Ppki.Application;
 using Ppki.Domain;
 using Ppki.FixEngine;
+using Ppki.RuleEngine.Tests.Fixtures;
 using Ppki.Worker;
 using Xunit;
 
@@ -49,6 +50,19 @@ public sealed class FixPlanApprovalTests
     }
 
     [Fact]
+    public async Task Another_owner_cannot_approve_or_discover_an_owned_plan()
+    {
+        var context = Context(FixMode.Auto);
+
+        var result = await context.Service.ApproveAsync(context.AuditId, context.Plan.Id,
+            Id(91), [], default);
+
+        Assert.Null(result);
+        Assert.Equal(FixPlanLifecycleState.Draft, context.Plan.State);
+        Assert.Equal(0, context.Queue.CallCount);
+    }
+
+    [Fact]
     public async Task Extra_or_duplicate_confirm_consent_is_rejected()
     {
         var extra = Context(FixMode.Confirm);
@@ -86,6 +100,27 @@ public sealed class FixPlanApprovalTests
         var error = await Assert.ThrowsAsync<FixPlanApprovalException>(() => context.Service.ApproveAsync(
             context.AuditId, context.Plan.Id, context.OwnerId, [], default));
         Assert.Equal("fix-plan-approval-preview-not-ready", error.DiagnosticCode);
+        Assert.Equal(FixPlanLifecycleState.Draft, context.Plan.State);
+        Assert.Equal(0, context.Queue.CallCount);
+    }
+
+    [Fact]
+    public async Task Stale_checksum_source_cannot_create_snapshot_or_queue_on_repeated_approval()
+    {
+        var context = Context(FixMode.Auto, previewState: FixPlanDraftPreviewState.Stale,
+            analysisState: FixPlanMutationAnalysisState.Stale,
+            analysisStatus: FixPlanMutationItemStatus.Stale);
+
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var error = await Assert.ThrowsAsync<FixPlanApprovalException>(() => context.Service.ApproveAsync(
+                context.AuditId, context.Plan.Id, context.OwnerId, [], default));
+            Assert.Equal("fix-plan-approval-preview-not-ready", error.DiagnosticCode);
+        }
+
+        Assert.Null(context.Repository.StoredSnapshot);
+        Assert.Equal(FixPlanLifecycleState.Draft, context.Plan.State);
+        Assert.Equal(0, context.Queue.CallCount);
     }
 
     [Theory]
@@ -100,6 +135,25 @@ public sealed class FixPlanApprovalTests
         var error = await Assert.ThrowsAsync<FixPlanApprovalException>(() => context.Service.ApproveAsync(
             context.AuditId, context.Plan.Id, context.OwnerId, [], default));
         Assert.Equal("fix-plan-approval-mutation-analysis-not-ready", error.DiagnosticCode);
+        Assert.Equal(FixPlanLifecycleState.Draft, context.Plan.State);
+        Assert.Equal(0, context.Queue.CallCount);
+    }
+
+    [Fact]
+    public async Task Confirm_consent_is_frozen_and_retry_cannot_change_the_approved_set()
+    {
+        var context = Context(FixMode.Confirm);
+        var itemId = Assert.Single(context.Plan.Items).Id;
+        await context.Service.ApproveAsync(context.AuditId, context.Plan.Id, context.OwnerId,
+            [itemId], default);
+        var frozen = context.Repository.StoredSnapshot!.SnapshotJson;
+
+        var error = await Assert.ThrowsAsync<FixPlanApprovalException>(() => context.Service.ApproveAsync(
+            context.AuditId, context.Plan.Id, context.OwnerId, [], default));
+
+        Assert.Equal("fix-plan-approval-conflict", error.DiagnosticCode);
+        Assert.Equal(frozen, context.Repository.StoredSnapshot!.SnapshotJson);
+        Assert.Contains("\"explicitlyApproved\":true", frozen, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -242,6 +296,56 @@ public sealed class FixPlanApprovalTests
     }
 
     [Fact]
+    public async Task Concurrent_equivalent_approval_creates_exactly_one_apply_job()
+    {
+        var context = Context(FixMode.Auto);
+        var approvals = new StubRepository(context.Aggregate, false, null);
+        var executions = new DeduplicatingExecutionRepository();
+        var service = new FixPlanApprovalService(approvals, context.Builder,
+            new FixPlanApprovalApplyQueue(executions, new FixedTimeProvider(Now.AddSeconds(1))),
+            new FixedTimeProvider(Now));
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 8).Select(_ => Task.Run(() =>
+            service.ApproveAsync(context.AuditId, context.Plan.Id, context.OwnerId, [], default))));
+
+        Assert.All(results, value => Assert.NotNull(value));
+        Assert.Single(results.Select(value => value!.ApplyJobId).Distinct());
+        Assert.Equal(1, executions.CreatedJobs);
+        Assert.Equal(8, executions.EnqueueRequests);
+    }
+
+    [Fact]
+    public async Task Approval_preserves_golden_docx_checksum_and_all_source_read_models()
+    {
+        await using var workspace = await DocxFixtureWorkspace.CreateAsync("minimal-invalid-layout");
+        var beforeBytes = await File.ReadAllBytesAsync(workspace.OriginalPath);
+        var beforeSha = await DocxFixtureWorkspace.ComputeSha256Async(workspace.OriginalPath);
+        var context = Context(FixMode.Auto);
+        var version = context.Aggregate.Source.Audit.DocumentVersion!;
+        var finding = Assert.Single(context.Aggregate.Source.Findings).Finding;
+        var versionCount = version.Document!.Versions.Count;
+        var sourceSha = version.Sha256;
+        var auditStatus = context.Aggregate.Source.Audit.Status;
+        var findingStatus = finding.Status;
+
+        var result = await context.Service.ApproveAsync(context.AuditId, context.Plan.Id,
+            context.OwnerId, [], default);
+
+        Assert.Equal("Queued", result!.ApplyJobState);
+        Assert.Equal(context.Plan.Id, result.PlanId);
+        Assert.Equal(context.AuditId, result.AuditId);
+        Assert.Equal(version.Id, result.SourceDocumentVersionId);
+        Assert.Equal(beforeSha, await DocxFixtureWorkspace.ComputeSha256Async(workspace.OriginalPath));
+        Assert.Equal(beforeBytes, await File.ReadAllBytesAsync(workspace.OriginalPath));
+        Assert.Equal(sourceSha, version.Sha256);
+        Assert.Equal(versionCount, version.Document.Versions.Count);
+        Assert.Equal(auditStatus, context.Aggregate.Source.Audit.Status);
+        Assert.Equal(findingStatus, finding.Status);
+        Assert.Equal(FindingResolutionState.Open, context.Aggregate.Source.Findings[0].ResolutionState);
+        Assert.Equal(FindingReviewState.NoReview, context.Aggregate.Source.Findings[0].ReviewState);
+    }
+
+    [Fact]
     public async Task Apply_queue_rejects_a_snapshot_whose_content_no_longer_matches_its_hash()
     {
         var context = Context(FixMode.Auto);
@@ -259,6 +363,27 @@ public sealed class FixPlanApprovalTests
             queue.EnqueueAsync(context.Plan, snapshot, default));
 
         Assert.Equal("fix-plan-approval-snapshot-hash-invalid", error.DiagnosticCode);
+    }
+
+    [Fact]
+    public async Task Apply_queue_accepts_approval_timestamp_after_postgres_microsecond_roundtrip()
+    {
+        var context = Context(FixMode.Auto);
+        var snapshotTime = Now.AddTicks(7);
+        var persistedTime = snapshotTime.AddTicks(-snapshotTime.Ticks % 10);
+        var prepared = FixPlanApprovalSnapshotSerializer.Create(context.Aggregate,
+            context.Builder.Build(context.Aggregate, context.AuditId), new HashSet<Guid>(),
+            context.OwnerId, snapshotTime);
+        context.Plan.Approve(context.OwnerId, persistedTime);
+        var snapshot = FixPlanApprovalSnapshotRecord.Create(context.Plan.Id, prepared.SchemaVersion,
+            prepared.PlanHash, prepared.ApprovalRequestHash, prepared.SourceVersionSha256,
+            prepared.SnapshotJson, context.OwnerId, persistedTime);
+        var executions = new CapturingExecutionRepository();
+        var queue = new FixPlanApprovalApplyQueue(executions, new FixedTimeProvider(Now));
+
+        var result = await queue.EnqueueAsync(context.Plan, snapshot, default);
+
+        Assert.NotNull(result.Job);
     }
 
     [Fact]
@@ -303,6 +428,8 @@ public sealed class FixPlanApprovalTests
         var service = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.FixEngine", "FixPlanApprovalService.cs"));
         var migration = File.ReadAllText(Path.Combine(root, "supabase", "migrations",
             "202608250003_fix_plan_approval_snapshots.sql"));
+        var auditMetadataMigration = File.ReadAllText(Path.Combine(root, "supabase", "migrations",
+            "202608250004_fix_plan_approval_audit_metadata.sql"));
 
         Assert.Contains("/approval", api, StringComparison.Ordinal);
         Assert.Contains("UserId(user)", api, StringComparison.Ordinal);
@@ -310,6 +437,9 @@ public sealed class FixPlanApprovalTests
         Assert.Contains("Approved fix plan snapshots are append-only", migration, StringComparison.Ordinal);
         Assert.Contains("enable row level security", migration, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("auth.uid()", migration, StringComparison.Ordinal);
+        Assert.Contains("ck_audit_trail_metadata_allowlist", auditMetadataMigration, StringComparison.Ordinal);
+        Assert.Contains("'plan_hash', 'snapshot_schema_version', 'item_count'", auditMetadataMigration,
+            StringComparison.Ordinal);
     }
 
     [Fact]
@@ -360,6 +490,7 @@ public sealed class FixPlanApprovalTests
             VersionNo = 1, StorageBucket = "originals", StorageKey = "safe", OriginalFilename = "safe.docx",
             MimeType = "application/vnd.openxmlformats-officedocument.wordprocessingml.document", SizeBytes = 1,
             Sha256 = new string('a', 64), CreatedByUserId = owner };
+        document.Versions.Add(version);
         var audit = new AuditJob { Id = auditId, DocumentVersionId = versionId, DocumentVersion = version,
             ProfileVersionId = Id(14), RequestedByUserId = owner, Status = AuditJobStatus.Completed,
             ResolvedRuleSetHash = new string('b', 64), DocumentKindSnapshot = DocumentKind.Skripsi };
@@ -379,7 +510,7 @@ public sealed class FixPlanApprovalTests
         var builder = new StubBuilder(previewState, analysisState, analysisStatus);
         var repository = new StubRepository(aggregate, replay, conflict);
         var queue = new StubApplyQueue(() => repository.ApprovalReturned);
-        return new(auditId, owner, plan, aggregate, builder, queue,
+        return new(auditId, owner, plan, aggregate, builder, repository, queue,
             new FixPlanApprovalService(repository, builder, queue, new FixedTimeProvider(Now)));
     }
 
@@ -429,25 +560,36 @@ public sealed class FixPlanApprovalTests
         : IFixPlanApprovalRepository
     {
         private FixPlanApprovalSnapshotRecord? storedSnapshot;
+        private readonly object sync = new();
+        public FixPlanApprovalSnapshotRecord? StoredSnapshot => storedSnapshot;
         public bool ApprovalReturned { get; private set; }
         public Task<FixPlanApprovalWriteResult> ApproveAsync(Guid auditId, Guid planId, Guid ownerUserId,
             string approvalRequestHash, DateTimeOffset now, Func<FixPlanDraftAggregate, FixPlanApprovalPrepared> prepare,
             CancellationToken cancellationToken)
         {
-            if (conflict is not null) return Task.FromResult(new FixPlanApprovalWriteResult(null, null, false, conflict));
-            if (storedSnapshot is not null)
-                return Task.FromResult(new FixPlanApprovalWriteResult(aggregate.Plan, storedSnapshot, true));
-            FixPlanApprovalPrepared prepared;
-            if (replay)
-                prepared = new(FixPlanApprovalSnapshotSerializer.SchemaVersion, new string('d', 64),
-                    approvalRequestHash, new string('a', 64), "{}", aggregate.Plan.Items.Count);
-            else prepared = prepare(aggregate);
-            if (aggregate.Plan.State == FixPlanLifecycleState.Draft) aggregate.Plan.Approve(ownerUserId, now);
-            var snapshot = FixPlanApprovalSnapshotRecord.Create(planId, prepared.SchemaVersion, prepared.PlanHash,
-                prepared.ApprovalRequestHash, prepared.SourceVersionSha256, prepared.SnapshotJson, ownerUserId, now);
-            storedSnapshot = snapshot;
-            ApprovalReturned = true;
-            return Task.FromResult(new FixPlanApprovalWriteResult(aggregate.Plan, snapshot, replay));
+            lock (sync)
+            {
+                if (aggregate.Plan.Id != planId || aggregate.Plan.SourceAuditJobId != auditId
+                    || aggregate.Plan.OwnerUserId != ownerUserId)
+                    return Task.FromResult(new FixPlanApprovalWriteResult(null, null, false));
+                if (conflict is not null) return Task.FromResult(new FixPlanApprovalWriteResult(null, null, false, conflict));
+                if (storedSnapshot is not null)
+                    return Task.FromResult(string.Equals(storedSnapshot.ApprovalRequestHash, approvalRequestHash,
+                        StringComparison.Ordinal)
+                        ? new FixPlanApprovalWriteResult(aggregate.Plan, storedSnapshot, true)
+                        : new FixPlanApprovalWriteResult(null, null, false, "fix-plan-approval-conflict"));
+                FixPlanApprovalPrepared prepared;
+                if (replay)
+                    prepared = new(FixPlanApprovalSnapshotSerializer.SchemaVersion, new string('d', 64),
+                        approvalRequestHash, new string('a', 64), "{}", aggregate.Plan.Items.Count);
+                else prepared = prepare(aggregate);
+                if (aggregate.Plan.State == FixPlanLifecycleState.Draft) aggregate.Plan.Approve(ownerUserId, now);
+                var snapshot = FixPlanApprovalSnapshotRecord.Create(planId, prepared.SchemaVersion, prepared.PlanHash,
+                    prepared.ApprovalRequestHash, prepared.SourceVersionSha256, prepared.SnapshotJson, ownerUserId, now);
+                storedSnapshot = snapshot;
+                ApprovalReturned = true;
+                return Task.FromResult(new FixPlanApprovalWriteResult(aggregate.Plan, snapshot, replay));
+            }
         }
     }
 
@@ -501,30 +643,34 @@ public sealed class FixPlanApprovalTests
     private sealed class DeduplicatingExecutionRepository : IFixExecutionRepository
     {
         private FixExecutionJob? job;
+        private readonly object sync = new();
         public int EnqueueRequests { get; private set; }
         public int CreatedJobs { get; private set; }
         public Task<FixExecutionEnqueueResult> EnqueueAsync(FixExecutionCandidate candidate,
             CancellationToken cancellationToken)
         {
-            EnqueueRequests++;
-            if (job is not null)
-                return Task.FromResult(job.SourceDocumentVersionId == candidate.SourceDocumentVersionId
-                    && job.PlanHash == candidate.PlanHash && job.IdempotencyKey == candidate.IdempotencyKey
-                    ? new FixExecutionEnqueueResult(job, true)
-                    : new FixExecutionEnqueueResult(null, false, "fix-execution-idempotency-conflict"));
-            CreatedJobs++;
-            job = new FixExecutionJob
+            lock (sync)
             {
-                Id = candidate.ExecutionId, AuditJobId = candidate.AuditJobId,
-                SourceDocumentVersionId = candidate.SourceDocumentVersionId,
-                RequestedByUserId = candidate.RequestedByUserId, IdempotencyKey = candidate.IdempotencyKey,
-                PlanHash = candidate.PlanHash, PlannerVersion = candidate.PlannerVersion,
-                SelectedFindingIdsJson = candidate.SelectedFindingIdsJson,
-                ApprovedPlanSnapshotJson = candidate.ApprovedPlanSnapshotJson,
-                PlannedOperationCount = candidate.PlannedOperationCount, State = FixExecutionState.Queued,
-                CreatedAt = candidate.CreatedAt
-            };
-            return Task.FromResult(new FixExecutionEnqueueResult(job, false));
+                EnqueueRequests++;
+                if (job is not null)
+                    return Task.FromResult(job.SourceDocumentVersionId == candidate.SourceDocumentVersionId
+                        && job.PlanHash == candidate.PlanHash && job.IdempotencyKey == candidate.IdempotencyKey
+                        ? new FixExecutionEnqueueResult(job, true)
+                        : new FixExecutionEnqueueResult(null, false, "fix-execution-idempotency-conflict"));
+                CreatedJobs++;
+                job = new FixExecutionJob
+                {
+                    Id = candidate.ExecutionId, AuditJobId = candidate.AuditJobId,
+                    SourceDocumentVersionId = candidate.SourceDocumentVersionId,
+                    RequestedByUserId = candidate.RequestedByUserId, IdempotencyKey = candidate.IdempotencyKey,
+                    PlanHash = candidate.PlanHash, PlannerVersion = candidate.PlannerVersion,
+                    SelectedFindingIdsJson = candidate.SelectedFindingIdsJson,
+                    ApprovedPlanSnapshotJson = candidate.ApprovedPlanSnapshotJson,
+                    PlannedOperationCount = candidate.PlannedOperationCount, State = FixExecutionState.Queued,
+                    CreatedAt = candidate.CreatedAt
+                };
+                return Task.FromResult(new FixExecutionEnqueueResult(job, false));
+            }
         }
         public Task<FixExecutionJob?> GetOwnedAsync(Guid executionId, Guid ownerUserId,
             CancellationToken cancellationToken) => Task.FromResult(job?.Id == executionId ? job : null);
@@ -574,7 +720,7 @@ public sealed class FixPlanApprovalTests
     }
 
     private sealed record TestContext(Guid AuditId, Guid OwnerId, FixPlanRecord Plan,
-        FixPlanDraftAggregate Aggregate, StubBuilder Builder, StubApplyQueue Queue,
+        FixPlanDraftAggregate Aggregate, StubBuilder Builder, StubRepository Repository, StubApplyQueue Queue,
         FixPlanApprovalService Service);
     private static Guid Id(int value) => Guid.Parse($"00000000-0000-0000-0000-{value:000000000000}");
     private static string RepositoryRoot()

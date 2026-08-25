@@ -9,13 +9,16 @@ import { spawn } from "node:child_process";
 const suiteVersion = "1.0.0";
 const docxMime = "application/vnd.openxmlformats-officedocument.wordprocessingml.document";
 const buckets = ["documents-original", "documents-versions", "audit-reports"];
+const runNamespace = randomUUID();
 const identities = [
-  { email: "user-a@example.invalid", label: "a" },
-  { email: "user-b@example.invalid", label: "b" },
+  { email: `security-${runNamespace}-admin-a@example.invalid`, label: "admin-a", role: "PPKIAdmin" },
+  { email: `security-${runNamespace}-admin-b@example.invalid`, label: "admin-b", role: "PPKIAdmin" },
+  { email: `security-${runNamespace}-student@example.invalid`, label: "student", role: "Student" },
 ];
 const assertions = [];
 const responseSamples = [];
 const processes = new Set();
+const liveEvidence = {};
 let logDirectory;
 
 console.log("SUITE security-integration-local");
@@ -190,6 +193,13 @@ async function deleteStorageObject(environment, bucket, objectPath) {
   if (!response.ok && response.status !== 404) throw new Error("storage cleanup failed");
 }
 
+async function readStorageObject(environment, bucket, objectPath) {
+  const response = await fetchLocal(`${environment.API_URL}/storage/v1/object/${encodeURIComponent(bucket)}/${encodePath(objectPath)}`, {
+    headers: supabaseHeaders(environment.SECRET_KEY),
+  });
+  return response.ok ? Buffer.from(await response.arrayBuffer()) : null;
+}
+
 async function cleanupOwners(environment, container, ownerIds) {
   if (ownerIds.length === 0) return;
   const quoted = ownerIds.map((id) => `'${id}'::uuid`).join(",");
@@ -198,14 +208,20 @@ async function cleanupOwners(environment, container, ownerIds) {
     const separator = line.indexOf("\t");
     if (separator > 0) await deleteStorageObject(environment, line.slice(0, separator), line.slice(separator + 1));
   }
-  await sql(container, `
+  await sql(container, `begin;
+set local session_replication_role=replica;
+delete from public.fix_plan_approval_snapshots where fix_plan_id in (select id from public.fix_plans where owner_user_id in (${quoted}));
+delete from public.fix_plan_items where fix_plan_id in (select id from public.fix_plans where owner_user_id in (${quoted}));
+delete from public.fix_execution_jobs where requested_by_user_id in (${quoted});
+delete from public.fix_plans where owner_user_id in (${quoted});
 delete from public.audit_trail_events where owner_user_id in (${quoted}) or actor_user_id in (${quoted});
 delete from public.audit_findings where audit_job_id in (select audit.id from public.audit_jobs audit join public.document_versions version on version.id=audit.document_version_id join public.documents document on document.id=version.document_id where document.owner_user_id in (${quoted}));
 delete from public.audit_rule_snapshots where audit_job_id in (select audit.id from public.audit_jobs audit join public.document_versions version on version.id=audit.document_version_id join public.documents document on document.id=version.document_id where document.owner_user_id in (${quoted}));
 delete from public.audit_jobs where document_version_id in (select version.id from public.document_versions version join public.documents document on document.id=version.document_id where document.owner_user_id in (${quoted}));
 delete from public.document_versions where document_id in (select id from public.documents where owner_user_id in (${quoted}));
 delete from public.documents where owner_user_id in (${quoted});
-delete from public.user_profiles where id in (${quoted});`);
+delete from public.user_profiles where id in (${quoted});
+commit;`);
 }
 
 async function cleanupSynthetic(environment, container) {
@@ -430,6 +446,16 @@ async function temporaryDocxNames() {
   return new Set((await readdir(os.tmpdir())).filter((name) => /^ppki-[0-9a-f]+\.docx$/i.test(name) || /^ppki-upload-[0-9a-f]+\.tmp$/i.test(name)));
 }
 
+async function waitForTemporaryDocxCleanup(baseline, timeoutMs = 5000) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    const current = await temporaryDocxNames();
+    if ([...current].every((name) => baseline.has(name))) return current;
+    await delay(100);
+  }
+  return temporaryDocxNames();
+}
+
 async function componentSmoke(script) {
   const command = process.platform === "win32" ? process.execPath : "npm";
   const args = process.platform === "win32"
@@ -460,6 +486,7 @@ async function writeSummary(startedAt, cleanupPassed) {
     totals,
     components,
     cleanupPassed,
+    liveEvidence,
   }, null, 2)}\n`, "utf8");
 }
 
@@ -504,21 +531,31 @@ async function main() {
     requireResult("process", "api-dependency-readiness-ready", await waitForHealth(apiBaseUrl, "/health/ready"));
 
     userIds = await Promise.all(identities.map((identity) => createAuthUser(environment, identity, password)));
+    await sql(container, `update public.user_profiles set role=case id
+when '${userIds[0]}' then 'PPKIAdmin'
+when '${userIds[1]}' then 'PPKIAdmin'
+when '${userIds[2]}' then 'Student'
+else role end where id in ('${userIds[0]}','${userIds[1]}','${userIds[2]}');`);
+    const authoritativeRoles = await sql(container, `select string_agg(role,',' order by array_position(array['${userIds[0]}'::uuid,'${userIds[1]}'::uuid,'${userIds[2]}'::uuid],id)) from public.user_profiles where id in ('${userIds[0]}','${userIds[1]}','${userIds[2]}');`);
+    requireResult("identity", "database-authoritative-roles-established", authoritativeRoles === "PPKIAdmin,PPKIAdmin,Student");
     tokens = await Promise.all(identities.map((identity) => signIn(environment, identity, password)));
     requireResult("identity", "synthetic-users-authenticated", userIds.every(uuid) && tokens.every(Boolean));
-    for (const token of tokens) {
+    for (const token of tokens.slice(0, 2)) {
       const me = await apiRequest(apiBaseUrl, "/api/me", token);
-      requireResult("identity", "api-principal-profile-established", me.ok);
+      requireResult("identity", "ppki-admin-api-principal-profile-established", me.ok);
       await body(me);
     }
+    const studentMe = await apiRequest(apiBaseUrl, "/api/me", tokens[2]);
+    assertResult("authorization", "student-api-access-denied-by-authoritative-role", studentMe.status === 403);
+    await body(studentMe, true);
     const anonymous = await fetchLocal(`${apiBaseUrl}/api/documents`);
     assertResult("authorization", "anonymous-api-access-denied", anonymous.status === 401);
 
-    const uploadA = await uploadDocument(apiBaseUrl, tokens[0], fixtureInvalid, "Synthetic lifecycle document A");
+    const uploadA = await uploadDocument(apiBaseUrl, tokens[0], fixtureInvalid, `Synthetic lifecycle document A ${runNamespace}`);
     if (uploadA.response.status !== 201) assertResult("diagnostic", `user-a-document-upload-http-${uploadA.response.status}`, false);
     requireResult("lifecycle", "user-a-document-upload-created", uploadA.response.status === 201 && uuid(uploadA.json?.id) && uuid(uploadA.json?.versionId));
     documentA = uploadA.json;
-    const uploadB = await uploadDocument(apiBaseUrl, tokens[1], fixtureCompliant, "Synthetic lifecycle document B", userIds[0]);
+    const uploadB = await uploadDocument(apiBaseUrl, tokens[1], fixtureCompliant, `Synthetic lifecycle document B ${runNamespace}`, userIds[0]);
     requireResult("authorization", "spoofed-owner-input-ignored", uploadB.response.status === 201 && uuid(uploadB.json?.id) && uuid(uploadB.json?.versionId));
     documentB = uploadB.json;
 
@@ -543,26 +580,125 @@ async function main() {
     const snapshotCount = Number(await sql(container, `select count(*) from public.audit_rule_snapshots where audit_job_id='${auditA.id}'`));
     assertResult("lifecycle", "resolved-snapshot-hash-and-count-consistent", snapshotCount > 0 && completed.totalRules === snapshotCount && /^[0-9a-f]{64}$/.test(completed.resolvedRuleSetHash ?? ""));
     const findingsResponse = await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/findings`, tokens[0]);
-    const findings = await body(findingsResponse);
+    const findingsPage = await body(findingsResponse);
+    const findings = Array.isArray(findingsPage) ? findingsPage : findingsPage?.items;
     requireResult("lifecycle", "audit-findings-returned-to-owner", findingsResponse.ok && Array.isArray(findings) && findings.length > 0);
 
-    const forbidden = [documentA.id, documentA.versionId, auditA.id, "Synthetic lifecycle document A", documentA.sha256];
-    const crossChecks = [
-      ["cross-user-document-detail-masked", `/api/documents/${documentA.id}`, "GET"],
-      ["cross-user-audit-request-masked", `/api/document-versions/${documentA.versionId}/audits`, "POST"],
-      ["cross-user-audit-status-masked", `/api/audits/${auditA.id}`, "GET"],
-      ["cross-user-findings-masked", `/api/audits/${auditA.id}/findings`, "GET"],
-      ["cross-user-download-masked", `/api/document-versions/${documentA.versionId}/download`, "GET"],
+    await stopBackend(workerA);
+    await stopBackend(workerB);
+    const eligibleFinding = findings.find((finding) => finding.fixMode === "Auto" && finding.eligibility === "Eligible");
+    requireResult("fix-plan", "eligible-auto-finding-available", uuid(eligibleFinding?.id));
+    const objectPath = `${userIds[0]}/${documentA.id}/${documentA.versionId}/original.docx`;
+    const sourceBytesBefore = await readStorageObject(environment, buckets[0], objectPath);
+    const sourceObjectHashBefore = sourceBytesBefore && createHash("sha256").update(sourceBytesBefore).digest("hex");
+    const sourceVersionBefore = await sql(container, `select sha256||chr(9)||storage_bucket||chr(9)||storage_key from public.document_versions where id='${documentA.versionId}'`);
+    const versionCountBefore = await sql(container, `select count(*) from public.document_versions where document_id='${documentA.id}'`);
+    const auditStateBefore = await sql(container, `select md5(to_jsonb(audit)::text) from public.audit_jobs audit where id='${auditA.id}'`);
+    const findingStateBefore = await sql(container, `select md5(coalesce(string_agg(to_jsonb(finding)::text,'' order by finding.id),'')) from public.audit_findings finding where audit_job_id='${auditA.id}'`);
+    const governanceStateBefore = await sql(container, `select (select count(*) from public.finding_review_cases where audit_job_id='${auditA.id}')||','||(select count(*) from public.finding_resolution_cases where source_audit_job_id='${auditA.id}')`);
+    requireResult("fix-plan", "source-object-and-canonical-checksum-captured", sourceBytesBefore?.length > 0 && sourceObjectHashBefore === fixtureHash && sourceVersionBefore.startsWith(`${fixtureHash}\t`));
+    liveEvidence.objectHashBefore = sourceObjectHashBefore;
+    liveEvidence.documentVersionChecksumBefore = sourceVersionBefore.split("\t")[0];
+
+    const draftResponse = await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/fix-plans`, tokens[0], {
+      method: "POST",
+      headers: { "content-type": "application/json", "Idempotency-Key": randomUUID() },
+      body: JSON.stringify({ findingIds: [eligibleFinding.id] }),
+    });
+    const draft = await body(draftResponse, !draftResponse.ok);
+    requireResult("fix-plan", "authorized-ppki-admin-draft-created", draftResponse.status === 201 && uuid(draft?.id) && draft?.state === "Draft" && draft?.ownerUserId === userIds[0]);
+
+    const previewResponseA = await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/fix-plans/${draft.id}/preview`, tokens[0]);
+    const previewA = await body(previewResponseA, !previewResponseA.ok);
+    const previewResponseB = await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/fix-plans/${draft.id}/preview`, tokens[0]);
+    const previewB = await body(previewResponseB, !previewResponseB.ok);
+    requireResult("fix-plan", "authorized-deterministic-preview-ready", previewResponseA.ok && previewResponseB.ok && previewA?.state === "Ready" && JSON.stringify(previewA) === JSON.stringify(previewB));
+
+    const foreignPlanChecks = [
+      await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/fix-plans/${draft.id}`, tokens[1]),
+      await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/fix-plans/${draft.id}/preview`, tokens[1]),
+      await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/fix-plans/${draft.id}`, tokens[1], { method: "PUT", headers: { "content-type": "application/json" }, body: JSON.stringify({ findingIds: [eligibleFinding.id] }) }),
+      await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/fix-plans/${draft.id}`, tokens[1], { method: "DELETE" }),
+      await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/fix-plans/${draft.id}/approval`, tokens[1], { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ approvedConfirmItemIds: [] }) }),
     ];
-    for (const [name, route, method] of crossChecks) {
-      const response = await apiRequest(apiBaseUrl, route, tokens[1], { method });
-      const text = await response.text();
-      responseSamples.push(text);
-      assertResult("authorization", name, response.status === 404 && forbidden.every((value) => !text.includes(value)));
+    const foreignBodies = await Promise.all(foreignPlanChecks.map((response) => body(response, true)));
+    assertResult("fix-plan-security", "foreign-ppki-admin-plan-operations-masked", foreignPlanChecks.every((response) => response.status === 404) && foreignBodies.every((value) => !JSON.stringify(value).includes(draft.id)));
+    const studentPlanRead = await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/fix-plans/${draft.id}`, tokens[2]);
+    assertResult("fix-plan-security", "student-plan-access-denied", studentPlanRead.status === 403);
+    await body(studentPlanRead, true);
+
+    const [ownerPlanRls, foreignPlanRls, studentPlanRls] = await Promise.all([
+      dataRequest(environment, "fix_plans", tokens[0], `id=eq.${draft.id}&select=id`),
+      dataRequest(environment, "fix_plans", tokens[1], `id=eq.${draft.id}&select=id`),
+      dataRequest(environment, "fix_plans", tokens[2], `id=eq.${draft.id}&select=id`),
+    ]);
+    const [ownerPlanRows, foreignPlanRows, studentPlanRows] = await Promise.all([body(ownerPlanRls), body(foreignPlanRls), body(studentPlanRls)]);
+    assertResult("fix-plan-security", "fix-plan-rls-remains-owner-scoped", ownerPlanRls.ok && ownerPlanRows?.length === 1 && foreignPlanRls.ok && foreignPlanRows?.length === 0 && studentPlanRls.ok && studentPlanRows?.length === 0);
+    const foreignPlanWrite = await dataRequest(environment, "fix_plans", tokens[1], `id=eq.${draft.id}`, { method: "PATCH", body: JSON.stringify({ state: "Approved" }) });
+    assertResult("fix-plan-security", "browser-cannot-mutate-fix-plan-directly", !foreignPlanWrite.ok);
+    await body(foreignPlanWrite, true);
+
+    const preApprovalState = await sql(container, `select (select count(*) from public.fix_execution_jobs where audit_job_id='${auditA.id}')||','||(select count(*) from public.fix_plan_approval_snapshots where fix_plan_id='${draft.id}')||','||coalesce((select state from public.fix_plans where id='${draft.id}'),'Missing')`);
+    const [preApprovalJobs, preApprovalSnapshots, preApprovalPlanState] = preApprovalState.split(",");
+    assertResult("fix-plan", "zero-execution-jobs-before-explicit-approval", preApprovalJobs === "0" && preApprovalSnapshots === "0" && preApprovalPlanState === "Draft");
+    if (preApprovalJobs !== "0" || preApprovalSnapshots !== "0" || preApprovalPlanState !== "Draft")
+      assertResult("diagnostic", `preapproval-state-jobs-${preApprovalJobs}-snapshots-${preApprovalSnapshots}-plan-${preApprovalPlanState}`, false);
+    const approvalResponse = await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/fix-plans/${draft.id}/approval`, tokens[0], {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ approvedConfirmItemIds: [] }),
+    });
+    const approval = await body(approvalResponse, !approvalResponse.ok);
+    requireResult("fix-plan", "explicit-approval-queues-authoritative-job", approvalResponse.ok && approval?.state === "Approved" && approval?.applyJobState === "Queued" && uuid(approval?.applyJobId));
+    const queuedJob = await sql(container, `select count(*)=1 and bool_and(id='${approval.applyJobId}' and source_document_version_id='${documentA.versionId}' and idempotency_key='${draft.id}' and plan_hash='${approval.planHash}' and state='Queued' and started_at is null and result_document_version_id is null and completed_at is null) from public.fix_execution_jobs where audit_job_id='${auditA.id}' and idempotency_key='${draft.id}'`);
+    assertResult("fix-plan", "exactly-one-durable-unexecuted-job-after-approval", queuedJob === "t" && !processes.has(workerA) && !processes.has(workerB));
+    const retryResponse = await apiRequest(apiBaseUrl, `/api/audits/${auditA.id}/fix-plans/${draft.id}/approval`, tokens[0], {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ approvedConfirmItemIds: [] }),
+    });
+    const retry = await body(retryResponse, !retryResponse.ok);
+    const retryJobCount = await sql(container, `select count(*) from public.fix_execution_jobs where audit_job_id='${auditA.id}' and idempotency_key='${draft.id}'`);
+    assertResult("fix-plan", "approval-retry-remains-exactly-one-job", retryResponse.ok && retry?.applyJobId === approval.applyJobId && retryJobCount === "1");
+    if (!retryResponse.ok || retry?.applyJobId !== approval.applyJobId || retryJobCount !== "1")
+      assertResult("diagnostic", `approval-retry-http-${retryResponse.status}-job-count-${retryJobCount}`, false);
+
+    const sourceBytesAfter = await readStorageObject(environment, buckets[0], objectPath);
+    const sourceObjectHashAfter = sourceBytesAfter && createHash("sha256").update(sourceBytesAfter).digest("hex");
+    const sourceVersionAfter = await sql(container, `select sha256||chr(9)||storage_bucket||chr(9)||storage_key from public.document_versions where id='${documentA.versionId}'`);
+    const versionCountAfter = await sql(container, `select count(*) from public.document_versions where document_id='${documentA.id}'`);
+    const auditStateAfter = await sql(container, `select md5(to_jsonb(audit)::text) from public.audit_jobs audit where id='${auditA.id}'`);
+    const findingStateAfter = await sql(container, `select md5(coalesce(string_agg(to_jsonb(finding)::text,'' order by finding.id),'')) from public.audit_findings finding where audit_job_id='${auditA.id}'`);
+    const governanceStateAfter = await sql(container, `select (select count(*) from public.finding_review_cases where audit_job_id='${auditA.id}')||','||(select count(*) from public.finding_resolution_cases where source_audit_job_id='${auditA.id}')`);
+    liveEvidence.objectHashAfter = sourceObjectHashAfter;
+    liveEvidence.documentVersionChecksumAfter = sourceVersionAfter.split("\t")[0];
+    liveEvidence.objectBytesIdentical = sourceBytesAfter !== null && sourceBytesBefore.equals(sourceBytesAfter);
+    assertResult("fix-plan", "approval-preserves-source-document-version-and-checksum", sourceVersionAfter === sourceVersionBefore && versionCountAfter === versionCountBefore);
+    assertResult("fix-plan", "approval-preserves-exact-object-storage-bytes", sourceBytesAfter !== null && sourceBytesBefore.equals(sourceBytesAfter) && sourceObjectHashAfter === sourceObjectHashBefore);
+    assertResult("fix-plan", "approval-preserves-findings-review-and-readiness", auditStateAfter === auditStateBefore && findingStateAfter === findingStateBefore && governanceStateAfter === governanceStateBefore);
+    await sql(container, `begin;
+set local session_replication_role=replica;
+delete from public.fix_plan_approval_snapshots where fix_plan_id='${draft.id}';
+delete from public.fix_plan_items where fix_plan_id='${draft.id}';
+delete from public.fix_execution_jobs where id='${approval.applyJobId}';
+delete from public.fix_plans where id='${draft.id}';
+commit;`);
+    const isolatedApprovalRows = await sql(container, `select (select count(*) from public.fix_plans where id='${draft.id}')+(select count(*) from public.fix_execution_jobs where id='${approval.applyJobId}')`);
+    assertResult("cleanup", "approval-fixture-isolated-before-worker-regressions", isolatedApprovalRows === "0");
+
+    const sharedAdminChecks = [
+      ["shared-admin-document-detail-readable", `/api/documents/${documentA.id}`],
+      ["shared-admin-audit-status-readable", `/api/audits/${auditA.id}`],
+      ["shared-admin-findings-readable", `/api/audits/${auditA.id}/findings`],
+      ["shared-admin-download-authorized", `/api/document-versions/${documentA.versionId}/download`],
+    ];
+    for (const [name, route] of sharedAdminChecks) {
+      const response = await apiRequest(apiBaseUrl, route, tokens[1]);
+      assertResult("authorization", name, response.ok);
+      await body(response, !response.ok);
     }
+    const studentDocuments = await apiRequest(apiBaseUrl, "/api/documents", tokens[2]);
+    assertResult("authorization", "student-business-api-remains-denied", studentDocuments.status === 403);
+    await body(studentDocuments, true);
     const bListResponse = await apiRequest(apiBaseUrl, "/api/documents", tokens[1]);
     const bList = await body(bListResponse);
-    assertResult("authorization", "cross-user-list-exposes-only-own-document", bListResponse.ok && Array.isArray(bList) && bList.some((item) => item.id === documentB.id) && !bList.some((item) => item.id === documentA.id));
+    assertResult("authorization", "shared-admin-list-exposes-internal-documents", bListResponse.ok && Array.isArray(bList) && bList.some((item) => item.id === documentB.id) && bList.some((item) => item.id === documentA.id));
     const serviceRead = await serviceDataRequest(environment, "documents", `id=eq.${documentA.id}&select=id`);
     await body(serviceRead);
     const databaseRole = decodeURIComponent(new URL(environment.DB_URL).username);
@@ -574,12 +710,12 @@ async function main() {
     const dataB = await dataRequest(environment, "documents", tokens[1], `id=in.(${documentA.id},${documentB.id})&select=id`);
     const rowsA = await body(dataA);
     const rowsB = await body(dataB);
-    assertResult("data-api", "data-api-document-cross-user-isolation", dataA.ok && dataB.ok && rowsA?.length === 1 && rowsA[0].id === documentA.id && rowsB?.length === 1 && rowsB[0].id === documentB.id);
+    assertResult("data-api", "data-api-shared-admin-document-read", dataA.ok && dataB.ok && rowsA?.length === 2 && rowsB?.length === 2);
     const snapshotA = await dataRequest(environment, "audit_rule_snapshots", tokens[0], `audit_job_id=eq.${auditA.id}&select=id`);
     const snapshotB = await dataRequest(environment, "audit_rule_snapshots", tokens[1], `audit_job_id=eq.${auditA.id}&select=id`);
     const snapshotRowsA = await body(snapshotA);
     const snapshotRowsB = await body(snapshotB);
-    assertResult("data-api", "data-api-snapshot-ownership-chain", snapshotA.ok && snapshotB.ok && snapshotRowsA?.length === snapshotCount && snapshotRowsB?.length === 0);
+    assertResult("data-api", "data-api-shared-admin-snapshot-read", snapshotA.ok && snapshotB.ok && snapshotRowsA?.length === snapshotCount && snapshotRowsB?.length === snapshotCount);
     const trailRead = await dataRequest(environment, "audit_trail_events", tokens[0]);
     assertResult("data-api", "audit-trail-remains-server-only", !trailRead.ok);
     const directWrite = await dataRequest(environment, "documents", tokens[1], `id=eq.${documentA.id}`, { method: "PATCH", body: JSON.stringify({ owner_user_id: userIds[1] }) });
@@ -589,7 +725,6 @@ async function main() {
     const assignmentRead = await dataRequest(environment, "profile_rules", tokens[0]);
     assertResult("data-api", "reference-grants-remain-least-privilege", referenceRead.ok && !ruleRead.ok && !assignmentRead.ok);
 
-    const objectPath = `${userIds[0]}/${documentA.id}/${documentA.versionId}/original.docx`;
     const directObjectUrl = `${environment.API_URL}/storage/v1/object/authenticated/${buckets[0]}/${encodePath(objectPath)}`;
     const [anonRead, userARead, userBRead] = await Promise.all([
       fetchLocal(directObjectUrl, { headers: supabaseHeaders(environment.PUBLISHABLE_KEY) }),
@@ -618,7 +753,7 @@ async function main() {
     assertResult("audit-trail", "audit-correlation-consistent-across-api-worker-trigger", auditCorrelation === "t");
     const actors = await sql(container, `select count(*)=4 and bool_and((action='audit.requested' and actor_type='user' and actor_user_id='${userIds[0]}') or (action<>'audit.requested' and actor_type='service' and actor_service='worker')) from public.audit_trail_events where resource_id='${auditA.id}' and action in ('audit.requested','audit.processing_started','audit.rule_snapshot_created','audit.completed')`);
     assertResult("audit-trail", "audit-actors-match-user-and-worker", actors === "t");
-    const safeMetadata = await sql(container, `select count(*)=0 from public.audit_trail_events where owner_user_id='${userIds[0]}' and (metadata - array['version_number','previous_status','new_status','audit_status','applicable_rule_count','finding_count','file_size_bytes','mime_type','failure_category','cleanup_reason','download_kind']::text[] <> '{}'::jsonb or metadata::text ~* '(token|secret|connection|string|signed|storage.?path|document.?text|exception|stack.?trace|https?://)')`);
+    const safeMetadata = await sql(container, `select count(*)=0 from public.audit_trail_events where owner_user_id='${userIds[0]}' and (metadata - array['version_number','previous_status','new_status','audit_status','applicable_rule_count','finding_count','file_size_bytes','mime_type','failure_category','cleanup_reason','download_kind','plan_hash','snapshot_schema_version','item_count']::text[] <> '{}'::jsonb or metadata::text ~* '(token|secret|connection|string|signed|storage.?path|document.?text|exception|stack.?trace|https?://)')`);
     assertResult("audit-trail", "audit-metadata-allowlist-and-sensitive-data-hygiene", safeMetadata === "t");
 
     const beforeRetry = await sql(container, `select (select count(*) from public.audit_rule_snapshots where audit_job_id='${auditA.id}')||','||(select count(*) from public.audit_findings where audit_job_id='${auditA.id}')||','||(select count(*) from public.audit_trail_events where resource_id='${auditA.id}' and action='audit.completed')`);
@@ -648,17 +783,15 @@ async function main() {
     const trailDelete = await serviceDataRequest(environment, "audit_trail_events", `id=eq.${auditEventId}`, { method: "DELETE" });
     assertResult("audit-trail", "service-role-cannot-update-or-delete-audit-event", !trailUpdate.ok && !trailDelete.ok);
 
-    await stopBackend(workerA);
-    await stopBackend(workerB);
-
-    await createFault(container, "s1t06_fail_document_insert", "documents", "new.title='S1T06 synthetic database failure'", "raise exception using message='Synthetic integration failure'");
+    const failureTitle = `S1T06 synthetic database failure ${runNamespace}`;
+    await createFault(container, "s1t06_fail_document_insert", "documents", `new.title='${failureTitle}'`, "raise exception using message='Synthetic integration failure'");
     const objectCountBefore = await sql(container, `select count(*) from storage.objects where bucket_id='${buckets[0]}' and name like '${userIds[0]}/%'`);
     const cleanupEventBefore = Number(await sql(container, `select count(*) from public.audit_trail_events where owner_user_id='${userIds[0]}' and action='storage.orphan_cleanup'`));
-    const failedUpload = await uploadDocument(apiBaseUrl, tokens[0], fixtureCompliant, "S1T06 synthetic database failure");
+    const failedUpload = await uploadDocument(apiBaseUrl, tokens[0], fixtureCompliant, failureTitle);
     await dropFaults(container);
     await delay(500);
     const objectCountAfter = await sql(container, `select count(*) from storage.objects where bucket_id='${buckets[0]}' and name like '${userIds[0]}/%'`);
-    const failedDocuments = await sql(container, "select count(*) from public.documents where title='S1T06 synthetic database failure'");
+    const failedDocuments = await sql(container, `select count(*) from public.documents where title='${failureTitle}'`);
     const cleanupEventAfter = Number(await sql(container, `select count(*) from public.audit_trail_events where owner_user_id='${userIds[0]}' and action='storage.orphan_cleanup'`));
     assertResult("failure-injection", "storage-success-database-failure-cleans-orphan-and-partial-row", failedUpload.response.status >= 500 && objectCountBefore === objectCountAfter && failedDocuments === "0" && cleanupEventAfter === cleanupEventBefore + 1);
 
@@ -706,7 +839,7 @@ async function main() {
     const deniedAfterObjectRemoval = await apiRequest(apiBaseUrl, `/api/document-versions/${documentA.versionId}/download`, tokens[1]);
     responseSamples.push(await deniedAfterObjectRemoval.text());
     const downloadEventsAfterFailure = await sql(container, `select count(*) from public.audit_trail_events where resource_id='${documentA.versionId}' and action='document.download_authorized'`);
-    assertResult("failure-injection", "signed-url-failure-has-no-success-or-audit-event-and-auth-precedes-storage", failedDownload.status >= 500 && deniedAfterObjectRemoval.status === 404 && downloadEventsBeforeFailure === downloadEventsAfterFailure);
+    assertResult("failure-injection", "signed-url-failure-has-no-success-or-audit-event-and-shared-admin-auth-precedes-storage", failedDownload.status >= 500 && deniedAfterObjectRemoval.status >= 500 && downloadEventsBeforeFailure === downloadEventsAfterFailure);
 
     const documentCorrelations = await sql(container, `select count(distinct correlation_id) from public.audit_trail_events where action='document.upload_completed' and owner_user_id in ('${userIds[0]}','${userIds[1]}')`);
     assertResult("audit-trail", "transaction-local-context-does-not-leak-between-users", documentCorrelations === "2");
@@ -724,11 +857,15 @@ async function main() {
       try { await cleanupSynthetic(environment, container); } catch { cleanupPassed = false; }
       try {
         const leftovers = (await authUsers(environment)).filter((candidate) => identities.some((identity) => identity.email === candidate.email));
-        const rowLeftovers = await sql(container, "select count(*) from public.documents where title like 'Synthetic lifecycle document %' or title='S1T06 synthetic database failure'");
+        const quoted = userIds.map((id) => `'${id}'::uuid`).join(",");
+        const rowLeftovers = await sql(container, `select
+          (select count(*) from public.documents where owner_user_id in (${quoted}))
+          +(select count(*) from public.fix_plans where owner_user_id in (${quoted}))
+          +(select count(*) from public.fix_execution_jobs where requested_by_user_id in (${quoted}))`);
         if (leftovers.length !== 0 || rowLeftovers !== "0") cleanupPassed = false;
       } catch { cleanupPassed = false; }
     }
-    const tempAfter = await temporaryDocxNames();
+    const tempAfter = await waitForTemporaryDocxCleanup(tempBefore);
     const newTempFiles = [...tempAfter].filter((name) => !tempBefore.has(name));
     assertResult("cleanup", "temporary-docx-files-cleaned", newTempFiles.length === 0);
     if (environment && logDirectory) {

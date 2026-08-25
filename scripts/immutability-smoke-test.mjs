@@ -151,7 +151,8 @@ function ruleSetHash(snapshot) {
   return createHash("sha256").update(JSON.stringify(canonical), "utf8").digest("hex");
 }
 
-const cleanupSql = `
+const cleanupSql = `begin;
+set local session_replication_role=replica;
 delete from public.audit_trail_events where resource_id in ('${ids.document}', '${ids.version}', '${ids.audit}', '${ids.invalidAudit}');
 delete from public.audit_findings where id = '${ids.finding}';
 delete from public.audit_rule_snapshots where id = '${ids.snapshot}';
@@ -160,6 +161,7 @@ delete from public.profile_rules where id = '${ids.profileRule}';
 delete from public.rules where id = '${ids.rule}';
 delete from public.document_versions where id = '${ids.version}';
 delete from public.documents where id = '${ids.document}';
+commit;
 revoke select, insert, update, delete on table
   public.document_versions,
   public.audit_jobs,

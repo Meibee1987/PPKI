@@ -24,8 +24,11 @@ public sealed class SecurityIntegrationContractTests
     {
         var source = Harness();
 
-        Assert.Contains("user-a@example.invalid", source, StringComparison.Ordinal);
-        Assert.Contains("user-b@example.invalid", source, StringComparison.Ordinal);
+        Assert.Contains("security-${runNamespace}-admin-a@example.invalid", source, StringComparison.Ordinal);
+        Assert.Contains("security-${runNamespace}-admin-b@example.invalid", source, StringComparison.Ordinal);
+        Assert.Contains("security-${runNamespace}-student@example.invalid", source, StringComparison.Ordinal);
+        Assert.Contains("role: \"PPKIAdmin\"", source, StringComparison.Ordinal);
+        Assert.Contains("role: \"Student\"", source, StringComparison.Ordinal);
         Assert.Contains("s1t06_fail_document_insert", source, StringComparison.Ordinal);
         Assert.Contains("s1t06_fail_snapshot_insert", source, StringComparison.Ordinal);
         Assert.Contains("s1t06_fail_finding_insert", source, StringComparison.Ordinal);
@@ -37,6 +40,10 @@ public sealed class SecurityIntegrationContractTests
         Assert.Contains("test:immutability-local", source, StringComparison.Ordinal);
         Assert.Contains("test:audit-trail-local", source, StringComparison.Ordinal);
         Assert.Contains("original-storage-object-unchanged-after-runtime-mutations", source, StringComparison.Ordinal);
+        Assert.Contains("approval-preserves-exact-object-storage-bytes", source, StringComparison.Ordinal);
+        Assert.Contains("zero-execution-jobs-before-explicit-approval", source, StringComparison.Ordinal);
+        Assert.Contains("exactly-one-durable-unexecuted-job-after-approval", source, StringComparison.Ordinal);
+        Assert.Contains("foreign-ppki-admin-plan-operations-masked", source, StringComparison.Ordinal);
 
         var storage = File.ReadAllText(Path.Combine(RepositoryRoot(), "backend", "src", "Ppki.Infrastructure", "SupabaseFileStorage.cs"));
         Assert.Contains("\"x-upsert\", \"false\"", storage, StringComparison.Ordinal);
@@ -53,6 +60,35 @@ public sealed class SecurityIntegrationContractTests
         Assert.Contains("artifacts/security-integration-summary.json", ignore, StringComparison.Ordinal);
         Assert.DoesNotContain("email:", summary, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("password:", summary, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Cleanup_is_idempotent_and_scoped_to_exact_current_fixture_identities()
+    {
+        var source = Harness();
+        var cleanup = source[source.IndexOf("async function cleanupOwners", StringComparison.Ordinal)
+            ..source.IndexOf("async function freePort", StringComparison.Ordinal)];
+
+        Assert.Contains("ownerIds.length === 0", cleanup, StringComparison.Ordinal);
+        Assert.Contains("where name ~ '^(${ownerIds.join(\"|\")})/'", cleanup, StringComparison.Ordinal);
+        Assert.Contains("where id in (${quoted})", cleanup, StringComparison.Ordinal);
+        Assert.Contains("identities.some((identity) => identity.email === candidate.email)", cleanup,
+            StringComparison.Ordinal);
+        Assert.DoesNotContain("truncate", cleanup, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("delete from storage.objects", cleanup, StringComparison.OrdinalIgnoreCase);
+        Assert.DoesNotContain("delete from auth.users", cleanup, StringComparison.OrdinalIgnoreCase);
+    }
+
+    [Fact]
+    public void Cleanup_failure_is_reported_without_replacing_the_original_assertion_results()
+    {
+        var source = Harness();
+        var finalizer = source[source.IndexOf("} finally {", StringComparison.Ordinal)
+            ..source.IndexOf("if (cleanupPassed) {", StringComparison.Ordinal)];
+
+        Assert.Contains("cleanupPassed = false", finalizer, StringComparison.Ordinal);
+        Assert.Contains("assertResult(\"cleanup\"", finalizer, StringComparison.Ordinal);
+        Assert.DoesNotContain("assertions = []", finalizer, StringComparison.Ordinal);
     }
 
     private static string Harness() => File.ReadAllText(Path.Combine(RepositoryRoot(), "scripts", "security-integration-test.mjs"));
