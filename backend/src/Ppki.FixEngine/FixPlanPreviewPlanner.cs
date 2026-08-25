@@ -33,6 +33,24 @@ public interface IFixPreviewProvider
         FixPlanFindingSnapshot finding,
         out FixOperationDraft operation,
         out string diagnosticCode);
+
+    bool TryCreateBeforeAfter(
+        FixPlanFindingSnapshot finding,
+        FixOperationDraft operation,
+        out FixPlanDraftBeforeAfterDto preview)
+    {
+        preview = null!;
+        if (!TryCreate(finding, out var authoritative, out _)
+            || authoritative != operation)
+            return false;
+
+        var presentation = AuditFindingPresentation.Create(finding.ActualJson, finding.ExpectedJson);
+        if (presentation.EvidenceState == "Unavailable") return false;
+        preview = new(presentation.Kind, presentation.PropertyLabel,
+            presentation.BeforeLabel, presentation.BeforeValue,
+            "Setelah", presentation.ExpectedValue, presentation.EvidenceState);
+        return true;
+    }
 }
 
 public interface IRemediationCapabilityRegistry

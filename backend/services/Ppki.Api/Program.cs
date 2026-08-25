@@ -36,6 +36,7 @@ builder.Services.AddScoped<IFixPlanSourceReader, FixPlanSourceReader>();
 builder.Services.AddScoped<IFixPlanPreviewService, FixPlanPreviewService>();
 builder.Services.AddScoped<IFixPlanDraftRepository, FixPlanDraftRepository>();
 builder.Services.AddScoped<IFixPlanDraftService, FixPlanDraftService>();
+builder.Services.AddScoped<IFixPlanDraftPreviewService, FixPlanDraftPreviewService>();
 builder.Services.AddScoped<IFixExecutionRepository, FixExecutionRepository>();
 builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();
 builder.Services.AddScoped<IReauditService, ReauditService>();
@@ -255,6 +256,22 @@ api.MapGet("/audits/{id:guid}/fix-plans/{planId:guid}", async (Guid id, Guid pla
 }).WithName("GetAuditDraftFixPlan")
   .WithSummary("Read an owned fix plan and its authoritative stale/eligibility state.")
   .Produces<FixPlanDraftDto>(StatusCodes.Status200OK)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapGet("/audits/{id:guid}/fix-plans/{planId:guid}/preview", async (Guid id, Guid planId,
+    ClaimsPrincipal user, IFixPlanDraftPreviewService previews, CancellationToken ct) => {
+    try {
+        var result=await previews.PreviewAsync(id,planId,UserId(user),ct);
+        return result is null?Results.NotFound():Results.Ok(result);
+    } catch(FixPlanDraftPreviewException exception) {
+        return Results.Problem(statusCode:StatusCodes.Status409Conflict,
+            title:"Draft fix plan preview conflicts with authoritative state.",
+            extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
+    }
+}).WithName("PreviewAuditDraftFixPlan")
+  .WithSummary("Explain the deterministic changes proposed by an owned draft fix plan.")
+  .Produces<FixPlanDraftPreviewDto>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status409Conflict)
   .Produces(StatusCodes.Status404NotFound);
 
 api.MapPut("/audits/{id:guid}/fix-plans/{planId:guid}", async (Guid id, Guid planId,
