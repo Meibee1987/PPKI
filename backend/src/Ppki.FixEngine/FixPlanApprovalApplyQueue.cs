@@ -22,7 +22,8 @@ public sealed class FixPlanApprovalApplyQueue(
             || approved.PlanHash != persisted.PlanHash
             || approved.SourceVersionSha256 != persisted.SourceVersionSha256
             || approved.ApprovedByUserId != plan.ApproverUserId
-            || approved.ApprovedAt != plan.ApprovedAt || approved.Items.Count == 0)
+            || !SameDatabaseTimestamp(approved.ApprovedAt, plan.ApprovedAt.Value)
+            || approved.Items.Count == 0)
             throw new FixPlanApprovalException("fix-plan-approval-snapshot-invalid");
         if (!Enum.TryParse<DocumentKind>(approved.DocumentKindSnapshot, out var documentKind))
             throw new FixPlanApprovalException("fix-plan-approval-snapshot-invalid");
@@ -79,4 +80,7 @@ public sealed class FixPlanApprovalApplyQueue(
         && left.RequiresConfirmation == right.RequiresConfirmation
         && left.PreconditionCode == right.PreconditionCode
         && left.SummaryCode == right.SummaryCode;
+
+    private static bool SameDatabaseTimestamp(DateTimeOffset left, DateTimeOffset right) =>
+        left.ToUniversalTime().Ticks / 10 == right.ToUniversalTime().Ticks / 10;
 }
