@@ -41,6 +41,7 @@ builder.Services.AddScoped<IFixPlanDraftPreviewService>(provider => provider.Get
 builder.Services.AddScoped<IFixPlanApprovalPreviewBuilder>(provider => provider.GetRequiredService<FixPlanDraftPreviewService>());
 builder.Services.AddScoped<IFixPlanApprovalRepository, FixPlanApprovalRepository>();
 builder.Services.AddScoped<IFixPlanApprovalService, FixPlanApprovalService>();
+builder.Services.AddScoped<IFixPlanApprovalApplyQueue, FixPlanApprovalApplyQueue>();
 builder.Services.AddSingleton<IFixPlanConflictAnalyzer, DeterministicFixPlanConflictAnalyzer>();
 builder.Services.AddScoped<IFixExecutionRepository, FixExecutionRepository>();
 builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();

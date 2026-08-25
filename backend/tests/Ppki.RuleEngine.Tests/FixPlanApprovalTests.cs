@@ -2,6 +2,7 @@ using System.Text.Json;
 using Ppki.Application;
 using Ppki.Domain;
 using Ppki.FixEngine;
+using Ppki.Worker;
 using Xunit;
 
 namespace Ppki.RuleEngine.Tests;
@@ -23,6 +24,8 @@ public sealed class FixPlanApprovalTests
         Assert.Equal(Now, result.ApprovedAt);
         Assert.Equal(64, result.PlanHash.Length);
         Assert.Equal(1, result.ItemCount);
+        Assert.Equal(1, context.Queue.CallCount);
+        Assert.NotEqual(Guid.Empty, result.ApplyJobId);
     }
 
     [Fact]
@@ -191,6 +194,96 @@ public sealed class FixPlanApprovalTests
             context.OwnerId, [], default);
         Assert.True(result!.Replayed);
         Assert.Equal(0, context.Builder.CallCount);
+        Assert.Equal(1, context.Queue.CallCount);
+    }
+
+    [Fact]
+    public async Task Approval_queues_exactly_one_worker_compatible_apply_job_after_commit()
+    {
+        var context = Context(FixMode.Auto);
+        var executions = new CapturingExecutionRepository();
+        var queue = new FixPlanApprovalApplyQueue(executions, new FixedTimeProvider(Now.AddSeconds(1)));
+        var service = new FixPlanApprovalService(new StubRepository(context.Aggregate, false, null),
+            context.Builder, queue, new FixedTimeProvider(Now));
+
+        var result = await service.ApproveAsync(context.AuditId, context.Plan.Id, context.OwnerId, [], default);
+
+        var candidate = Assert.Single(executions.Candidates);
+        var workerPlan = ApprovedFixExecutionPlanSerializer.Deserialize(candidate.ApprovedPlanSnapshotJson);
+        Assert.Equal(result!.ApplyJobId, candidate.ExecutionId);
+        Assert.Equal(context.Plan.Id, candidate.IdempotencyKey);
+        Assert.Equal(result.PlanHash, candidate.PlanHash);
+        Assert.Equal(FixPlanApprovalApplyQueue.PlannerVersion, candidate.PlannerVersion);
+        Assert.Single(workerPlan.Preview.Operations);
+        Assert.Equal(FixPlanState.Ready, workerPlan.Preview.State);
+        Assert.Equal(1, executions.CallCount);
+    }
+
+    [Fact]
+    public async Task Approval_retry_requeues_idempotently_but_creates_exactly_one_apply_job()
+    {
+        var context = Context(FixMode.Auto);
+        var approvals = new StubRepository(context.Aggregate, false, null);
+        var executions = new DeduplicatingExecutionRepository();
+        var queue = new FixPlanApprovalApplyQueue(executions, new FixedTimeProvider(Now.AddSeconds(1)));
+        var service = new FixPlanApprovalService(approvals, context.Builder, queue,
+            new FixedTimeProvider(Now));
+
+        var first = await service.ApproveAsync(context.AuditId, context.Plan.Id, context.OwnerId, [], default);
+        var second = await service.ApproveAsync(context.AuditId, context.Plan.Id, context.OwnerId, [], default);
+
+        Assert.False(first!.Replayed);
+        Assert.True(second!.Replayed);
+        Assert.False(first.ApplyJobReplayed);
+        Assert.True(second.ApplyJobReplayed);
+        Assert.Equal(first.ApplyJobId, second.ApplyJobId);
+        Assert.Equal(2, executions.EnqueueRequests);
+        Assert.Equal(1, executions.CreatedJobs);
+    }
+
+    [Fact]
+    public async Task Apply_queue_rejects_a_snapshot_whose_content_no_longer_matches_its_hash()
+    {
+        var context = Context(FixMode.Auto);
+        var prepared = FixPlanApprovalSnapshotSerializer.Create(context.Aggregate,
+            context.Builder.Build(context.Aggregate, context.AuditId), new HashSet<Guid>(), context.OwnerId, Now);
+        context.Plan.Approve(context.OwnerId, Now);
+        var tampered = prepared.SnapshotJson.Replace("justified", "left", StringComparison.Ordinal);
+        var snapshot = FixPlanApprovalSnapshotRecord.Create(context.Plan.Id, prepared.SchemaVersion,
+            prepared.PlanHash, prepared.ApprovalRequestHash, prepared.SourceVersionSha256,
+            tampered, context.OwnerId, Now);
+        var queue = new FixPlanApprovalApplyQueue(new CapturingExecutionRepository(),
+            new FixedTimeProvider(Now));
+
+        var error = await Assert.ThrowsAsync<FixPlanApprovalException>(() =>
+            queue.EnqueueAsync(context.Plan, snapshot, default));
+
+        Assert.Equal("fix-plan-approval-snapshot-hash-invalid", error.DiagnosticCode);
+    }
+
+    [Fact]
+    public async Task Durable_recovery_creates_one_job_after_post_commit_enqueue_interruption_without_client_retry()
+    {
+        var context = Context(FixMode.Auto);
+        var approvals = new StubRepository(context.Aggregate, false, null);
+        var queue = new InitiallyInterruptedApplyQueue();
+        var service = new FixPlanApprovalService(approvals, context.Builder, queue,
+            new FixedTimeProvider(Now));
+
+        await Assert.ThrowsAsync<FixPlanApprovalException>(() => service.ApproveAsync(
+            context.AuditId, context.Plan.Id, context.OwnerId, [], default));
+        Assert.Equal(FixPlanLifecycleState.Approved, context.Plan.State);
+        Assert.False(queue.JobExists);
+
+        var recoveryRepository = new RecoveryRepository(queue);
+        var recovery = new ApprovedFixPlanQueueRecoveryProcessor(recoveryRepository, queue);
+        Assert.True(await recovery.ProcessNextAsync(default));
+        Assert.False(await recovery.ProcessNextAsync(default));
+        Assert.False(await recovery.ProcessNextAsync(default));
+
+        Assert.True(queue.JobExists);
+        Assert.Equal(1, queue.CreatedJobs);
+        Assert.Equal(2, queue.EnqueueAttempts);
     }
 
     [Fact]
@@ -203,7 +296,7 @@ public sealed class FixPlanApprovalTests
     }
 
     [Fact]
-    public void Api_and_schema_require_owner_scoped_immutable_approval_without_apply_side_effects()
+    public void Api_and_schema_require_owner_scoped_immutable_approval_with_post_commit_queueing()
     {
         var root = RepositoryRoot();
         var api = File.ReadAllText(Path.Combine(root, "backend", "services", "Ppki.Api", "Program.cs"));
@@ -213,10 +306,46 @@ public sealed class FixPlanApprovalTests
 
         Assert.Contains("/approval", api, StringComparison.Ordinal);
         Assert.Contains("UserId(user)", api, StringComparison.Ordinal);
-        Assert.DoesNotContain("IFixExecution", service, StringComparison.Ordinal);
+        Assert.Contains("applyQueue.EnqueueAsync", service, StringComparison.Ordinal);
         Assert.Contains("Approved fix plan snapshots are append-only", migration, StringComparison.Ordinal);
         Assert.Contains("enable row level security", migration, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("auth.uid()", migration, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Apply_queue_uses_database_backed_idempotency_for_exactly_one_job()
+    {
+        var root = RepositoryRoot();
+        var queue = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.FixEngine",
+            "FixPlanApprovalApplyQueue.cs"));
+        var repository = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.Infrastructure",
+            "FixExecutionRepository.cs"));
+        var migration = File.ReadAllText(Path.Combine(root, "supabase", "migrations",
+            "202608040001_fix_execution_jobs.sql"));
+
+        Assert.Contains("approved.ApprovedByUserId, plan.Id, persisted.PlanHash", queue, StringComparison.Ordinal);
+        Assert.Contains("value.SourceDocumentVersionId == candidate.SourceDocumentVersionId && value.PlanHash == candidate.PlanHash",
+            repository, StringComparison.Ordinal);
+        Assert.Contains("uq_fix_execution_source_plan unique (source_document_version_id, plan_hash)",
+            migration, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Worker_durably_discovers_committed_approved_plans_with_no_execution_job()
+    {
+        var root = RepositoryRoot();
+        var repository = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.Infrastructure",
+            "FixPlanApprovalQueueRecoveryRepository.cs"));
+        var worker = File.ReadAllText(Path.Combine(root, "backend", "services", "Ppki.Worker",
+            "ApprovedFixPlanQueueRecoveryWorker.cs"));
+        var program = File.ReadAllText(Path.Combine(root, "backend", "services", "Ppki.Worker", "Program.cs"));
+
+        Assert.Contains("plan.State == FixPlanLifecycleState.Approved", repository, StringComparison.Ordinal);
+        Assert.Contains("!db.FixExecutionJobs.Any", repository, StringComparison.Ordinal);
+        Assert.Contains("execution.IdempotencyKey == plan.Id", repository, StringComparison.Ordinal);
+        Assert.Contains("execution.PlanHash == snapshot.PlanHash", repository, StringComparison.Ordinal);
+        Assert.Contains("processor.ProcessNextAsync", worker, StringComparison.Ordinal);
+        Assert.Contains("AddHostedService<ApprovedFixPlanQueueRecoveryWorker>()", program, StringComparison.Ordinal);
     }
 
     private static TestContext Context(FixMode mode, FixPlanDraftPreviewState previewState = FixPlanDraftPreviewState.Ready,
@@ -249,8 +378,9 @@ public sealed class FixPlanApprovalTests
         var aggregate = new FixPlanDraftAggregate(plan, source);
         var builder = new StubBuilder(previewState, analysisState, analysisStatus);
         var repository = new StubRepository(aggregate, replay, conflict);
-        return new(auditId, owner, plan, aggregate, builder,
-            new FixPlanApprovalService(repository, builder, new FixedTimeProvider(Now)));
+        var queue = new StubApplyQueue(() => repository.ApprovalReturned);
+        return new(auditId, owner, plan, aggregate, builder, queue,
+            new FixPlanApprovalService(repository, builder, queue, new FixedTimeProvider(Now)));
     }
 
     private sealed class StubBuilder(FixPlanDraftPreviewState previewState,
@@ -298,11 +428,15 @@ public sealed class FixPlanApprovalTests
     private sealed class StubRepository(FixPlanDraftAggregate aggregate, bool replay, string? conflict)
         : IFixPlanApprovalRepository
     {
+        private FixPlanApprovalSnapshotRecord? storedSnapshot;
+        public bool ApprovalReturned { get; private set; }
         public Task<FixPlanApprovalWriteResult> ApproveAsync(Guid auditId, Guid planId, Guid ownerUserId,
             string approvalRequestHash, DateTimeOffset now, Func<FixPlanDraftAggregate, FixPlanApprovalPrepared> prepare,
             CancellationToken cancellationToken)
         {
             if (conflict is not null) return Task.FromResult(new FixPlanApprovalWriteResult(null, null, false, conflict));
+            if (storedSnapshot is not null)
+                return Task.FromResult(new FixPlanApprovalWriteResult(aggregate.Plan, storedSnapshot, true));
             FixPlanApprovalPrepared prepared;
             if (replay)
                 prepared = new(FixPlanApprovalSnapshotSerializer.SchemaVersion, new string('d', 64),
@@ -311,8 +445,127 @@ public sealed class FixPlanApprovalTests
             if (aggregate.Plan.State == FixPlanLifecycleState.Draft) aggregate.Plan.Approve(ownerUserId, now);
             var snapshot = FixPlanApprovalSnapshotRecord.Create(planId, prepared.SchemaVersion, prepared.PlanHash,
                 prepared.ApprovalRequestHash, prepared.SourceVersionSha256, prepared.SnapshotJson, ownerUserId, now);
+            storedSnapshot = snapshot;
+            ApprovalReturned = true;
             return Task.FromResult(new FixPlanApprovalWriteResult(aggregate.Plan, snapshot, replay));
         }
+    }
+
+    private sealed class StubApplyQueue(Func<bool> approvalReturned) : IFixPlanApprovalApplyQueue
+    {
+        public int CallCount { get; private set; }
+        public Task<FixExecutionEnqueueResult> EnqueueAsync(FixPlanRecord plan,
+            FixPlanApprovalSnapshotRecord snapshot, CancellationToken cancellationToken)
+        {
+            CallCount++;
+            Assert.True(approvalReturned());
+            Assert.Equal(FixPlanLifecycleState.Approved, plan.State);
+            return Task.FromResult(new FixExecutionEnqueueResult(new FixExecutionJob
+            {
+                Id = Id(80), AuditJobId = plan.SourceAuditJobId,
+                SourceDocumentVersionId = plan.SourceDocumentVersionId,
+                RequestedByUserId = plan.OwnerUserId, IdempotencyKey = plan.Id,
+                PlanHash = snapshot.PlanHash, PlannerVersion = FixPlanApprovalApplyQueue.PlannerVersion,
+                SelectedFindingIdsJson = "[]", ApprovedPlanSnapshotJson = "{}",
+                PlannedOperationCount = plan.Items.Count, State = FixExecutionState.Queued,
+                CreatedAt = snapshot.ApprovedAt
+            }, false));
+        }
+    }
+
+    private sealed class CapturingExecutionRepository : IFixExecutionRepository
+    {
+        public List<FixExecutionCandidate> Candidates { get; } = [];
+        public int CallCount { get; private set; }
+        public Task<FixExecutionEnqueueResult> EnqueueAsync(FixExecutionCandidate candidate,
+            CancellationToken cancellationToken)
+        {
+            CallCount++;
+            Candidates.Add(candidate);
+            return Task.FromResult(new FixExecutionEnqueueResult(new FixExecutionJob
+            {
+                Id = candidate.ExecutionId, AuditJobId = candidate.AuditJobId,
+                SourceDocumentVersionId = candidate.SourceDocumentVersionId,
+                RequestedByUserId = candidate.RequestedByUserId, IdempotencyKey = candidate.IdempotencyKey,
+                PlanHash = candidate.PlanHash, PlannerVersion = candidate.PlannerVersion,
+                SelectedFindingIdsJson = candidate.SelectedFindingIdsJson,
+                ApprovedPlanSnapshotJson = candidate.ApprovedPlanSnapshotJson,
+                PlannedOperationCount = candidate.PlannedOperationCount, State = FixExecutionState.Queued,
+                CreatedAt = candidate.CreatedAt
+            }, false));
+        }
+        public Task<FixExecutionJob?> GetOwnedAsync(Guid executionId, Guid ownerUserId,
+            CancellationToken cancellationToken) => Task.FromResult<FixExecutionJob?>(null);
+    }
+
+    private sealed class DeduplicatingExecutionRepository : IFixExecutionRepository
+    {
+        private FixExecutionJob? job;
+        public int EnqueueRequests { get; private set; }
+        public int CreatedJobs { get; private set; }
+        public Task<FixExecutionEnqueueResult> EnqueueAsync(FixExecutionCandidate candidate,
+            CancellationToken cancellationToken)
+        {
+            EnqueueRequests++;
+            if (job is not null)
+                return Task.FromResult(job.SourceDocumentVersionId == candidate.SourceDocumentVersionId
+                    && job.PlanHash == candidate.PlanHash && job.IdempotencyKey == candidate.IdempotencyKey
+                    ? new FixExecutionEnqueueResult(job, true)
+                    : new FixExecutionEnqueueResult(null, false, "fix-execution-idempotency-conflict"));
+            CreatedJobs++;
+            job = new FixExecutionJob
+            {
+                Id = candidate.ExecutionId, AuditJobId = candidate.AuditJobId,
+                SourceDocumentVersionId = candidate.SourceDocumentVersionId,
+                RequestedByUserId = candidate.RequestedByUserId, IdempotencyKey = candidate.IdempotencyKey,
+                PlanHash = candidate.PlanHash, PlannerVersion = candidate.PlannerVersion,
+                SelectedFindingIdsJson = candidate.SelectedFindingIdsJson,
+                ApprovedPlanSnapshotJson = candidate.ApprovedPlanSnapshotJson,
+                PlannedOperationCount = candidate.PlannedOperationCount, State = FixExecutionState.Queued,
+                CreatedAt = candidate.CreatedAt
+            };
+            return Task.FromResult(new FixExecutionEnqueueResult(job, false));
+        }
+        public Task<FixExecutionJob?> GetOwnedAsync(Guid executionId, Guid ownerUserId,
+            CancellationToken cancellationToken) => Task.FromResult(job?.Id == executionId ? job : null);
+    }
+
+    private sealed class InitiallyInterruptedApplyQueue : IFixPlanApprovalApplyQueue
+    {
+        public FixPlanRecord? Plan { get; private set; }
+        public FixPlanApprovalSnapshotRecord? Snapshot { get; private set; }
+        public bool JobExists { get; private set; }
+        public int EnqueueAttempts { get; private set; }
+        public int CreatedJobs { get; private set; }
+
+        public Task<FixExecutionEnqueueResult> EnqueueAsync(FixPlanRecord plan,
+            FixPlanApprovalSnapshotRecord snapshot, CancellationToken cancellationToken)
+        {
+            Plan = plan; Snapshot = snapshot; EnqueueAttempts++;
+            if (EnqueueAttempts == 1)
+                throw new FixPlanApprovalException("fix-plan-approval-enqueue-interrupted");
+            if (!JobExists) { JobExists = true; CreatedJobs++; }
+            return Task.FromResult(new FixExecutionEnqueueResult(new FixExecutionJob
+            {
+                Id = Id(81), AuditJobId = plan.SourceAuditJobId,
+                SourceDocumentVersionId = plan.SourceDocumentVersionId,
+                RequestedByUserId = plan.OwnerUserId, IdempotencyKey = plan.Id,
+                PlanHash = snapshot.PlanHash, PlannerVersion = FixPlanApprovalApplyQueue.PlannerVersion,
+                SelectedFindingIdsJson = "[]", ApprovedPlanSnapshotJson = snapshot.SnapshotJson,
+                PlannedOperationCount = plan.Items.Count, State = FixExecutionState.Queued,
+                CreatedAt = snapshot.ApprovedAt
+            }, EnqueueAttempts > 2));
+        }
+    }
+
+    private sealed class RecoveryRepository(InitiallyInterruptedApplyQueue queue)
+        : IFixPlanApprovalQueueRecoveryRepository
+    {
+        public Task<FixPlanApprovalQueueRecoveryCandidate?> LoadNextMissingAsync(
+            CancellationToken cancellationToken) => Task.FromResult(
+                queue.JobExists || queue.Plan is null || queue.Snapshot is null
+                    ? null
+                    : new FixPlanApprovalQueueRecoveryCandidate(queue.Plan, queue.Snapshot));
     }
 
     private sealed class FixedTimeProvider(DateTimeOffset now) : TimeProvider
@@ -321,7 +574,8 @@ public sealed class FixPlanApprovalTests
     }
 
     private sealed record TestContext(Guid AuditId, Guid OwnerId, FixPlanRecord Plan,
-        FixPlanDraftAggregate Aggregate, StubBuilder Builder, FixPlanApprovalService Service);
+        FixPlanDraftAggregate Aggregate, StubBuilder Builder, StubApplyQueue Queue,
+        FixPlanApprovalService Service);
     private static Guid Id(int value) => Guid.Parse($"00000000-0000-0000-0000-{value:000000000000}");
     private static string RepositoryRoot()
     {

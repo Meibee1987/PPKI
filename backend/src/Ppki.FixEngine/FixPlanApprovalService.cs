@@ -6,6 +6,7 @@ namespace Ppki.FixEngine;
 public sealed class FixPlanApprovalService(
     IFixPlanApprovalRepository repository,
     IFixPlanApprovalPreviewBuilder previewBuilder,
+    IFixPlanApprovalApplyQueue applyQueue,
     TimeProvider timeProvider) : IFixPlanApprovalService
 {
     public async Task<FixPlanApprovalDto?> ApproveAsync(Guid auditId, Guid planId, Guid ownerUserId,
@@ -23,10 +24,14 @@ public sealed class FixPlanApprovalService(
             aggregate => Prepare(aggregate, auditId, ownerUserId, approved, now), cancellationToken);
         if (result.ConflictCode is not null) throw new FixPlanApprovalException(result.ConflictCode);
         if (result.Plan is null || result.Snapshot is null) return null;
+        var enqueue = await applyQueue.EnqueueAsync(result.Plan, result.Snapshot, cancellationToken);
+        if (enqueue.ConflictCode is not null) throw new FixPlanApprovalException(enqueue.ConflictCode);
+        var applyJob = enqueue.Job ?? throw new FixPlanApprovalException("fix-plan-approval-apply-queue-failed");
         return new(result.Plan.Id, result.Plan.SourceAuditJobId, result.Plan.SourceDocumentVersionId,
             result.Plan.State, result.Snapshot.SchemaVersion, result.Snapshot.PlanHash,
             result.Snapshot.SourceVersionSha256, result.Snapshot.ApprovedByUserId,
-            result.Snapshot.ApprovedAt, result.Plan.Items.Count, result.Replayed);
+            result.Snapshot.ApprovedAt, result.Plan.Items.Count, applyJob.Id,
+            applyJob.State.ToString(), enqueue.IsReplay, result.Replayed);
     }
 
     private FixPlanApprovalPrepared Prepare(FixPlanDraftAggregate aggregate, Guid auditId,

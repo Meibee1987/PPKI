@@ -70,6 +70,9 @@ builder.Services.AddSingleton<IFixPlanPreviewPlanner, DeterministicFixPlanPrevie
 builder.Services.AddSingleton<IFixPlanSourceReader, FixPlanSourceReader>();
 builder.Services.AddSingleton<IFixExecutionRepository, FixExecutionRepository>();
 builder.Services.AddSingleton<IFixExecutionService, FixExecutionService>();
+builder.Services.AddSingleton<IFixPlanApprovalApplyQueue, FixPlanApprovalApplyQueue>();
+builder.Services.AddSingleton<IFixPlanApprovalQueueRecoveryRepository, FixPlanApprovalQueueRecoveryRepository>();
+builder.Services.AddSingleton<ApprovedFixPlanQueueRecoveryProcessor>();
 builder.Services.AddSingleton<IReauditService, ReauditService>();
 builder.Services.AddSingleton<IFindingResolutionService, FindingResolutionService>();
 builder.Services.AddSingleton<FixExecutionProcessor>();
@@ -82,6 +85,7 @@ builder.Services.AddSingleton<DocumentRenderProcessor>();
 builder.Services.AddSingleton<IRemediationFaultInjector, NoopRemediationFaultInjector>();
 builder.Services.AddHostedService<QueuedAuditWorker>();
 builder.Services.AddHostedService<QueuedFixExecutionWorker>();
+builder.Services.AddHostedService<ApprovedFixPlanQueueRecoveryWorker>();
 builder.Services.AddHostedService<AutomaticRemediationWorker>();
 builder.Services.AddHostedService<QueuedDocumentRenderWorker>();
 builder.Services.AddHostedService<TextCorrectionWorker>();

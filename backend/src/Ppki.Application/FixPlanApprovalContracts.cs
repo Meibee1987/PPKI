@@ -19,9 +19,13 @@ public sealed record FixPlanApprovalDto(
     Guid ApprovedByUserId,
     DateTimeOffset ApprovedAt,
     int ItemCount,
+    Guid ApplyJobId,
+    string ApplyJobState,
+    bool ApplyJobReplayed,
     bool Replayed);
 
-public sealed class FixPlanApprovalException(string diagnosticCode) : Exception(diagnosticCode)
+public sealed class FixPlanApprovalException(string diagnosticCode, Exception? innerException = null)
+    : Exception(diagnosticCode, innerException)
 {
     public string DiagnosticCode { get; } = diagnosticCode;
 }
@@ -76,6 +80,22 @@ public interface IFixPlanApprovalService
 {
     Task<FixPlanApprovalDto?> ApproveAsync(Guid auditId, Guid planId, Guid ownerUserId,
         IReadOnlyList<Guid> approvedConfirmItemIds, CancellationToken cancellationToken);
+}
+
+public interface IFixPlanApprovalApplyQueue
+{
+    Task<FixExecutionEnqueueResult> EnqueueAsync(FixPlanRecord plan,
+        FixPlanApprovalSnapshotRecord snapshot, CancellationToken cancellationToken);
+}
+
+public sealed record FixPlanApprovalQueueRecoveryCandidate(
+    FixPlanRecord Plan,
+    FixPlanApprovalSnapshotRecord Snapshot);
+
+public interface IFixPlanApprovalQueueRecoveryRepository
+{
+    Task<FixPlanApprovalQueueRecoveryCandidate?> LoadNextMissingAsync(
+        CancellationToken cancellationToken);
 }
 
 public sealed record ApprovedFixPlanSnapshot(
@@ -153,21 +173,11 @@ public static class FixPlanApprovalSnapshotSerializer
                     || approvedConfirmIds.Contains(value.ItemId), value.CapabilityId, value.CapabilityVersion,
                 value.Operation, value.Change, value.Analysis)).ToArray();
         var analysis = preview.MutationAnalysis ?? throw new FixPlanApprovalException("fix-plan-approval-analysis-missing");
-        var content = new
-        {
-            schemaVersion = SchemaVersion,
-            planId = preview.PlanId,
-            auditId = preview.AuditId,
-            sourceDocumentVersionId = preview.SourceDocumentVersionId,
-            sourceVersionSha256 = preview.SourceVersionSha256,
-            resolvedRuleSetHash = aggregate.Source.Audit.ResolvedRuleSetHash,
-            documentKindSnapshot = aggregate.Source.Audit.DocumentKindSnapshot!.Value.ToString(),
-            previewSchemaVersion = preview.SchemaVersion,
-            mutationAnalysisSchemaVersion = analysis.SchemaVersion,
-            items = ordered,
-            mutationAnalysis = analysis
-        };
-        var planHash = Sha(JsonSerializer.Serialize(content, Options));
+        var content = new ApprovedFixPlanContent(SchemaVersion, preview.PlanId, preview.AuditId,
+            preview.SourceDocumentVersionId, preview.SourceVersionSha256,
+            aggregate.Source.Audit.ResolvedRuleSetHash!, aggregate.Source.Audit.DocumentKindSnapshot!.Value.ToString(),
+            preview.SchemaVersion, analysis.SchemaVersion, ordered, analysis);
+        var planHash = ContentHash(content);
         var snapshot = new ApprovedFixPlanSnapshot(SchemaVersion, preview.PlanId, preview.AuditId,
             preview.SourceDocumentVersionId, preview.SourceVersionSha256,
             aggregate.Source.Audit.ResolvedRuleSetHash!, aggregate.Source.Audit.DocumentKindSnapshot.Value.ToString(),
@@ -178,6 +188,53 @@ public static class FixPlanApprovalSnapshotSerializer
 
     public static string ApprovalRequestHash(IEnumerable<Guid> ids) => Sha(string.Join('\n',
         ids.Distinct().Order().Select(value => value.ToString("D"))));
+
+    public static ApprovedFixPlanSnapshot Deserialize(string json)
+    {
+        try
+        {
+            var snapshot = JsonSerializer.Deserialize<ApprovedFixPlanSnapshot>(json, Options)
+                ?? throw new FixPlanApprovalException("fix-plan-approval-snapshot-invalid");
+            if (!string.Equals(snapshot.SchemaVersion, SchemaVersion, StringComparison.Ordinal))
+                throw new FixPlanApprovalException("fix-plan-approval-snapshot-version-unsupported");
+            if (snapshot.Items is null || snapshot.MutationAnalysis is null
+                || snapshot.PlanId == Guid.Empty || snapshot.AuditId == Guid.Empty
+                || snapshot.SourceDocumentVersionId == Guid.Empty || snapshot.ApprovedByUserId == Guid.Empty
+                || snapshot.Items.Count == 0 || !ValidSha(snapshot.PlanHash)
+                || !ValidSha(snapshot.SourceVersionSha256) || !ValidSha(snapshot.ResolvedRuleSetHash))
+                throw new FixPlanApprovalException("fix-plan-approval-snapshot-invalid");
+            var content = new ApprovedFixPlanContent(snapshot.SchemaVersion, snapshot.PlanId,
+                snapshot.AuditId, snapshot.SourceDocumentVersionId, snapshot.SourceVersionSha256,
+                snapshot.ResolvedRuleSetHash, snapshot.DocumentKindSnapshot, snapshot.PreviewSchemaVersion,
+                snapshot.MutationAnalysisSchemaVersion, snapshot.Items, snapshot.MutationAnalysis);
+            if (!string.Equals(snapshot.PlanHash, ContentHash(content), StringComparison.Ordinal))
+                throw new FixPlanApprovalException("fix-plan-approval-snapshot-hash-invalid");
+            return snapshot;
+        }
+        catch (JsonException exception)
+        {
+            throw new FixPlanApprovalException("fix-plan-approval-snapshot-invalid", exception);
+        }
+    }
+
+    private static string ContentHash(ApprovedFixPlanContent content) =>
+        Sha(JsonSerializer.Serialize(content, Options));
+
+    private static bool ValidSha(string? value) => value is { Length: 64 }
+        && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    private sealed record ApprovedFixPlanContent(
+        string SchemaVersion,
+        Guid PlanId,
+        Guid AuditId,
+        Guid SourceDocumentVersionId,
+        string SourceVersionSha256,
+        string ResolvedRuleSetHash,
+        string DocumentKindSnapshot,
+        string PreviewSchemaVersion,
+        string MutationAnalysisSchemaVersion,
+        IReadOnlyList<ApprovedFixPlanItemSnapshot> Items,
+        FixPlanMutationAnalysisDto MutationAnalysis);
 
     private static string Sha(string value) => Convert.ToHexStringLower(
         SHA256.HashData(Encoding.UTF8.GetBytes(value)));
