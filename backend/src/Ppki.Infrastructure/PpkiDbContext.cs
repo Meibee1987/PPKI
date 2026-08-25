@@ -19,6 +19,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
     public DbSet<AuditJob> AuditJobs => Set<AuditJob>();
     public DbSet<AuditRuleSnapshot> AuditRuleSnapshots => Set<AuditRuleSnapshot>();
     public DbSet<AuditFinding> AuditFindings => Set<AuditFinding>();
+    public DbSet<FixPlanRecord> FixPlans => Set<FixPlanRecord>();
+    public DbSet<FixPlanItemRecord> FixPlanItems => Set<FixPlanItemRecord>();
     public DbSet<FixExecutionJob> FixExecutionJobs => Set<FixExecutionJob>();
     public DbSet<AutomaticRemediationOrchestration> AutomaticRemediationOrchestrations => Set<AutomaticRemediationOrchestration>();
     public DbSet<FindingResolutionCase> FindingResolutionCases => Set<FindingResolutionCase>();
@@ -227,6 +229,43 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.HasIndex(x => x.AuditJobId).HasDatabaseName("ix_audit_findings_audit_job");
             entity.HasOne(x => x.AuditJob).WithMany(x => x.Findings).HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.Rule).WithMany().HasForeignKey(x => x.RuleId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<FixPlanRecord>(entity =>
+        {
+            entity.ToTable("fix_plans");
+            Common(entity);
+            entity.Property(x => x.SourceAuditJobId).HasColumnName("source_audit_job_id").IsRequired();
+            entity.Property(x => x.SourceDocumentVersionId).HasColumnName("source_document_version_id").IsRequired();
+            entity.Property(x => x.OwnerUserId).HasColumnName("owner_user_id").IsRequired();
+            entity.Property(x => x.ApproverUserId).HasColumnName("approver_user_id");
+            entity.Property(x => x.State).HasColumnName("state").HasConversion<string>().IsRequired();
+            entity.Property(x => x.CreatedAt).HasColumnType("timestamp with time zone");
+            entity.Property(x => x.UpdatedAt).HasColumnName("updated_at").HasColumnType("timestamp with time zone").IsRequired();
+            entity.Property(x => x.ApprovedAt).HasColumnName("approved_at").HasColumnType("timestamp with time zone");
+            entity.Property(x => x.ApplyingAt).HasColumnName("applying_at").HasColumnType("timestamp with time zone");
+            entity.Property(x => x.CompletedAt).HasColumnName("completed_at").HasColumnType("timestamp with time zone");
+            entity.Property(x => x.FailedAt).HasColumnName("failed_at").HasColumnType("timestamp with time zone");
+            entity.HasIndex(x => x.SourceAuditJobId).HasDatabaseName("ix_fix_plans_source_audit");
+            entity.HasIndex(x => x.SourceDocumentVersionId).HasDatabaseName("ix_fix_plans_source_version");
+            entity.HasIndex(x => new { x.OwnerUserId, x.State, x.CreatedAt }).HasDatabaseName("ix_fix_plans_owner_state_created");
+            entity.HasOne(x => x.SourceAuditJob).WithMany().HasForeignKey(x => x.SourceAuditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceDocumentVersion).WithMany().HasForeignKey(x => x.SourceDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasMany(x => x.Items).WithOne(x => x.FixPlan).HasForeignKey(x => x.FixPlanId).OnDelete(DeleteBehavior.Cascade);
+            entity.Navigation(x => x.Items).UsePropertyAccessMode(PropertyAccessMode.Field);
+        });
+
+        builder.Entity<FixPlanItemRecord>(entity =>
+        {
+            entity.ToTable("fix_plan_items");
+            Common(entity);
+            entity.Property(x => x.FixPlanId).HasColumnName("fix_plan_id").IsRequired();
+            entity.Property(x => x.FindingId).HasColumnName("finding_id").IsRequired();
+            entity.Property(x => x.CreatedAt).HasColumnType("timestamp with time zone");
+            entity.HasIndex(x => new { x.FixPlanId, x.FindingId }).IsUnique()
+                .HasDatabaseName("uq_fix_plan_items_plan_finding");
+            entity.HasIndex(x => x.FindingId).HasDatabaseName("ix_fix_plan_items_finding");
+            entity.HasOne(x => x.Finding).WithMany().HasForeignKey(x => x.FindingId).OnDelete(DeleteBehavior.Restrict);
         });
 
         builder.Entity<DocumentRenderJob>(entity =>
@@ -601,6 +640,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
 
     private void RejectImmutableEntityMutations()
     {
+        ValidateFixPlanMutations();
+
         var immutableAuditProperties = new[]
         {
             nameof(AuditJob.DocumentVersionId), nameof(AuditJob.ProfileVersionId),
@@ -669,5 +710,63 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             || entry.State == EntityState.Modified
                 && immutableBatchItemProperties.Any(name => entry.Property(name).IsModified)))
             throw new InvalidOperationException("Text correction batch item identity is immutable.");
+    }
+
+    private void ValidateFixPlanMutations()
+    {
+        foreach (var entry in ChangeTracker.Entries<FixPlanRecord>())
+        {
+            if (entry.State == EntityState.Added)
+            {
+                if (entry.Entity.SourceAuditJobId == Guid.Empty || entry.Entity.SourceDocumentVersionId == Guid.Empty
+                    || entry.Entity.OwnerUserId == Guid.Empty || entry.Entity.State != FixPlanLifecycleState.Draft
+                    || entry.Entity.ApproverUserId is not null || entry.Entity.ApprovedAt is not null)
+                    throw new InvalidOperationException("A new fix plan must be a valid unapproved draft.");
+                continue;
+            }
+
+            if (entry.State == EntityState.Deleted && entry.Entity.State != FixPlanLifecycleState.Draft)
+                throw new InvalidOperationException("Approved or historical fix plans cannot be deleted.");
+            if (entry.State != EntityState.Modified) continue;
+
+            var identityProperties = new[]
+            {
+                nameof(FixPlanRecord.SourceAuditJobId), nameof(FixPlanRecord.SourceDocumentVersionId),
+                nameof(FixPlanRecord.OwnerUserId), nameof(FixPlanRecord.CreatedAt)
+            };
+            if (identityProperties.Any(name => entry.Property(name).IsModified))
+                throw new InvalidOperationException("Fix plan source identity is immutable.");
+
+            var originalState = entry.Property(plan => plan.State).OriginalValue;
+            var currentState = entry.Entity.State;
+            var validTransition = originalState == currentState
+                || originalState == FixPlanLifecycleState.Draft && currentState == FixPlanLifecycleState.Approved
+                || originalState == FixPlanLifecycleState.Approved && currentState == FixPlanLifecycleState.Applying
+                || originalState == FixPlanLifecycleState.Applying
+                    && currentState is FixPlanLifecycleState.Completed or FixPlanLifecycleState.Failed;
+            if (!validTransition) throw new InvalidOperationException("Invalid fix plan lifecycle transition.");
+
+            if (originalState != FixPlanLifecycleState.Draft && originalState == currentState)
+                throw new InvalidOperationException("Approved or historical fix plans cannot be edited.");
+        }
+
+        var planStates = ChangeTracker.Entries<FixPlanRecord>().ToDictionary(entry => entry.Entity.Id, entry => entry.Entity.State);
+        foreach (var entry in ChangeTracker.Entries<FixPlanItemRecord>())
+        {
+            if (entry.State == EntityState.Modified)
+                throw new InvalidOperationException("Fix plan item identity is immutable.");
+            if (entry.State is not (EntityState.Added or EntityState.Deleted)) continue;
+
+            var planState = entry.Entity.FixPlan?.State;
+            if (planState is null && planStates.TryGetValue(entry.Entity.FixPlanId, out var trackedState)) planState = trackedState;
+            if (planState is not null && planState != FixPlanLifecycleState.Draft)
+                throw new InvalidOperationException("Approved or executing fix plan items are immutable.");
+        }
+
+        var duplicateItems = ChangeTracker.Entries<FixPlanItemRecord>()
+            .Where(entry => entry.State != EntityState.Deleted)
+            .GroupBy(entry => new { entry.Entity.FixPlanId, entry.Entity.FindingId })
+            .Any(group => group.Count() > 1);
+        if (duplicateItems) throw new InvalidOperationException("A finding can appear only once in a fix plan.");
     }
 }

@@ -236,6 +236,156 @@ public sealed class AuditFinding : Entity
     public FindingStatus Status { get; set; } = FindingStatus.Open;
 }
 
+public sealed class FixPlanRecord : Entity
+{
+    private readonly List<FixPlanItemRecord> _items = [];
+
+    private FixPlanRecord() { }
+
+    public Guid SourceAuditJobId { get; private set; }
+    public AuditJob? SourceAuditJob { get; private set; }
+    public Guid SourceDocumentVersionId { get; private set; }
+    public DocumentVersion? SourceDocumentVersion { get; private set; }
+    public Guid OwnerUserId { get; private set; }
+    public Guid? ApproverUserId { get; private set; }
+    public FixPlanLifecycleState State { get; private set; } = FixPlanLifecycleState.Draft;
+    public DateTimeOffset UpdatedAt { get; private set; }
+    public DateTimeOffset? ApprovedAt { get; private set; }
+    public DateTimeOffset? ApplyingAt { get; private set; }
+    public DateTimeOffset? CompletedAt { get; private set; }
+    public DateTimeOffset? FailedAt { get; private set; }
+    public IReadOnlyCollection<FixPlanItemRecord> Items => _items;
+
+    public static FixPlanRecord Create(AuditJob sourceAuditJob, Guid ownerUserId, DateTimeOffset now)
+    {
+        ArgumentNullException.ThrowIfNull(sourceAuditJob);
+        if (sourceAuditJob.Id == Guid.Empty) throw new ArgumentException("Source audit job is required.", nameof(sourceAuditJob));
+        if (sourceAuditJob.DocumentVersionId == Guid.Empty) throw new ArgumentException("Source document version is required.", nameof(sourceAuditJob));
+        if (ownerUserId == Guid.Empty) throw new ArgumentException("Owner is required.", nameof(ownerUserId));
+
+        return new FixPlanRecord
+        {
+            SourceAuditJobId = sourceAuditJob.Id,
+            SourceAuditJob = sourceAuditJob,
+            SourceDocumentVersionId = sourceAuditJob.DocumentVersionId,
+            SourceDocumentVersion = sourceAuditJob.DocumentVersion,
+            OwnerUserId = ownerUserId,
+            CreatedAt = now,
+            UpdatedAt = now
+        };
+    }
+
+    public FixPlanItemRecord AddItem(AuditFinding finding, DateTimeOffset now)
+    {
+        EnsureDraft();
+        ValidateFindingLineage(finding);
+        if (_items.Any(item => item.FindingId == finding.Id))
+            throw new InvalidOperationException("A finding can appear only once in a fix plan.");
+
+        var item = FixPlanItemRecord.Create(this, finding, now);
+        _items.Add(item);
+        UpdatedAt = now;
+        return item;
+    }
+
+    public void RemoveItem(Guid findingId, DateTimeOffset now)
+    {
+        EnsureDraft();
+        var item = _items.SingleOrDefault(value => value.FindingId == findingId)
+            ?? throw new InvalidOperationException("Fix plan item was not found.");
+        _items.Remove(item);
+        UpdatedAt = now;
+    }
+
+    public void ReplaceItems(IEnumerable<AuditFinding> findings, DateTimeOffset now)
+    {
+        EnsureDraft();
+        ArgumentNullException.ThrowIfNull(findings);
+        var replacements = findings.ToArray();
+        foreach (var finding in replacements) ValidateFindingLineage(finding);
+        if (replacements.Select(finding => finding.Id).Distinct().Count() != replacements.Length)
+            throw new InvalidOperationException("A finding can appear only once in a fix plan.");
+
+        _items.Clear();
+        _items.AddRange(replacements.Select(finding => FixPlanItemRecord.Create(this, finding, now)));
+        UpdatedAt = now;
+    }
+
+    public void Approve(Guid approverUserId, DateTimeOffset now)
+    {
+        if (State != FixPlanLifecycleState.Draft)
+            throw new InvalidOperationException("Only a draft fix plan can be approved.");
+        if (approverUserId == Guid.Empty) throw new ArgumentException("Approver is required.", nameof(approverUserId));
+        State = FixPlanLifecycleState.Approved;
+        ApproverUserId = approverUserId;
+        ApprovedAt = now;
+        UpdatedAt = now;
+    }
+
+    public void BeginApplying(DateTimeOffset now)
+    {
+        Transition(FixPlanLifecycleState.Approved, FixPlanLifecycleState.Applying, now);
+        ApplyingAt = now;
+    }
+
+    public void Complete(DateTimeOffset now)
+    {
+        Transition(FixPlanLifecycleState.Applying, FixPlanLifecycleState.Completed, now);
+        CompletedAt = now;
+    }
+
+    public void Fail(DateTimeOffset now)
+    {
+        Transition(FixPlanLifecycleState.Applying, FixPlanLifecycleState.Failed, now);
+        FailedAt = now;
+    }
+
+    private void Transition(FixPlanLifecycleState expected, FixPlanLifecycleState next, DateTimeOffset now)
+    {
+        if (State != expected)
+            throw new InvalidOperationException($"Fix plan cannot transition from {State} to {next}.");
+        State = next;
+        UpdatedAt = now;
+    }
+
+    private void EnsureDraft()
+    {
+        if (State != FixPlanLifecycleState.Draft)
+            throw new InvalidOperationException("Approved or executing fix plan items are immutable.");
+    }
+
+    private void ValidateFindingLineage(AuditFinding finding)
+    {
+        ArgumentNullException.ThrowIfNull(finding);
+        if (finding.Id == Guid.Empty) throw new ArgumentException("Finding is required.", nameof(finding));
+        if (finding.AuditJobId != SourceAuditJobId)
+            throw new InvalidOperationException("Finding belongs to another audit job.");
+        if (finding.AuditJob is null)
+            throw new InvalidOperationException("Finding audit lineage must be loaded.");
+        if (finding.AuditJob.DocumentVersionId != SourceDocumentVersionId)
+            throw new InvalidOperationException("Finding belongs to another document version.");
+    }
+}
+
+public sealed class FixPlanItemRecord : Entity
+{
+    private FixPlanItemRecord() { }
+
+    public Guid FixPlanId { get; private set; }
+    public FixPlanRecord? FixPlan { get; private set; }
+    public Guid FindingId { get; private set; }
+    public AuditFinding? Finding { get; private set; }
+
+    internal static FixPlanItemRecord Create(FixPlanRecord plan, AuditFinding finding, DateTimeOffset now) => new()
+    {
+        FixPlanId = plan.Id,
+        FixPlan = plan,
+        FindingId = finding.Id,
+        Finding = finding,
+        CreatedAt = now
+    };
+}
+
 public sealed class FixExecutionJob : Entity
 {
     public Guid AuditJobId { get; set; }

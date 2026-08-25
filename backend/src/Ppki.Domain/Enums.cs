@@ -97,6 +97,15 @@ public enum FixExecutionState
     NoChange
 }
 
+public enum FixPlanLifecycleState
+{
+    Draft,
+    Approved,
+    Applying,
+    Completed,
+    Failed
+}
+
 public enum AutomaticRemediationState
 {
     Pending,
