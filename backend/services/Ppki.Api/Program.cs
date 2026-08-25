@@ -34,6 +34,8 @@ builder.Services.AddScoped<IFileStorage, SupabaseFileStorage>();
 builder.Services.AddScoped<IAuditReadService, AuditReadService>();
 builder.Services.AddScoped<IFixPlanSourceReader, FixPlanSourceReader>();
 builder.Services.AddScoped<IFixPlanPreviewService, FixPlanPreviewService>();
+builder.Services.AddScoped<IFixPlanDraftRepository, FixPlanDraftRepository>();
+builder.Services.AddScoped<IFixPlanDraftService, FixPlanDraftService>();
 builder.Services.AddScoped<IFixExecutionRepository, FixExecutionRepository>();
 builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();
 builder.Services.AddScoped<IReauditService, ReauditService>();
@@ -220,6 +222,69 @@ api.MapPost("/audits/{id:guid}/fix-plan-preview", async (Guid id,
   .Accepts<FixPlanPreviewRequest>("application/json")
   .Produces<FixPlanPreview>(StatusCodes.Status200OK)
   .ProducesProblem(StatusCodes.Status400BadRequest)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapPost("/audits/{id:guid}/fix-plans", async (Guid id,
+    ClaimsPrincipal user, HttpRequest httpRequest, FixPlanDraftCreateRequest? request,
+    IFixPlanDraftService plans, CancellationToken ct) => {
+    string? selectionError=null;
+    if(request is null||!FixPlanSelection.TryCreate(request.FindingIds,out var selection,out selectionError))
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid draft fix plan request.",
+            extensions:new Dictionary<string,object?>{{"code",selectionError??"fix-plan-request-invalid"}});
+    if(!TryIdempotencyKey(httpRequest,out var idempotencyKey))
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid Idempotency-Key.",
+            extensions:new Dictionary<string,object?>{{"code","fix-plan-idempotency-key-invalid"}});
+    try {
+        var result=await plans.CreateAsync(id,UserId(user),idempotencyKey,selection,ct);
+        if(result is null)return Results.NotFound();
+        return result.Replayed?Results.Ok(result):Results.Created($"/api/audits/{id}/fix-plans/{result.Id}",result);
+    } catch(FixPlanDraftException exception) { return FixPlanDraftProblem(exception); }
+}).WithName("CreateAuditDraftFixPlan")
+  .WithSummary("Create an owner-scoped draft from backend-eligible audit findings.")
+  .Accepts<FixPlanDraftCreateRequest>("application/json")
+  .Produces<FixPlanDraftDto>(StatusCodes.Status201Created)
+  .Produces<FixPlanDraftDto>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .ProducesProblem(StatusCodes.Status409Conflict)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapGet("/audits/{id:guid}/fix-plans/{planId:guid}", async (Guid id, Guid planId,
+    ClaimsPrincipal user, IFixPlanDraftService plans, CancellationToken ct) => {
+    var result=await plans.GetAsync(id,planId,UserId(user),ct);
+    return result is null?Results.NotFound():Results.Ok(result);
+}).WithName("GetAuditDraftFixPlan")
+  .WithSummary("Read an owned fix plan and its authoritative stale/eligibility state.")
+  .Produces<FixPlanDraftDto>(StatusCodes.Status200OK)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapPut("/audits/{id:guid}/fix-plans/{planId:guid}", async (Guid id, Guid planId,
+    ClaimsPrincipal user, FixPlanDraftUpdateRequest? request,
+    IFixPlanDraftService plans, CancellationToken ct) => {
+    string? selectionError=null;
+    if(request is null||!FixPlanSelection.TryCreate(request.FindingIds,out var selection,out selectionError))
+        return Results.Problem(statusCode:StatusCodes.Status400BadRequest,title:"Invalid draft fix plan request.",
+            extensions:new Dictionary<string,object?>{{"code",selectionError??"fix-plan-request-invalid"}});
+    try {
+        var result=await plans.UpdateAsync(id,planId,UserId(user),selection,ct);
+        return result is null?Results.NotFound():Results.Ok(result);
+    } catch(FixPlanDraftException exception) { return FixPlanDraftProblem(exception); }
+}).WithName("UpdateAuditDraftFixPlan")
+  .WithSummary("Replace the selected findings of an owned draft fix plan.")
+  .Accepts<FixPlanDraftUpdateRequest>("application/json")
+  .Produces<FixPlanDraftDto>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status400BadRequest)
+  .ProducesProblem(StatusCodes.Status409Conflict)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapDelete("/audits/{id:guid}/fix-plans/{planId:guid}", async (Guid id, Guid planId,
+    ClaimsPrincipal user, IFixPlanDraftService plans, CancellationToken ct) => {
+    try {
+        return await plans.DeleteAsync(id,planId,UserId(user),ct)?Results.NoContent():Results.NotFound();
+    } catch(FixPlanDraftException exception) { return FixPlanDraftProblem(exception); }
+}).WithName("DeleteAuditDraftFixPlan")
+  .WithSummary("Delete an owned draft fix plan.")
+  .Produces(StatusCodes.Status204NoContent)
+  .ProducesProblem(StatusCodes.Status409Conflict)
   .Produces(StatusCodes.Status404NotFound);
 
 api.MapPost("/audits/{id:guid}/fix-executions", async (Guid id,
@@ -569,6 +634,16 @@ static IResult FindingReviewProblem(FindingReviewException exception) {
         _=>StatusCodes.Status409Conflict};
     return Results.Problem(statusCode:status,title:"Finding review command was rejected.",
         extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
+}
+
+static IResult FixPlanDraftProblem(FixPlanDraftException exception) {
+    var badRequest=exception.DiagnosticCode is "fix-plan-item-ineligible" or "fix-plan-selection-not-found"
+        or "fix-plan-idempotency-key-invalid";
+    var extensions=new Dictionary<string,object?>{{"code",exception.DiagnosticCode}};
+    if(exception.EligibilityReason is not null)extensions["eligibilityReason"]=exception.EligibilityReason.Value.ToString();
+    return Results.Problem(statusCode:badRequest?StatusCodes.Status400BadRequest:StatusCodes.Status409Conflict,
+        title:badRequest?"Invalid draft fix plan request.":"Draft fix plan request conflicts with authoritative state.",
+        extensions:extensions);
 }
 
 static IResult TextCorrectionProblem(TextCorrectionException exception) {

@@ -247,6 +247,8 @@ public sealed class FixPlanRecord : Entity
     public Guid SourceDocumentVersionId { get; private set; }
     public DocumentVersion? SourceDocumentVersion { get; private set; }
     public Guid OwnerUserId { get; private set; }
+    public Guid IdempotencyKey { get; private set; }
+    public string RequestHash { get; private set; } = string.Empty;
     public Guid? ApproverUserId { get; private set; }
     public FixPlanLifecycleState State { get; private set; } = FixPlanLifecycleState.Draft;
     public DateTimeOffset UpdatedAt { get; private set; }
@@ -256,12 +258,24 @@ public sealed class FixPlanRecord : Entity
     public DateTimeOffset? FailedAt { get; private set; }
     public IReadOnlyCollection<FixPlanItemRecord> Items => _items;
 
-    public static FixPlanRecord Create(AuditJob sourceAuditJob, Guid ownerUserId, DateTimeOffset now)
+    public static FixPlanRecord Create(AuditJob sourceAuditJob, Guid ownerUserId, DateTimeOffset now) =>
+        Create(sourceAuditJob, ownerUserId, Guid.NewGuid(), new string('0', 64), now);
+
+    public static FixPlanRecord Create(
+        AuditJob sourceAuditJob,
+        Guid ownerUserId,
+        Guid idempotencyKey,
+        string requestHash,
+        DateTimeOffset now)
     {
         ArgumentNullException.ThrowIfNull(sourceAuditJob);
         if (sourceAuditJob.Id == Guid.Empty) throw new ArgumentException("Source audit job is required.", nameof(sourceAuditJob));
         if (sourceAuditJob.DocumentVersionId == Guid.Empty) throw new ArgumentException("Source document version is required.", nameof(sourceAuditJob));
         if (ownerUserId == Guid.Empty) throw new ArgumentException("Owner is required.", nameof(ownerUserId));
+        if (idempotencyKey == Guid.Empty) throw new ArgumentException("Idempotency key is required.", nameof(idempotencyKey));
+        if (requestHash is not { Length: 64 }
+            || requestHash.Any(character => character is not (>= '0' and <= '9' or >= 'a' and <= 'f')))
+            throw new ArgumentException("Request hash is invalid.", nameof(requestHash));
 
         return new FixPlanRecord
         {
@@ -270,6 +284,8 @@ public sealed class FixPlanRecord : Entity
             SourceDocumentVersionId = sourceAuditJob.DocumentVersionId,
             SourceDocumentVersion = sourceAuditJob.DocumentVersion,
             OwnerUserId = ownerUserId,
+            IdempotencyKey = idempotencyKey,
+            RequestHash = requestHash,
             CreatedAt = now,
             UpdatedAt = now
         };

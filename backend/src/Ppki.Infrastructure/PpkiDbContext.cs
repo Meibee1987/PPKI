@@ -238,6 +238,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.Property(x => x.SourceAuditJobId).HasColumnName("source_audit_job_id").IsRequired();
             entity.Property(x => x.SourceDocumentVersionId).HasColumnName("source_document_version_id").IsRequired();
             entity.Property(x => x.OwnerUserId).HasColumnName("owner_user_id").IsRequired();
+            entity.Property(x => x.IdempotencyKey).HasColumnName("idempotency_key").IsRequired();
+            entity.Property(x => x.RequestHash).HasColumnName("request_hash").HasMaxLength(64).IsRequired();
             entity.Property(x => x.ApproverUserId).HasColumnName("approver_user_id");
             entity.Property(x => x.State).HasColumnName("state").HasConversion<string>().IsRequired();
             entity.Property(x => x.CreatedAt).HasColumnType("timestamp with time zone");
@@ -249,6 +251,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.HasIndex(x => x.SourceAuditJobId).HasDatabaseName("ix_fix_plans_source_audit");
             entity.HasIndex(x => x.SourceDocumentVersionId).HasDatabaseName("ix_fix_plans_source_version");
             entity.HasIndex(x => new { x.OwnerUserId, x.State, x.CreatedAt }).HasDatabaseName("ix_fix_plans_owner_state_created");
+            entity.HasIndex(x => new { x.OwnerUserId, x.IdempotencyKey }).IsUnique()
+                .HasDatabaseName("uq_fix_plans_owner_idempotency");
             entity.HasOne(x => x.SourceAuditJob).WithMany().HasForeignKey(x => x.SourceAuditJobId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.SourceDocumentVersion).WithMany().HasForeignKey(x => x.SourceDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
             entity.HasMany(x => x.Items).WithOne(x => x.FixPlan).HasForeignKey(x => x.FixPlanId).OnDelete(DeleteBehavior.Cascade);
@@ -719,7 +723,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             if (entry.State == EntityState.Added)
             {
                 if (entry.Entity.SourceAuditJobId == Guid.Empty || entry.Entity.SourceDocumentVersionId == Guid.Empty
-                    || entry.Entity.OwnerUserId == Guid.Empty || entry.Entity.State != FixPlanLifecycleState.Draft
+                    || entry.Entity.OwnerUserId == Guid.Empty || entry.Entity.IdempotencyKey == Guid.Empty
+                    || entry.Entity.RequestHash.Length != 64 || entry.Entity.State != FixPlanLifecycleState.Draft
                     || entry.Entity.ApproverUserId is not null || entry.Entity.ApprovedAt is not null)
                     throw new InvalidOperationException("A new fix plan must be a valid unapproved draft.");
                 continue;
@@ -732,7 +737,8 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             var identityProperties = new[]
             {
                 nameof(FixPlanRecord.SourceAuditJobId), nameof(FixPlanRecord.SourceDocumentVersionId),
-                nameof(FixPlanRecord.OwnerUserId), nameof(FixPlanRecord.CreatedAt)
+                nameof(FixPlanRecord.OwnerUserId), nameof(FixPlanRecord.IdempotencyKey),
+                nameof(FixPlanRecord.RequestHash), nameof(FixPlanRecord.CreatedAt)
             };
             if (identityProperties.Any(name => entry.Property(name).IsModified))
                 throw new InvalidOperationException("Fix plan source identity is immutable.");
