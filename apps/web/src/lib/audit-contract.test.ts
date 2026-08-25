@@ -32,6 +32,7 @@ const finding = {
   message: "page-size-invalid", actual: { Property: "width", RawValue: "200" }, expected: { Property: "width", AcceptedValues: ["210"] },
   location: { CompactLocation: "document", SectionIndex: null, BodyElementIndex: null, ParagraphIndex: null, RunIndex: null },
   confidence: 1, source: { sourceSection: "Format", pdfPage: 12, printedPage: "9" }, actionAvailability: "None",
+  eligibility: "Eligible", eligibilityReason: "Eligible", requiresExplicitApproval: false,
   pageLocation: { pageNumber: 2, confidence: "Exact", state: "Completed" },
 };
 

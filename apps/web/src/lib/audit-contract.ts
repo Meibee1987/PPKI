@@ -1,6 +1,8 @@
 export const auditStatuses = ["Queued", "Processing", "Completed", "Failed", "Cancelled"] as const;
 export const severities = ["Error", "Warning", "Info"] as const;
 export const fixModes = ["Auto", "Confirm", "Manual", "Report"] as const;
+export const fixEligibilityStatuses = ["Eligible", "Ineligible"] as const;
+export const fixEligibilityReasons = ["Eligible", "SourceContextInvalid", "AuditNotCompleted", "FindingNotOpen", "ResolutionStateBlocksFix", "ReviewStateBlocksFix", "ManualFixMode", "ReportFixMode", "FixModeUnsupported", "ValidationKeyUnsupported", "FixerNotRegistered", "FixerVersionIncompatible", "FindingContractUnsupported"] as const;
 export const scoreStates = ["Calculated", "NotConfigured", "InvalidConfiguration", "NotApplicable", "AuditIncomplete"] as const;
 export const actionAvailabilities = ["None", "Automatic"] as const;
 export const automaticRemediationStates = ["Pending", "NoAction", "Queued", "Processing", "ReauditPending", "Completed", "Failed", "Conflict"] as const;
@@ -17,6 +19,8 @@ export const reviewReadinessReasons = ["AuditFailed", "AuditCancelled", "PolicyU
 export type AuditStatus = (typeof auditStatuses)[number];
 export type Severity = (typeof severities)[number];
 export type FixMode = (typeof fixModes)[number];
+export type FixEligibilityStatus = (typeof fixEligibilityStatuses)[number];
+export type FixEligibilityReason = (typeof fixEligibilityReasons)[number];
 export type ScoreState = (typeof scoreStates)[number];
 export type ActionAvailability = (typeof actionAvailabilities)[number];
 export type AutomaticRemediationState = (typeof automaticRemediationStates)[number];
@@ -69,6 +73,9 @@ export type AuditFinding = {
   confidence: number | null;
   source: AuditSource;
   actionAvailability: ActionAvailability;
+  eligibility: FixEligibilityStatus;
+  eligibilityReason: FixEligibilityReason;
+  requiresExplicitApproval: boolean;
   pageLocation: { pageNumber: number | null; confidence: PageLocationConfidence; state: DocumentRenderState | null };
 };
 
@@ -178,6 +185,11 @@ function nullableUuid(value: unknown): string | null {
   return value === null ? null : uuid(value);
 }
 
+function booleanValue(value: unknown): boolean {
+  if (typeof value !== "boolean") throw new ApiContractError();
+  return value;
+}
+
 function nullableSha256(value: unknown): string | null {
   if (value === null) return null;
   const parsed = string(value);
@@ -259,6 +271,9 @@ function finding(value: unknown): AuditFinding {
     confidence: nullableNumber(data.confidence),
     source: source(data.source),
     actionAvailability: enumValue(data.actionAvailability, actionAvailabilities),
+    eligibility: enumValue(data.eligibility, fixEligibilityStatuses),
+    eligibilityReason: enumValue(data.eligibilityReason, fixEligibilityReasons),
+    requiresExplicitApproval: booleanValue(data.requiresExplicitApproval),
     pageLocation: {
       pageNumber: pageLocation.pageNumber === null ? null : positiveInteger(pageLocation.pageNumber),
       confidence: enumValue(pageLocation.confidence, pageLocationConfidences),

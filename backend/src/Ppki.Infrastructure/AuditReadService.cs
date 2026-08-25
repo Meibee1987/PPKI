@@ -7,7 +7,8 @@ namespace Ppki.Infrastructure;
 
 public sealed class AuditReadService(
     IDbContextFactory<PpkiDbContext> dbFactory,
-    IAuditScoreCalculator scoreCalculator) : IAuditReadService
+    IAuditScoreCalculator scoreCalculator,
+    IFixEligibilityService eligibilityService) : IAuditReadService
 {
     public async Task<AuditSummaryDto?> GetSummaryAsync(
         Guid auditId,
@@ -204,11 +205,11 @@ public sealed class AuditReadService(
     {
         ArgumentNullException.ThrowIfNull(query);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
-        var documentVersionId = await db.AuditJobs.AsNoTracking()
+        var auditContext = await db.AuditJobs.AsNoTracking()
             .Where(value => value.Id == auditId)
-            .Select(value => (Guid?)value.DocumentVersionId)
+            .Select(value => new { value.DocumentVersionId, value.Status })
             .SingleOrDefaultAsync(cancellationToken);
-        if (documentVersionId is null) return null;
+        if (auditContext is null) return null;
 
         var filtered = AuditReadQueries.DatabaseFindings(db, auditId, query);
         var totalCount = await filtered.CountAsync(cancellationToken);
@@ -249,8 +250,8 @@ public sealed class AuditReadService(
             rows.Select(value => value.DocumentVersionId).FirstOrDefault(), cancellationToken);
         var pageLocations = await PageLocationsAsync(db, render, rows, cancellationToken);
 
-        return new(auditId, documentVersionId.Value, query.Page, query.PageSize, totalCount,
-            rows.Select(row => ToListItem(row, automaticFindingIds,
+        return new(auditId, auditContext.DocumentVersionId, query.Page, query.PageSize, totalCount,
+            rows.Select(row => ToListItem(row, auditContext.Status, automaticFindingIds,
                 pageLocations.GetValueOrDefault(row.Id, RenderFallback(render)))).ToArray());
     }
 
@@ -288,6 +289,9 @@ public sealed class AuditReadService(
         var resolutionState = FindingResolutionProjection.State(latestResolution);
         var reviewState = FindingReviewProjection.State(latestReview);
         var disposition = AuditFindingDispositionProjection.Resolve(row.FindingState, latestResolution, latestReview);
+        var auditStatus = await db.AuditJobs.AsNoTracking().Where(value => value.Id == auditId)
+            .Select(value => value.Status).SingleAsync(cancellationToken);
+        var fixEligibility = EvaluateEligibility(row, auditStatus, resolutionState, reviewState);
 
         return new(
             row.Id,
@@ -313,13 +317,21 @@ public sealed class AuditReadService(
             row.Confidence,
             Source(row),
             automaticFindingIds.Contains(row.Id) ? "Automatic" : "None",
-            pageLocations.GetValueOrDefault(row.Id, RenderFallback(render)));
+            pageLocations.GetValueOrDefault(row.Id, RenderFallback(render)),
+            fixEligibility.Status, fixEligibility.ReasonCode,
+            fixEligibility.RequiresExplicitApproval);
     }
 
-    private static AuditFindingListItemDto ToListItem(
+    private AuditFindingListItemDto ToListItem(
         AuditFindingReadRow row,
+        AuditJobStatus auditStatus,
         IReadOnlySet<Guid> automaticFindingIds,
-        FindingPageLocationDto pageLocation) => new(
+        FindingPageLocationDto pageLocation)
+    {
+        var fixEligibility = EvaluateEligibility(row, auditStatus,
+            Enum.Parse<FindingResolutionState>(row.ResolutionState),
+            Enum.Parse<FindingReviewState>(row.ReviewState));
+        return new(
         row.Id,
         row.AuditId,
         row.RuleOrdinal,
@@ -342,7 +354,18 @@ public sealed class AuditReadService(
         row.Confidence,
         Source(row),
         automaticFindingIds.Contains(row.Id) ? "Automatic" : "None",
-        pageLocation);
+        pageLocation,
+        fixEligibility.Status, fixEligibility.ReasonCode,
+        fixEligibility.RequiresExplicitApproval);
+    }
+
+    private FixEligibilityResult EvaluateEligibility(AuditFindingReadRow row,
+        AuditJobStatus auditStatus, FindingResolutionState resolutionState,
+        FindingReviewState reviewState) => eligibilityService.Evaluate(new(row.AuditId,
+        auditStatus, row.DocumentVersionId, new(row.Id, row.RuleOrdinal, row.RuleCode,
+            row.Domain, row.Element, row.ValidationKey, row.Severity, row.FixMode,
+            row.FindingState, row.ActualJson, row.ExpectedJson, row.LocationJson,
+            row.SnapshotSchemaVersion), row.Confidence, resolutionState, reviewState));
 
     private static async Task<RenderReadState> RenderStateAsync(
         PpkiDbContext db, Guid documentVersionId, CancellationToken cancellationToken)

@@ -255,7 +255,10 @@ public sealed record AuditFindingListItemDto(
     decimal? Confidence,
     AuditFindingSourceDto Source,
     string ActionAvailability,
-    FindingPageLocationDto? PageLocation = null);
+    FindingPageLocationDto? PageLocation,
+    FixEligibilityStatus Eligibility,
+    FixEligibilityReasonCode EligibilityReason,
+    bool RequiresExplicitApproval);
 
 public sealed record AuditFindingDetailDto(
     Guid Id,
@@ -281,7 +284,10 @@ public sealed record AuditFindingDetailDto(
     decimal? Confidence,
     AuditFindingSourceDto Source,
     string ActionAvailability,
-    FindingPageLocationDto? PageLocation = null);
+    FindingPageLocationDto? PageLocation,
+    FixEligibilityStatus Eligibility,
+    FixEligibilityReasonCode EligibilityReason,
+    bool RequiresExplicitApproval);
 
 public sealed record AuditFindingPageDto(
     Guid AuditId,
