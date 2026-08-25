@@ -550,6 +550,7 @@ public sealed class FixPlanDraftPreviewServiceTests
         public int ApplyCalls { get; private set; }
         public string CapabilityId => id;
         public string CapabilityVersion => version;
+        public IReadOnlySet<string> ValidationKeys { get; } = new HashSet<string>(["body.justified"], StringComparer.Ordinal);
         public Task<FixApplyOutcome> ApplyAsync(FixApplyContext context, CancellationToken cancellationToken)
         { ApplyCalls++; throw new InvalidOperationException("preview invoked apply"); }
     }

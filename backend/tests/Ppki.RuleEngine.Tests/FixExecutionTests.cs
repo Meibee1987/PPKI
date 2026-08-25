@@ -33,6 +33,10 @@ public sealed class FixApplyCapabilityTests
         Assert.Contains(registry.Capabilities, value => value.CapabilityId == BodyFirstLineIndentFixProvider.Id);
         Assert.Contains(registry.Capabilities, value => value.CapabilityId == AbstractParagraphSpacingFixProvider.Id);
         Assert.Contains(registry.Capabilities, value => value.CapabilityId == ChapterCenteredFixProvider.Id);
+        var apply = ProductionFixCapabilities.CreateApplyRegistry();
+        Assert.All(registry.Capabilities.Where(value => value.DocumentMutationImplementationExists), capability =>
+            Assert.Equal(FixApplyProviderAvailability.Available, apply.GetAvailability(
+                capability.ValidationKey, capability.CapabilityId, capability.CapabilityVersion)));
     }
 
     [Fact]
@@ -70,6 +74,89 @@ public sealed class FixApplyCapabilityTests
         Assert.False(ProductionFixCapabilities.CreateApplyRegistry().CanApply(operation));
     }
 
+    [Fact]
+    public void Exact_validation_key_capability_and_version_resolve_deterministically()
+    {
+        var plan = Data.Plan();
+        var approved = new ApprovedFixExecutionPlan(
+            ApprovedFixExecutionPlanSerializer.SchemaVersion, plan.Source, plan.Preview);
+        var registry = ProductionFixCapabilities.CreateApplyRegistry();
+
+        var first = Assert.Single(FixExecutionProcessor.ResolveApprovedOperations(approved, registry));
+        var second = Assert.Single(FixExecutionProcessor.ResolveApprovedOperations(approved, registry));
+
+        Assert.IsType<BodyJustifiedFixProvider>(first.Provider);
+        Assert.Same(first.Provider, second.Provider);
+        Assert.Equal("body.justified", first.Operation.ValidationKey);
+        Assert.Equal(BodyJustifiedFixProvider.Id, first.Operation.CapabilityId);
+        Assert.Equal(BodyJustifiedFixProvider.Version, first.Operation.CapabilityVersion);
+    }
+
+    [Fact]
+    public void Unknown_validation_key_does_not_fall_back_by_rule_or_severity()
+    {
+        var plan = Data.Plan();
+        var unknownFinding = plan.Source.Findings.Single() with { ValidationKey = "unknown.validation" };
+        var unknownOperation = plan.Preview.Operations.Single() with { ValidationKey = "unknown.validation" };
+        var approved = new ApprovedFixExecutionPlan(ApprovedFixExecutionPlanSerializer.SchemaVersion,
+            plan.Source with { Findings = [unknownFinding] },
+            plan.Preview with { Operations = [unknownOperation] });
+
+        var exception = Assert.Throws<FixExecutionException>(() =>
+            FixExecutionProcessor.ResolveApprovedOperations(approved, ProductionFixCapabilities.CreateApplyRegistry()));
+
+        Assert.Equal("fix-provider-not-registered", exception.DiagnosticCode);
+        Assert.Equal(FixFailureCategory.CapabilityUnavailable, exception.Category);
+        Assert.False(exception.Retryable);
+    }
+
+    [Fact]
+    public void Exact_provider_version_mismatch_fails_permanently()
+    {
+        var plan = Data.Plan();
+        var operation = plan.Preview.Operations.Single() with { CapabilityVersion = "2.0" };
+        var approved = new ApprovedFixExecutionPlan(ApprovedFixExecutionPlanSerializer.SchemaVersion,
+            plan.Source, plan.Preview with { Operations = [operation] });
+
+        var exception = Assert.Throws<FixExecutionException>(() =>
+            FixExecutionProcessor.ResolveApprovedOperations(approved, ProductionFixCapabilities.CreateApplyRegistry()));
+
+        Assert.Equal("fix-provider-version-unavailable", exception.DiagnosticCode);
+        Assert.False(exception.Retryable);
+    }
+
+    [Fact]
+    public void Malformed_validation_key_registration_is_rejected_at_startup()
+    {
+        var exception = Assert.Throws<FixPlanConfigurationException>(() =>
+            new FixApplyCapabilityRegistry([new StubApplyProvider("stub-capability", "1.0", "INVALID KEY")]));
+        Assert.Equal("fix-apply-capability-configuration-invalid", exception.DiagnosticCode);
+    }
+
+    [Fact]
+    public void Reused_provider_identity_for_different_validation_keys_is_rejected_as_ambiguous()
+    {
+        var exception = Assert.Throws<FixPlanConfigurationException>(() => new FixApplyCapabilityRegistry([
+            new StubApplyProvider("stub-capability", "1.0", "test.validation"),
+            new StubApplyProvider("stub-capability", "1.0", "other.validation")
+        ]));
+        Assert.Equal("fix-apply-capability-configuration-invalid", exception.DiagnosticCode);
+    }
+
+    [Fact]
+    public void Approved_fixer_preflight_precedes_source_download_and_all_output_paths()
+    {
+        var processor = File.ReadAllText(Path.Combine(Data.RepositoryRoot(), "backend", "services",
+            "Ppki.Worker", "FixExecutionProcessor.cs"));
+        var preflight = processor.IndexOf("resolvedOperations = ResolveApprovedOperations", StringComparison.Ordinal);
+        var sourceDownload = processor.IndexOf("storage.MaterializeToTempFileAsync(source.StorageBucket", StringComparison.Ordinal);
+        var outputUpload = processor.IndexOf("storage.SaveAsync(stream", StringComparison.Ordinal);
+        var versionCreation = processor.IndexOf("new DocumentVersion", StringComparison.Ordinal);
+
+        Assert.True(preflight >= 0 && sourceDownload > preflight && outputUpload > sourceDownload
+            && versionCreation > sourceDownload);
+    }
+
     [Theory]
     [InlineData(FixMode.Auto)]
     [InlineData(FixMode.Confirm)]
@@ -94,10 +181,12 @@ public sealed class FixApplyCapabilityTests
         Assert.Equal("source-finding-snapshot-must-match", operation.PreconditionCode);
     }
 
-    private sealed class StubApplyProvider(string id, string version) : IFixApplyProvider
+    private sealed class StubApplyProvider(
+        string id, string version, string validationKey = "body.justified") : IFixApplyProvider
     {
         public string CapabilityId => id;
         public string CapabilityVersion => version;
+        public IReadOnlySet<string> ValidationKeys { get; } = new HashSet<string>([validationKey], StringComparer.Ordinal);
         public Task<FixApplyOutcome> ApplyAsync(FixApplyContext context, CancellationToken cancellationToken) =>
             throw new NotSupportedException();
     }

@@ -43,7 +43,8 @@ public sealed class FixEligibilityService(
         if (!capability.DocumentMutationImplementationExists)
             return Result(FixEligibilityStatus.Ineligible, FixEligibilityReasonCode.FixerNotRegistered);
 
-        var availability = applyCapabilities.GetAvailability(capability.CapabilityId, capability.CapabilityVersion);
+        var availability = applyCapabilities.GetAvailability(
+            finding.ValidationKey, capability.CapabilityId, capability.CapabilityVersion);
         if (availability == FixApplyProviderAvailability.NotRegistered)
             return Result(FixEligibilityStatus.Ineligible, FixEligibilityReasonCode.FixerNotRegistered);
         if (availability == FixApplyProviderAvailability.VersionIncompatible)

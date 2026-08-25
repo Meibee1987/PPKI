@@ -13,6 +13,7 @@ public sealed class BodyJustifiedFixProvider : IFixPreviewProvider, IFixApplyPro
     public const string Version = "1.0";
     public string CapabilityId => Id;
     public string CapabilityVersion => Version;
+    public IReadOnlySet<string> ValidationKeys { get; } = new HashSet<string>(["body.justified"], StringComparer.Ordinal);
 
     public bool TryCreate(FixPlanFindingSnapshot finding, out FixOperationDraft operation, out string diagnosticCode)
     {
@@ -145,11 +146,19 @@ public static class ProductionFixCapabilities
         ]);
     }
 
-    public static FixApplyCapabilityRegistry CreateApplyRegistry() => new([
-        new BodyJustifiedFixProvider(), new BodyFontFixProvider(), new BodyLineSpacingFixProvider(),
-        new BodyFirstLineIndentFixProvider(), new AbstractParagraphSpacingFixProvider(),
-        new ChapterCenteredFixProvider()
-    ]);
+    public static FixApplyCapabilityRegistry CreateApplyRegistry()
+    {
+        var registry = new FixApplyCapabilityRegistry([
+            new BodyJustifiedFixProvider(), new BodyFontFixProvider(), new BodyLineSpacingFixProvider(),
+            new BodyFirstLineIndentFixProvider(), new AbstractParagraphSpacingFixProvider(),
+            new ChapterCenteredFixProvider()
+        ]);
+        if (CreatePreviewRegistry().Capabilities.Any(capability => capability.DocumentMutationImplementationExists
+            && registry.GetAvailability(capability.ValidationKey, capability.CapabilityId,
+                capability.CapabilityVersion) != FixApplyProviderAvailability.Available))
+            throw new FixPlanConfigurationException("fix-apply-capability-configuration-invalid");
+        return registry;
+    }
 
     private static RemediationCapability Descriptor(
         IFixApplyProvider applyProvider, string validationKey, string previewId, string description) =>

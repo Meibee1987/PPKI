@@ -37,12 +37,14 @@ public sealed class FixExecutionProcessor(
         var correctionMode = string.Equals(source.PlannerVersion,
             ApprovedTextCorrectionExecutionPlanSerializer.PlannerVersion, StringComparison.Ordinal);
         ApprovedFixExecutionPlan? approved = null;
+        IReadOnlyList<ResolvedApprovedFixOperation>? resolvedOperations = null;
         if (!correctionMode)
         {
             try { approved = ApprovedFixExecutionPlanSerializer.Deserialize(source.ApprovedPlanSnapshotJson); }
             catch (Exception exception) when (exception is System.Text.Json.JsonException or FixExecutionException)
             { throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-invalid", exception); }
             ValidateApprovedSnapshot(source, approved);
+            resolvedOperations = ResolveApprovedOperations(approved, capabilities);
         }
 
         string? materialized = null;
@@ -96,25 +98,13 @@ public sealed class FixExecutionProcessor(
             else
             {
                 using var package = WordprocessingDocument.Open(working, true, new OpenSettings { AutoSave = false });
-                foreach (var operation in approved!.Preview.Operations.OrderBy(value => value.Ordinal))
+                foreach (var resolved in resolvedOperations!)
                 {
                     cancellationToken.ThrowIfCancellationRequested();
-                    if (!capabilities.TryGet(operation, out var provider))
-                        throw new FixExecutionException(FixFailureCategory.CapabilityUnavailable, "fix-provider-version-unavailable");
-                    if (operation.SourceFindingIds.Count < 1)
-                        throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-operation-invalid");
-                    if (operation.SourceFindingIds.Any(id => approved.Source.Findings.All(value => value.FindingId != id)))
-                        throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-selection-invalid");
-                    var finding = approved.Source.Findings
-                        .Where(value => operation.SourceFindingIds.Contains(value.FindingId)
-                            && value.RuleCode == operation.RuleCode
-                            && value.ValidationKey == operation.ValidationKey)
-                        .OrderBy(value => value.FindingId)
-                        .FirstOrDefault()
-                        ?? throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-selection-invalid");
+                    var operation = resolved.Operation;
                     try
                     {
-                        if (await provider.ApplyAsync(new(working, before, finding, operation, package), cancellationToken) == FixApplyOutcome.Changed)
+                        if (await resolved.Provider.ApplyAsync(new(working, before, resolved.Finding, operation, package), cancellationToken) == FixApplyOutcome.Changed)
                             changed++;
                     }
                     catch (FixExecutionException exception)
@@ -348,6 +338,37 @@ public sealed class FixExecutionProcessor(
             throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-selection-invalid");
     }
 
+    internal static IReadOnlyList<ResolvedApprovedFixOperation> ResolveApprovedOperations(
+        ApprovedFixExecutionPlan approved, FixApplyCapabilityRegistry capabilities)
+    {
+        var resolved = new List<ResolvedApprovedFixOperation>(approved.Preview.Operations.Count);
+        foreach (var operation in approved.Preview.Operations.OrderBy(value => value.Ordinal))
+        {
+            if (operation.SourceFindingIds.Count < 1)
+                throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-operation-invalid");
+            if (operation.SourceFindingIds.Any(id => approved.Source.Findings.All(value => value.FindingId != id)))
+                throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-selection-invalid");
+            var finding = approved.Source.Findings
+                .Where(value => operation.SourceFindingIds.Contains(value.FindingId)
+                    && value.RuleCode == operation.RuleCode
+                    && value.ValidationKey == operation.ValidationKey)
+                .OrderBy(value => value.FindingId)
+                .FirstOrDefault()
+                ?? throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-selection-invalid");
+            if (!capabilities.TryGet(operation, out var provider))
+            {
+                var availability = capabilities.GetAvailability(
+                    operation.ValidationKey, operation.CapabilityId, operation.CapabilityVersion);
+                throw new FixExecutionException(FixFailureCategory.CapabilityUnavailable,
+                    availability == FixApplyProviderAvailability.VersionIncompatible
+                        ? "fix-provider-version-unavailable"
+                        : "fix-provider-not-registered");
+            }
+            resolved.Add(new(operation, finding, provider));
+        }
+        return resolved.AsReadOnly();
+    }
+
     private async Task EnsureActiveAsync(FixExecutionClaim claim, SourceRow source, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
@@ -505,3 +526,8 @@ public sealed class FixExecutionProcessor(
         int CurrentVersionNo, string PlanHash, string PlannerVersion, string SelectedFindingIdsJson,
         int PlannedOperationCount);
 }
+
+internal sealed record ResolvedApprovedFixOperation(
+    FixPlanOperation Operation,
+    FixPlanFindingSnapshot Finding,
+    IFixApplyProvider Provider);

@@ -90,7 +90,7 @@ public sealed class FixPlanDraftPreviewService(
                 FixPlanDraftPreviewItemState.Unavailable, "fix-preview-provider-not-registered");
 
         var applyAvailability = applyCapabilities.GetAvailability(
-            capability.CapabilityId, capability.CapabilityVersion);
+            finding.Snapshot.ValidationKey, capability.CapabilityId, capability.CapabilityVersion);
         if (applyAvailability != FixApplyProviderAvailability.Available)
             return Outcome(item, finding, evaluation, source.SourceDocumentVersionId,
                 FixPlanDraftPreviewItemState.Unavailable,

@@ -25,6 +25,7 @@ public sealed class RemediationFailureCatalogTests
         { "approved-plan-operation-invalid", FixFailureCategory.InvalidPlan },
         { "approved-plan-provider-mismatch", FixFailureCategory.InvalidPlan },
         { "fix-provider-unavailable", FixFailureCategory.CapabilityUnavailable },
+        { "fix-provider-not-registered", FixFailureCategory.CapabilityUnavailable },
         { "fix-provider-version-unavailable", FixFailureCategory.CapabilityUnavailable },
         { "storage-download-transient", FixFailureCategory.TransientInfrastructure },
         { "storage-upload-transient", FixFailureCategory.TransientInfrastructure },

@@ -121,6 +121,7 @@ public sealed class BodyFontFixProvider : IFixPreviewProvider, IFixApplyProvider
     public const string Version = "1.0";
     public string CapabilityId => Id;
     public string CapabilityVersion => Version;
+    public IReadOnlySet<string> ValidationKeys { get; } = new HashSet<string>(["body.font-times-new-roman-12"], StringComparer.Ordinal);
 
     public bool TryCreate(FixPlanFindingSnapshot finding, out FixOperationDraft operation, out string diagnosticCode)
     {
@@ -198,6 +199,7 @@ public abstract class ParagraphPropertyFixProvider : IFixPreviewProvider, IFixAp
     public abstract string CapabilityId { get; }
     public string CapabilityVersion => "1.0";
     protected abstract IReadOnlyDictionary<string, string[]> Contracts { get; }
+    public IReadOnlySet<string> ValidationKeys => Contracts.Keys.ToHashSet(StringComparer.Ordinal);
     protected abstract IReadOnlySet<string> Properties { get; }
 
     public bool TryCreate(FixPlanFindingSnapshot finding, out FixOperationDraft operation, out string diagnosticCode)

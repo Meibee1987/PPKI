@@ -267,9 +267,12 @@ public sealed class FixEligibilityTests
             new FixApplyCapabilityRegistry([new StubApplyProvider(), new StubApplyProvider()]));
         var registry = new FixApplyCapabilityRegistry([new StubApplyProvider()]);
 
-        Assert.Equal(FixApplyProviderAvailability.Available, registry.GetAvailability("capability", "1.0"));
-        Assert.Equal(FixApplyProviderAvailability.VersionIncompatible, registry.GetAvailability("capability", "2.0"));
-        Assert.Equal(FixApplyProviderAvailability.NotRegistered, registry.GetAvailability("unknown", "1.0"));
+        Assert.Equal(FixApplyProviderAvailability.Available,
+            registry.GetAvailability("test.validation", "capability", "1.0"));
+        Assert.Equal(FixApplyProviderAvailability.VersionIncompatible,
+            registry.GetAvailability("test.validation", "capability", "2.0"));
+        Assert.Equal(FixApplyProviderAvailability.NotRegistered,
+            registry.GetAvailability("test.validation", "unknown", "1.0"));
     }
 
     [Fact]
@@ -330,6 +333,7 @@ public sealed class FixEligibilityTests
     {
         public string CapabilityId => capabilityId;
         public string CapabilityVersion => capabilityVersion;
+        public IReadOnlySet<string> ValidationKeys { get; } = new HashSet<string>(["test.validation"], StringComparer.Ordinal);
         public Task<FixApplyOutcome> ApplyAsync(FixApplyContext context, CancellationToken cancellationToken) =>
             Task.FromResult(FixApplyOutcome.NoChange);
     }

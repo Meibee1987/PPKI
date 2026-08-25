@@ -41,6 +41,7 @@ public interface IFixApplyProvider
 {
     string CapabilityId { get; }
     string CapabilityVersion { get; }
+    IReadOnlySet<string> ValidationKeys { get; }
     Task<FixApplyOutcome> ApplyAsync(FixApplyContext context, CancellationToken cancellationToken);
 }
 
@@ -54,11 +55,19 @@ public sealed class FixApplyCapabilityRegistry : IFixApplyCapabilityResolver
         var supplied = values.OrderBy(value => value.CapabilityId, StringComparer.Ordinal)
             .ThenBy(value => value.CapabilityVersion, StringComparer.Ordinal).ToArray();
         if (supplied.Any(value => !Identifier.IsMatch(value.CapabilityId ?? string.Empty)
-                || !Identifier.IsMatch(value.CapabilityVersion ?? string.Empty))
-            || supplied.GroupBy(Key, StringComparer.Ordinal).Any(group => group.Count() > 1))
+                || !Identifier.IsMatch(value.CapabilityVersion ?? string.Empty)
+                || value.ValidationKeys is null || value.ValidationKeys.Count == 0
+                || value.ValidationKeys.Any(key => !Identifier.IsMatch(key ?? string.Empty)))
+            || supplied.GroupBy(ProviderKey, StringComparer.Ordinal).Any(group => group.Count() > 1)
+            || supplied.SelectMany(provider => provider.ValidationKeys.Select(validationKey => new { provider, validationKey }))
+                .GroupBy(value => Key(value.validationKey, value.provider.CapabilityId, value.provider.CapabilityVersion),
+                    StringComparer.Ordinal).Any(group => group.Count() > 1))
             throw new FixPlanConfigurationException("fix-apply-capability-configuration-invalid");
         Providers = Array.AsReadOnly(supplied);
-        providers = supplied.ToDictionary(Key, StringComparer.Ordinal);
+        providers = supplied.SelectMany(provider => provider.ValidationKeys.Select(validationKey =>
+                new KeyValuePair<string, IFixApplyProvider>(
+                    Key(validationKey, provider.CapabilityId, provider.CapabilityVersion), provider)))
+            .ToDictionary(StringComparer.Ordinal);
     }
 
     public IReadOnlyList<IFixApplyProvider> Providers { get; }
@@ -68,18 +77,23 @@ public sealed class FixApplyCapabilityRegistry : IFixApplyCapabilityResolver
     public bool TryGet(FixPlanOperation operation, out IFixApplyProvider provider) =>
         providers.TryGetValue(Key(operation), out provider!);
 
-    public FixApplyProviderAvailability GetAvailability(string capabilityId, string capabilityVersion)
+    public FixApplyProviderAvailability GetAvailability(
+        string validationKey, string capabilityId, string capabilityVersion)
     {
-        if (providers.ContainsKey(Key(capabilityId, capabilityVersion)))
+        if (providers.ContainsKey(Key(validationKey, capabilityId, capabilityVersion)))
             return FixApplyProviderAvailability.Available;
-        return Providers.Any(value => string.Equals(value.CapabilityId, capabilityId, StringComparison.Ordinal))
+        return Providers.Any(value => value.ValidationKeys.Contains(validationKey)
+                && string.Equals(value.CapabilityId, capabilityId, StringComparison.Ordinal))
             ? FixApplyProviderAvailability.VersionIncompatible
             : FixApplyProviderAvailability.NotRegistered;
     }
 
-    private static string Key(IFixApplyProvider provider) => $"{provider.CapabilityId}\n{provider.CapabilityVersion}";
-    private static string Key(FixPlanOperation operation) => $"{operation.CapabilityId}\n{operation.CapabilityVersion}";
-    private static string Key(string capabilityId, string capabilityVersion) => $"{capabilityId}\n{capabilityVersion}";
+    private static string Key(FixPlanOperation operation) =>
+        Key(operation.ValidationKey, operation.CapabilityId, operation.CapabilityVersion);
+    private static string ProviderKey(IFixApplyProvider provider) =>
+        $"{provider.CapabilityId}\n{provider.CapabilityVersion}";
+    private static string Key(string validationKey, string capabilityId, string capabilityVersion) =>
+        $"{validationKey}\n{capabilityId}\n{capabilityVersion}";
 }
 
 public enum FixApplyProviderAvailability
