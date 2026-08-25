@@ -68,6 +68,23 @@ public sealed class FixApplyCapabilityRegistry : IFixApplyCapabilityResolver
     public bool TryGet(FixPlanOperation operation, out IFixApplyProvider provider) =>
         providers.TryGetValue(Key(operation), out provider!);
 
+    public FixApplyProviderAvailability GetAvailability(string capabilityId, string capabilityVersion)
+    {
+        if (providers.ContainsKey(Key(capabilityId, capabilityVersion)))
+            return FixApplyProviderAvailability.Available;
+        return Providers.Any(value => string.Equals(value.CapabilityId, capabilityId, StringComparison.Ordinal))
+            ? FixApplyProviderAvailability.VersionIncompatible
+            : FixApplyProviderAvailability.NotRegistered;
+    }
+
     private static string Key(IFixApplyProvider provider) => $"{provider.CapabilityId}\n{provider.CapabilityVersion}";
     private static string Key(FixPlanOperation operation) => $"{operation.CapabilityId}\n{operation.CapabilityVersion}";
+    private static string Key(string capabilityId, string capabilityVersion) => $"{capabilityId}\n{capabilityVersion}";
+}
+
+public enum FixApplyProviderAvailability
+{
+    Available,
+    NotRegistered,
+    VersionIncompatible
 }

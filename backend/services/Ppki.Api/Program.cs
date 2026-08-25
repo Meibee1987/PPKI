@@ -50,6 +50,7 @@ builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<IRemediationCapabilityRegistry>(_ => ProductionFixCapabilities.CreatePreviewRegistry());
 builder.Services.AddSingleton(ProductionFixCapabilities.CreateApplyRegistry());
 builder.Services.AddSingleton<IFixApplyCapabilityResolver>(provider => provider.GetRequiredService<FixApplyCapabilityRegistry>());
+builder.Services.AddSingleton<IFixEligibilityService, FixEligibilityService>();
 builder.Services.AddSingleton<IFixPlanPreviewPlanner, DeterministicFixPlanPreviewPlanner>();
 builder.Services.AddSingleton<IStorageObjectPathBuilder, StorageObjectPathBuilder>();
 builder.Services.AddSingleton<IAuditTrailWriter, AuditTrailWriter>();
