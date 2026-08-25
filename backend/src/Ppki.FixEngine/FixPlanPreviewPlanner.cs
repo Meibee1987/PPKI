@@ -7,6 +7,17 @@ using Ppki.Domain;
 
 namespace Ppki.FixEngine;
 
+public enum FixCapabilityDependencyKind
+{
+    RequiresBefore,
+    RequiresAfter
+}
+
+public sealed record FixCapabilityDependency(
+    string CapabilityId,
+    string CapabilityVersion,
+    FixCapabilityDependencyKind Kind);
+
 public sealed record RemediationCapability(
     string CapabilityId,
     string CapabilityVersion,
@@ -18,7 +29,8 @@ public sealed record RemediationCapability(
     string PreviewProviderId,
     string DescriptionCode,
     bool AllowsIdenticalOperationMerge,
-    IFixPreviewProvider Provider);
+    IFixPreviewProvider Provider,
+    IReadOnlyList<FixCapabilityDependency>? Dependencies = null);
 
 public sealed record FixOperationDraft(
     FixTargetLocation Target,
@@ -70,7 +82,12 @@ public sealed class RemediationCapabilityRegistry : IRemediationCapabilityRegist
         var supplied = capabilities.ToArray();
         foreach (var capability in supplied) Validate(capability);
         var ordered = supplied
-            .Select(value => value with { RequiredSnapshotFields = Array.AsReadOnly(value.RequiredSnapshotFields.ToArray()) })
+            .Select(value => value with
+            {
+                RequiredSnapshotFields = Array.AsReadOnly(value.RequiredSnapshotFields.ToArray()),
+                Dependencies = Array.AsReadOnly((value.Dependencies ?? []).OrderBy(item => item.CapabilityId, StringComparer.Ordinal)
+                    .ThenBy(item => item.CapabilityVersion, StringComparer.Ordinal).ThenBy(item => item.Kind).ToArray())
+            })
             .OrderBy(value => value.ValidationKey, StringComparer.Ordinal)
             .ToArray();
         if (ordered.GroupBy(value => value.ValidationKey, StringComparer.Ordinal).Any(group => group.Count() > 1))
@@ -98,6 +115,12 @@ public sealed class RemediationCapabilityRegistry : IRemediationCapabilityRegist
             || value.RequiredSnapshotFields.Any(field => !Identifier.IsMatch(field ?? string.Empty))
             || value.RequiredSnapshotFields.Distinct(StringComparer.Ordinal).Count() != value.RequiredSnapshotFields.Count)
             throw new FixPlanConfigurationException("fix-capability-configuration-invalid");
+        var dependencies = value.Dependencies ?? [];
+        if (dependencies.Any(item => !Identifier.IsMatch(item.CapabilityId ?? string.Empty)
+                || !Identifier.IsMatch(item.CapabilityVersion ?? string.Empty)
+                || !Enum.IsDefined(item.Kind))
+            || dependencies.Distinct().Count() != dependencies.Count)
+            throw new FixPlanConfigurationException("fix-capability-dependency-configuration-invalid");
     }
 }
 

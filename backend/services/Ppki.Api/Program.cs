@@ -37,6 +37,7 @@ builder.Services.AddScoped<IFixPlanPreviewService, FixPlanPreviewService>();
 builder.Services.AddScoped<IFixPlanDraftRepository, FixPlanDraftRepository>();
 builder.Services.AddScoped<IFixPlanDraftService, FixPlanDraftService>();
 builder.Services.AddScoped<IFixPlanDraftPreviewService, FixPlanDraftPreviewService>();
+builder.Services.AddSingleton<IFixPlanConflictAnalyzer, DeterministicFixPlanConflictAnalyzer>();
 builder.Services.AddScoped<IFixExecutionRepository, FixExecutionRepository>();
 builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();
 builder.Services.AddScoped<IReauditService, ReauditService>();

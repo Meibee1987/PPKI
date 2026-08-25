@@ -7,7 +7,8 @@ public sealed class FixPlanDraftPreviewService(
     IFixPlanDraftRepository repository,
     IFixEligibilityService eligibility,
     IRemediationCapabilityRegistry previewCapabilities,
-    FixApplyCapabilityRegistry applyCapabilities) : IFixPlanDraftPreviewService
+    FixApplyCapabilityRegistry applyCapabilities,
+    IFixPlanConflictAnalyzer? conflictAnalyzer = null) : IFixPlanDraftPreviewService
 {
     public const string SchemaVersion = "fix-plan-draft-preview/1.0";
 
@@ -22,11 +23,12 @@ public sealed class FixPlanDraftPreviewService(
         ValidatePlan(aggregate, auditId);
 
         var sourceByFinding = aggregate.Source.Findings.ToDictionary(value => value.Finding.Id);
-        var items = aggregate.Plan.Items
+        var outcomes = aggregate.Plan.Items
             .OrderBy(value => sourceByFinding[value.FindingId].Snapshot.RuleOrdinal)
             .ThenBy(value => value.FindingId)
             .Select(value => PreviewItem(value, aggregate.Source, sourceByFinding[value.FindingId]))
             .ToArray();
+        var items = outcomes.Select(value => value.Item).ToArray();
 
         var previewable = items.Count(value => value.PreviewState == FixPlanDraftPreviewItemState.Previewable);
         var ineligible = items.Count(value => value.PreviewState == FixPlanDraftPreviewItemState.Ineligible);
@@ -35,12 +37,20 @@ public sealed class FixPlanDraftPreviewService(
             : previewable > 0 ? FixPlanDraftPreviewState.PartiallyAvailable
             : FixPlanDraftPreviewState.Unavailable;
 
+        var analysis = (conflictAnalyzer ?? new DeterministicFixPlanConflictAnalyzer()).Analyze(
+            aggregate.Plan.SourceDocumentVersionId, outcomes.Select(value => value.Candidate).ToArray());
+        state = analysis.State switch
+        {
+            FixPlanMutationAnalysisState.Conflict => FixPlanDraftPreviewState.Conflict,
+            FixPlanMutationAnalysisState.Stale => FixPlanDraftPreviewState.Stale,
+            _ => state
+        };
         return new(SchemaVersion, aggregate.Plan.Id, auditId, aggregate.Plan.SourceDocumentVersionId,
             aggregate.Source.Audit.DocumentVersion!.Sha256, aggregate.Plan.State, state,
-            items.Length, previewable, ineligible, unavailable, items);
+            items.Length, previewable, ineligible, unavailable, items, analysis);
     }
 
-    private FixPlanDraftPreviewItemDto PreviewItem(
+    private PreviewOutcome PreviewItem(
         FixPlanItemRecord item,
         FixPlanDraftSource source,
         FixPlanDraftFindingSource finding)
@@ -49,18 +59,19 @@ public sealed class FixPlanDraftPreviewService(
             source.SourceDocumentVersionId, finding.Snapshot, finding.Finding.Confidence,
             finding.ResolutionState, finding.ReviewState));
         if (!evaluation.IsEligible)
-            return Item(item, finding, evaluation, FixPlanDraftPreviewItemState.Ineligible,
-                "fix-plan-preview-item-ineligible");
+            return Outcome(item, finding, evaluation, source.SourceDocumentVersionId,
+                FixPlanDraftPreviewItemState.Ineligible, "fix-plan-preview-item-ineligible");
 
         if (!previewCapabilities.TryGet(finding.Snapshot.ValidationKey, out var capability)
             || !capability.DocumentMutationImplementationExists)
-            return Item(item, finding, evaluation, FixPlanDraftPreviewItemState.Unavailable,
-                "fix-preview-provider-not-registered");
+            return Outcome(item, finding, evaluation, source.SourceDocumentVersionId,
+                FixPlanDraftPreviewItemState.Unavailable, "fix-preview-provider-not-registered");
 
         var applyAvailability = applyCapabilities.GetAvailability(
             capability.CapabilityId, capability.CapabilityVersion);
         if (applyAvailability != FixApplyProviderAvailability.Available)
-            return Item(item, finding, evaluation, FixPlanDraftPreviewItemState.Unavailable,
+            return Outcome(item, finding, evaluation, source.SourceDocumentVersionId,
+                FixPlanDraftPreviewItemState.Unavailable,
                 applyAvailability == FixApplyProviderAvailability.VersionIncompatible
                     ? "fix-apply-provider-version-incompatible"
                     : "fix-apply-provider-not-registered", capability);
@@ -68,38 +79,40 @@ public sealed class FixPlanDraftPreviewService(
         try
         {
             if (!capability.Provider.TryCreate(finding.Snapshot, out var operation, out _))
-                return Item(item, finding, evaluation, FixPlanDraftPreviewItemState.Unavailable,
-                    "fix-preview-provider-rejected-snapshot", capability);
+                return Outcome(item, finding, evaluation, source.SourceDocumentVersionId,
+                    FixPlanDraftPreviewItemState.Unavailable, "fix-preview-provider-rejected-snapshot", capability);
             if (!capability.Provider.TryCreateBeforeAfter(finding.Snapshot, operation, out var change))
-                return Item(item, finding, evaluation, FixPlanDraftPreviewItemState.Unavailable,
-                    "fix-preview-before-after-unavailable", capability);
+                return Outcome(item, finding, evaluation, source.SourceDocumentVersionId,
+                    FixPlanDraftPreviewItemState.Unavailable, "fix-preview-before-after-unavailable", capability);
 
-            return Item(item, finding, evaluation, FixPlanDraftPreviewItemState.Previewable,
-                "fix-plan-preview-ready", capability, operation, change);
+            return Outcome(item, finding, evaluation, source.SourceDocumentVersionId,
+                FixPlanDraftPreviewItemState.Previewable, "fix-plan-preview-ready", capability, operation, change);
         }
         catch (Exception)
         {
-            return Item(item, finding, evaluation, FixPlanDraftPreviewItemState.Unavailable,
-                "fix-preview-provider-failed", capability);
+            return Outcome(item, finding, evaluation, source.SourceDocumentVersionId,
+                FixPlanDraftPreviewItemState.Unavailable, "fix-preview-provider-failed", capability);
         }
     }
 
-    private static FixPlanDraftPreviewItemDto Item(
+    private static PreviewOutcome Outcome(
         FixPlanItemRecord item,
         FixPlanDraftFindingSource finding,
         FixEligibilityResult evaluation,
+        Guid sourceDocumentVersionId,
         FixPlanDraftPreviewItemState state,
         string reason,
         RemediationCapability? capability = null,
         FixOperationDraft? operation = null,
-        FixPlanDraftBeforeAfterDto? change = null) => new(
+        FixPlanDraftBeforeAfterDto? change = null) => new(new(
             item.Id, finding.Finding.Id, finding.Snapshot.RuleCode, finding.Snapshot.ValidationKey,
             finding.Snapshot.FixMode, finding.Finding.Confidence, evaluation.Status,
             evaluation.ReasonCode, evaluation.RequiresExplicitApproval, state, reason,
             capability?.CapabilityId, capability?.CapabilityVersion, operation?.PropertyIdentifier,
             operation is null ? null : new(operation.Target.Scope, operation.Target.BodyElementIndex,
                 operation.Target.SectionIndex, operation.Target.ParagraphIndex, operation.Target.RunIndex),
-            change);
+            change), new(sourceDocumentVersionId, item.Id, finding.Finding.Id, finding.Snapshot.FixMode,
+                state, reason, capability, operation));
 
     private static void ValidatePlan(FixPlanDraftAggregate aggregate, Guid routeAuditId)
     {
@@ -128,4 +141,8 @@ public sealed class FixPlanDraftPreviewService(
 
     private static bool ValidSha(string? value) => value is { Length: 64 }
         && value.All(character => character is >= '0' and <= '9' or >= 'a' and <= 'f');
+
+    private sealed record PreviewOutcome(
+        FixPlanDraftPreviewItemDto Item,
+        FixPlanMutationCandidate Candidate);
 }

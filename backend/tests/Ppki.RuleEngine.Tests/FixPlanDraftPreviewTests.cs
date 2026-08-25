@@ -27,6 +27,22 @@ public sealed class FixPlanDraftPreviewServiceTests
     }
 
     [Fact]
+    public async Task Conflict_analysis_consumes_provider_mutation_and_updates_preview_state()
+    {
+        var analyzer = new CapturingConflictAnalyzer();
+        var context = Context(conflictAnalyzer: analyzer);
+
+        var result = await context.Service.PreviewAsync(context.AuditId, context.Plan.Id, context.OwnerId, default);
+
+        Assert.Equal(1, analyzer.CallCount);
+        var candidate = Assert.Single(analyzer.Candidates!);
+        Assert.Equal("paragraph.alignment", candidate.Operation!.PropertyIdentifier);
+        Assert.Equal("justified", candidate.Operation.Expected.Value);
+        Assert.Equal(FixPlanDraftPreviewState.Conflict, result!.State);
+        Assert.Equal(FixPlanMutationAnalysisState.Conflict, result.MutationAnalysis!.State);
+    }
+
+    [Fact]
     public async Task Eligible_confirm_item_remains_explicitly_unapproved()
     {
         var context = Context(FixMode.Confirm, new ConfirmPreviewProvider(), new AlwaysEligible());
@@ -372,6 +388,7 @@ public sealed class FixPlanDraftPreviewServiceTests
         IFixEligibilityService? eligibility = null,
         RemediationCapabilityRegistry? previewRegistry = null,
         FixApplyCapabilityRegistry? applyRegistry = null,
+        IFixPlanConflictAnalyzer? conflictAnalyzer = null,
         string? staleCode = null)
     {
         var ownerId = Id(10);
@@ -438,7 +455,7 @@ public sealed class FixPlanDraftPreviewServiceTests
         applyRegistry ??= new([applyProvider]);
         eligibility ??= new FixEligibilityService(previewRegistry, applyRegistry);
         return new(audit.Id, ownerId, plan, source, repository, applyProvider,
-            new(repository, eligibility, previewRegistry, applyRegistry));
+            new(repository, eligibility, previewRegistry, applyRegistry, conflictAnalyzer));
     }
 
     private static RemediationCapabilityRegistry Registry(IFixPreviewProvider provider, string id, string version) => new([
@@ -535,6 +552,25 @@ public sealed class FixPlanDraftPreviewServiceTests
         public string CapabilityVersion => version;
         public Task<FixApplyOutcome> ApplyAsync(FixApplyContext context, CancellationToken cancellationToken)
         { ApplyCalls++; throw new InvalidOperationException("preview invoked apply"); }
+    }
+
+    private sealed class CapturingConflictAnalyzer : IFixPlanConflictAnalyzer
+    {
+        public int CallCount { get; private set; }
+        public IReadOnlyList<FixPlanMutationCandidate>? Candidates { get; private set; }
+        public FixPlanMutationAnalysisDto Analyze(Guid sourceDocumentVersionId,
+            IReadOnlyList<FixPlanMutationCandidate> candidates)
+        {
+            CallCount++;
+            Candidates = candidates;
+            var candidate = candidates.Single();
+            return new(DeterministicFixPlanConflictAnalyzer.SchemaVersion,
+                FixPlanMutationAnalysisState.Conflict, 0, 0, 0, 0, 1, 0,
+                [new(candidate.ItemId, candidate.FindingId, FixPlanMutationItemStatus.Conflicting,
+                    "fix-mutation-contradictory-outcome", null, null, [])], [],
+                [new(null, [candidate.ItemId], "fix-mutation-contradictory-outcome")],
+                ["fix-mutation-contradictory-outcome"]);
+        }
     }
 
     private static string RepositoryRoot()
