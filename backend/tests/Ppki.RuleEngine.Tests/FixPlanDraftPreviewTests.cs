@@ -360,7 +360,7 @@ public sealed class FixPlanDraftPreviewServiceTests
         var capability = ProductionFixCapabilities.CreatePreviewRegistry().Capabilities
             .Single(value => value.ValidationKey == validationKey);
         var location = runTarget
-            ? "{\"compactLocation\":\"maindocument/p0/r0\",\"bodyElementIndex\":0,\"paragraphIndex\":0,\"runIndex\":0}"
+            ? "{\"compactLocation\":\"maindocument/s:0/b:0/p:0/r:0/kind:run\",\"sectionIndex\":0,\"bodyElementIndex\":0,\"paragraphIndex\":0,\"runIndex\":0}"
             : "{\"compactLocation\":\"maindocument/p0\",\"bodyElementIndex\":0,\"paragraphIndex\":0}";
         var finding = new FixPlanFindingSnapshot(Id(80), 1, ruleCode, "layout", "body", validationKey,
             RuleSeverity.Error, FixMode.Auto, FindingStatus.Open,

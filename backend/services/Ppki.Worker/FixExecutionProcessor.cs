@@ -466,7 +466,9 @@ public sealed class FixExecutionProcessor(
             var paragraph = after.Paragraphs.SingleOrDefault(value =>
                 value.Location?.PartKind == DocumentPartKind.MainDocument
                 && value.Location.BodyElementIndex == operation.Target.BodyElementIndex
-                && value.Location.ParagraphIndex == operation.Target.ParagraphIndex);
+                && value.Location.ParagraphIndex == operation.Target.ParagraphIndex
+                && (operation.Target.SectionIndex is null
+                    || value.Location.SectionIndex == operation.Target.SectionIndex));
             if (paragraph is null || !OperationPostcondition(paragraph, operation))
                 throw new FixExecutionException("fix-operation-postcondition-failed");
         }

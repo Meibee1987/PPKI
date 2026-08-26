@@ -65,10 +65,17 @@ internal static class FormattingFixSnapshot
             && body >= 0 && paragraph >= 0 && compact.StartsWith("maindocument/", StringComparison.OrdinalIgnoreCase);
     }
 
-    public static bool RunLocation(JsonElement root, out int body, out int paragraph, out int run)
+    public static bool RunLocation(JsonElement root, out int section, out int body, out int paragraph, out int run)
     {
-        run = -1;
-        return ParagraphLocation(root, out body, out paragraph) && Integer(root, "runIndex", out run) && run >= 0;
+        section = body = paragraph = run = -1;
+        if (!Integer(root, "sectionIndex", out section)
+            || !Integer(root, "bodyElementIndex", out body)
+            || !Integer(root, "paragraphIndex", out paragraph)
+            || !Integer(root, "runIndex", out run)
+            || section < 0 || body < 0 || paragraph < 0 || run < 0) return false;
+        return string.Equals(Text(root, "compactLocation"),
+            $"maindocument/s:{section}/b:{body}/p:{paragraph}/r:{run}/kind:run",
+            StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool ActualMatches(JsonElement actual, string? current) =>
@@ -80,7 +87,8 @@ internal static class FormattingFixSnapshot
         return context.SourceDocument.Paragraphs.SingleOrDefault(value =>
             value.Location?.PartKind == DocumentPartKind.MainDocument
             && value.Location.BodyElementIndex == target.BodyElementIndex
-            && value.Location.ParagraphIndex == target.ParagraphIndex)
+            && value.Location.ParagraphIndex == target.ParagraphIndex
+            && (target.SectionIndex is null || value.Location.SectionIndex == target.SectionIndex))
             ?? throw new FixExecutionException("fix-operation-target-precondition-failed");
     }
 
@@ -131,15 +139,15 @@ public sealed class BodyFontFixProvider : IFixPreviewProvider, IFixApplyProvider
         using (actual) using (expected) using (location)
         {
             var property = FormattingFixSnapshot.Text(actual.RootElement, "property");
-            if (!FormattingFixSnapshot.RunLocation(location.RootElement, out var body, out var paragraph, out var run)
+            if (!FormattingFixSnapshot.RunLocation(location.RootElement, out var section, out var body, out var paragraph, out var run)
                 || !FormattingFixSnapshot.SingleExpected(expected.RootElement, property, finding.ValidationKey, out var value)) return false;
             if (property is "font.ascii" or "font.highAnsi")
-                operation = new(new("main-document-run", body, null, paragraph, run),
+                operation = new(new("main-document-run", body, section, paragraph, run),
                     property == "font.ascii" ? "run.font-family-ascii" : "run.font-family-high-ansi",
                     new("string-code", value), "source-finding-snapshot-must-match", "set-run-font-family");
             else if (property == "fontSize" && int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var halfPoints)
                 && halfPoints is > 0 and <= 3276)
-                operation = new(new("main-document-run", body, null, paragraph, run), "run.font-size",
+                operation = new(new("main-document-run", body, section, paragraph, run), "run.font-size",
                     new("half-points", halfPoints.ToString(CultureInfo.InvariantCulture)), "source-finding-snapshot-must-match", "set-run-font-size");
             else return false;
             diagnosticCode = "fix-operation-planned";
@@ -152,10 +160,7 @@ public sealed class BodyFontFixProvider : IFixPreviewProvider, IFixApplyProvider
         cancellationToken.ThrowIfCancellationRequested();
         if (!TryCreate(context.Finding, out var approved, out _)) throw new FixExecutionException("fix-operation-source-snapshot-mismatch");
         FormattingFixSnapshot.ExactContract(context, this, approved, "body.font-times-new-roman-12", "PPKI-LAY-005");
-        var parsedParagraph = FormattingFixSnapshot.Paragraph(context);
-        if (parsedParagraph.IsInTable || parsedParagraph.IsHeading) throw new FixExecutionException("fix-operation-target-precondition-failed");
-        var parsedRun = parsedParagraph.RunList.SingleOrDefault(value => value.Index == context.Operation.Target.RunIndex)
-            ?? throw new FixExecutionException("fix-operation-target-precondition-failed");
+        var (parsedParagraph, parsedRun) = EligibleTarget(context);
         var outcome = FormattingFixSnapshot.Mutate(context, body =>
         {
             var paragraph = FormattingFixSnapshot.XmlParagraph(context, body);
@@ -191,6 +196,25 @@ public sealed class BodyFontFixProvider : IFixPreviewProvider, IFixApplyProvider
             return FixApplyOutcome.Changed;
         });
         return Task.FromResult(outcome);
+    }
+
+    private static (ParsedParagraph Paragraph, ParsedRun Run) EligibleTarget(FixApplyContext context)
+    {
+        var target = context.Operation.Target;
+        var paragraph = FormattingFixSnapshot.Paragraph(context);
+        if (paragraph.IsInTable || paragraph.IsHeading
+            || context.SourceDocument.Headings.Any(value => value.ParagraphIndex == paragraph.Index))
+            throw new FixExecutionException("fix-operation-target-precondition-failed");
+        var run = paragraph.RunList.SingleOrDefault(value => value.Index == target.RunIndex
+            && value.Location.PartKind == DocumentPartKind.MainDocument
+            && value.Location.SectionIndex == target.SectionIndex
+            && value.Location.BodyElementIndex == target.BodyElementIndex
+            && value.Location.ParagraphIndex == target.ParagraphIndex)
+            ?? throw new FixExecutionException("fix-operation-target-precondition-failed");
+        if (run.IsDeleted || run.IsHidden || run.EffectiveFormatting?.Hidden.Value == true
+            || !run.TextSegments.Any(segment => !string.IsNullOrWhiteSpace(segment)))
+            throw new FixExecutionException("fix-operation-target-precondition-failed");
+        return (paragraph, run);
     }
 }
 

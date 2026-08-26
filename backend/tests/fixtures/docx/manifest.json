@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatorVersion": "5.4.0",
+  "generatorVersion": "5.5.0",
   "fixtures": [
     {
       "fixtureId": "minimal-compliant-layout",
@@ -72,6 +72,23 @@
       },
       "containsPersonalData": false,
       "generatorVersion": "5.4.0"
+    },
+    {
+      "fixtureId": "body-font-size-fixer",
+      "filename": "body-font-size-fixer.docx",
+      "description": "Golden mixed-run body font fixture with preserved semantic formatting, citation field, hyperlink, heading, table, and compliant non-target content.",
+      "synthetic": true,
+      "intendedProperties": ["wrong-latin-font", "wrong-font-size", "bold", "italic", "underline", "strike", "superscript", "subscript", "non-latin-fonts", "font-themes", "languages", "highlight", "shading", "character-spacing", "proofing", "bookmark", "revision", "citation-field", "hyperlink", "heading-excluded", "table-excluded", "already-compliant-body"],
+      "expectedDocumentProperties": {
+        "bodyParagraphCount": 3,
+        "tableCount": 1,
+        "fieldInstruction": "CITATION",
+        "hyperlinkCount": 1,
+        "expectedLatinFont": "Times New Roman",
+        "expectedFontSizeHalfPoints": 24
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "5.5.0"
     },
     {
       "fixtureId": "minimal-table-field-layout",

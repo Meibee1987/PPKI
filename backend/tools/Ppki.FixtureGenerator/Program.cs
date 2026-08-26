@@ -82,6 +82,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
         CreateSectionPageLayoutFixerDocument(mainPart);
         return;
     }
+    if (fixture.Kind == FixtureKind.BodyFontSizeFixer)
+    {
+        CreateBodyFontSizeFixerDocument(mainPart);
+        return;
+    }
     AddStyles(mainPart);
 
     if (fixture.Kind == FixtureKind.TableField)
@@ -637,6 +642,100 @@ static void CreateHeaderFooterDocument(MainDocumentPart mainPart, FixtureDefinit
     mainPart.Document.Save();
 }
 
+static void CreateBodyFontSizeFixerDocument(MainDocumentPart mainPart)
+{
+    AddStyles(mainPart);
+    var hyperlink = mainPart.AddHyperlinkRelationship(
+        new Uri("https://example.invalid/synthetic-body-font"), true);
+
+    var preservedLatinAndSemanticProperties = new RunProperties(
+        new RunFonts
+        {
+            Ascii = "Cambria",
+            HighAnsi = "Cambria",
+            EastAsia = "MS Mincho",
+            ComplexScript = "Arabic Typesetting",
+            AsciiTheme = ThemeFontValues.MajorHighAnsi,
+            HighAnsiTheme = ThemeFontValues.MajorHighAnsi,
+            EastAsiaTheme = ThemeFontValues.MajorEastAsia,
+            ComplexScriptTheme = ThemeFontValues.MajorBidi
+        },
+        new Strike(),
+        new NoProof(),
+        new Spacing { Val = 18 },
+        new FontSize { Val = "20" },
+        new FontSizeComplexScript { Val = "28" },
+        new Highlight { Val = HighlightColorValues.Yellow },
+        new Shading { Val = ShadingPatternValues.Clear, Fill = "D9EAD3" },
+        new Languages { Val = "id-ID", EastAsia = "ja-JP", Bidi = "ar-SA" },
+        new VerticalTextAlignment { Val = VerticalPositionValues.Superscript });
+
+    var mixed = new Paragraph(
+        new BookmarkStart { Name = "SyntheticBodyAnchor", Id = "11" },
+        new Run(
+            new RunProperties(
+                new RunFonts { Ascii = "Arial", HighAnsi = "Arial" },
+                new Bold(), new Strike(), new FontSize { Val = "24" }),
+            new Text("Teks tebal sintetis ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(
+            new RunProperties(
+                new RunFonts { Ascii = "Times New Roman", HighAnsi = "Times New Roman" },
+                new Italic(), new Underline { Val = UnderlineValues.Single },
+                new FontSize { Val = "22" }),
+            new Text("teks miring sintetis ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(preservedLatinAndSemanticProperties,
+            new Text("teks non-Latin sintetis ") { Space = SpaceProcessingModeValues.Preserve }),
+        new InsertedRun(
+            new Run(
+                new RunProperties(
+                    new RunFonts { Ascii = "Calibri", HighAnsi = "Calibri" },
+                    new FontSize { Val = "18" },
+                    new VerticalTextAlignment { Val = VerticalPositionValues.Subscript }),
+                new Text("teks subskrip sintetis ") { Space = SpaceProcessingModeValues.Preserve }))
+        { Id = "12", Author = "synthetic", Date = new DateTimeValue(DateTime.UnixEpoch) },
+        new Hyperlink(
+            new Run(
+                new RunProperties(
+                    new RunFonts { Ascii = "Arial", HighAnsi = "Arial" },
+                    new FontSize { Val = "20" }),
+                new Text("tautan sintetis ") { Space = SpaceProcessingModeValues.Preserve })) { Id = hyperlink.Id },
+        new Run(new RunProperties(new RunFonts { Ascii = "Courier New", HighAnsi = "Courier New" }),
+            new FieldChar { FieldCharType = FieldCharValues.Begin }),
+        new Run(new RunProperties(new RunFonts { Ascii = "Courier New", HighAnsi = "Courier New" }),
+            new FieldCode(" CITATION Synthetic \\l 1033 ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Separate }),
+        new Run(
+            new RunProperties(
+                new RunFonts { Ascii = "Arial", HighAnsi = "Arial" },
+                new FontSize { Val = "20" }),
+            new Text("hasil sitasi sintetis")),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.End }),
+        new BookmarkEnd { Id = "11" });
+
+    var alreadyCorrect = new Paragraph(new Run(
+        new RunProperties(
+            new RunFonts { Ascii = "Times New Roman", HighAnsi = "Times New Roman" },
+            new FontSize { Val = "24" }),
+        new Text("Paragraf benar sintetis")));
+    var heading = new Paragraph(
+        new ParagraphProperties(new ParagraphStyleId { Val = "Heading1" }),
+        new Run(
+            new RunProperties(
+                new RunFonts { Ascii = "Arial", HighAnsi = "Arial" },
+                new FontSize { Val = "30" }),
+            new Text("Heading sintetis")));
+    var table = new Table(
+        new TableProperties(new TableWidth { Width = "5000", Type = TableWidthUnitValues.Dxa }),
+        new TableRow(new TableCell(new Paragraph(new Run(
+            new RunProperties(
+                new RunFonts { Ascii = "Arial", HighAnsi = "Arial" },
+                new FontSize { Val = "20" }),
+            new Text("Tabel sintetis"))))));
+
+    mainPart.Document = new Document(new Body(mixed, alreadyCorrect, heading, table, StandardSection()));
+    mainPart.Document.Save();
+}
+
 static void CreateSectionPageLayoutFixerDocument(MainDocumentPart mainPart)
 {
     AddStyles(mainPart);
@@ -793,6 +892,10 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
         "Times New Roman", 24U, [], FixtureKind.SectionPageLayoutFixers),
     new(
+        "body-font-size-fixer.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.BodyFontSizeFixer),
+    new(
         "minimal-heading-layout.docx",
         11906U,
         16838U,
@@ -865,4 +968,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor, TextCorrectionBatch, SectionPageLayoutFixers }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor, TextCorrectionBatch, SectionPageLayoutFixers, BodyFontSizeFixer }
