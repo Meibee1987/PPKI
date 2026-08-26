@@ -444,14 +444,16 @@ public sealed class FixExecutionPersistenceContractTests
     }
 
     [Fact]
-    public void Worker_uses_upload_first_and_reads_existing_result_only_after_storage_conflict()
+    public void Worker_uses_upload_first_and_verifies_exact_published_result_before_finalization()
     {
         var worker = Source("backend", "services", "Ppki.Worker", "FixExecutionProcessor.cs");
         var publish = worker.IndexOf("await storage.SaveAsync(stream", StringComparison.Ordinal);
         var conflict = worker.IndexOf("FileStorageFailureKind.Conflict", publish, StringComparison.Ordinal);
-        var readCanonical = worker.IndexOf("existingResult = await storage.MaterializeToTempFileAsync", conflict, StringComparison.Ordinal);
+        var readCanonical = worker.IndexOf("publishedResult = await storage.MaterializeToTempFileAsync", conflict, StringComparison.Ordinal);
+        var validateCanonical = worker.IndexOf("outputValidator.ValidatePublishedAsync", readCanonical, StringComparison.Ordinal);
 
-        Assert.True(publish >= 0 && conflict > publish && readCanonical > conflict);
+        Assert.True(publish >= 0 && conflict > publish && readCanonical > conflict
+            && validateCanonical > readCanonical);
     }
 
     [Fact]

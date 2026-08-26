@@ -20,6 +20,7 @@ public sealed class RemediationFailureCatalogTests
         { "source-hash-mismatch", FixFailureCategory.InvalidSource },
         { "fix-execution-clone-hash-mismatch", FixFailureCategory.InvalidSource },
         { "source-package-invalid", FixFailureCategory.InvalidSource },
+        { "fix-result-package-invalid", FixFailureCategory.InvalidSource },
         { "approved-plan-invalid", FixFailureCategory.InvalidPlan },
         { "approved-plan-hash-invalid", FixFailureCategory.InvalidPlan },
         { "approved-plan-selection-invalid", FixFailureCategory.InvalidPlan },

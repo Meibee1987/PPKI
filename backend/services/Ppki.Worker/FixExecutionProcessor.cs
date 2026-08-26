@@ -18,6 +18,7 @@ public sealed class FixExecutionProcessor(
     IStorageObjectPathBuilder pathBuilder,
     IOptions<SupabaseOptions> supabase,
     IDocxParser parser,
+    FinalDocxOutputValidator outputValidator,
     FixApplyCapabilityRegistry capabilities,
     TextCorrectionExecutionResolver correctionResolver,
     ExactTextReplacementProvider correctionProvider,
@@ -49,7 +50,7 @@ public sealed class FixExecutionProcessor(
 
         string? materialized = null;
         FixExecutionWorkspace? workspace = null;
-        string? existingResult = null;
+        string? publishedResult = null;
         StoredFile? uploaded = null;
         var ownsUploadedObject = false;
         Exception? operationFailure = null;
@@ -119,13 +120,12 @@ public sealed class FixExecutionProcessor(
             await faults.CheckpointAsync(RemediationCheckpoint.AfterApply, claim.ExecutionId,
                 claim.AttemptNumber, cancellationToken);
 
-            var workingInfo = new FileInfo(working);
-            if (!workingInfo.Exists || workingInfo.Length is <= 0 or > MaximumBytes)
-                throw new FixExecutionException("fix-execution-result-size-invalid");
+            ValidatedDocxOutput validatedOutput;
             try
             {
-                DocxPackageIntegrity.ValidateMutation(packageSnapshot, working);
-                var after = await parser.ParseAsync(working, cancellationToken);
+                validatedOutput = await outputValidator.ValidateMutationAsync(
+                    packageSnapshot, working, cancellationToken);
+                var after = validatedOutput.ParsedDocument;
                 if (correctionMode)
                     ValidateCorrectionPostconditions(before, after, correctionOperations!);
                 else
@@ -136,7 +136,7 @@ public sealed class FixExecutionProcessor(
             { throw new FixExecutionException(FixFailureCategory.InvalidSource, "source-package-invalid", exception); }
             var resultId = claim.ExecutionId;
             var objectPath = pathBuilder.BuildVersionPath(source.OwnerUserId, source.DocumentId, resultId);
-            var outputSha = await Sha256Async(working, cancellationToken);
+            var outputSha = validatedOutput.Sha256;
             if (changed == 0 || string.Equals(outputSha, source.SourceSha256, StringComparison.Ordinal))
             {
                 try { await CompleteNoChangeAsync(claim, source, source.PlannedOperationCount, cancellationToken); }
@@ -161,26 +161,29 @@ public sealed class FixExecutionProcessor(
             }
             if (uploaded is null)
             {
-                try
-                {
-                    existingResult = await storage.MaterializeToTempFileAsync(
-                        supabase.Value.Storage.VersionBucket, objectPath, cancellationToken);
-                }
-                catch (FileStorageException exception) { throw DownloadFailure(exception); }
-                var existingInfo = new FileInfo(existingResult);
-                if (!existingInfo.Exists || existingInfo.Length != new FileInfo(working).Length
-                    || !string.Equals(await Sha256Async(existingResult, cancellationToken), outputSha, StringComparison.Ordinal))
-                    throw new FixExecutionException(FixFailureCategory.Conflict, "fix-result-object-conflict");
                 uploaded = new(supabase.Value.Storage.VersionBucket, objectPath, source.OriginalFilename,
-                    DocxMime, existingInfo.Length, outputSha);
+                    DocxMime, validatedOutput.SizeBytes, outputSha);
             }
+            if (uploaded.StorageBucket != supabase.Value.Storage.VersionBucket
+                || uploaded.StorageKey != objectPath
+                || uploaded.SizeBytes != validatedOutput.SizeBytes
+                || !string.Equals(uploaded.Sha256, outputSha, StringComparison.Ordinal))
+                throw new FixExecutionException(FixFailureCategory.TerminalInfrastructure, "storage-upload-terminal");
+            try
+            {
+                publishedResult = await storage.MaterializeToTempFileAsync(
+                    supabase.Value.Storage.VersionBucket, objectPath, cancellationToken);
+            }
+            catch (FileStorageException exception) { throw UploadFailure(exception); }
+            var publishedOutput = await outputValidator.ValidatePublishedAsync(
+                publishedResult, outputSha, validatedOutput.SizeBytes, cancellationToken);
+            uploaded = uploaded with
+            {
+                SizeBytes = publishedOutput.SizeBytes,
+                Sha256 = publishedOutput.Sha256
+            };
             await faults.CheckpointAsync(RemediationCheckpoint.AfterResultUpload, claim.ExecutionId,
                 claim.AttemptNumber, cancellationToken);
-            if (uploaded.SizeBytes is <= 0 or > MaximumBytes)
-                throw new FixExecutionException("fix-execution-result-size-invalid");
-            if (!string.Equals(uploaded.Sha256, outputSha, StringComparison.Ordinal)
-                || uploaded.SizeBytes != new FileInfo(working).Length)
-                throw new FixExecutionException(FixFailureCategory.TerminalInfrastructure, "storage-upload-terminal");
             try
             {
                 await faults.CheckpointAsync(RemediationCheckpoint.BeforeDatabaseFinalization, claim.ExecutionId,
@@ -215,9 +218,9 @@ public sealed class FixExecutionProcessor(
                 try { File.Delete(materialized); }
                 catch (Exception exception) { cleanupFailures.Add(("workspace-cleanup-failed", exception)); }
             }
-            if (existingResult is not null)
+            if (publishedResult is not null)
             {
-                try { File.Delete(existingResult); }
+                try { File.Delete(publishedResult); }
                 catch (Exception exception) { cleanupFailures.Add(("workspace-cleanup-failed", exception)); }
             }
             if (uploaded is not null && ownsUploadedObject)

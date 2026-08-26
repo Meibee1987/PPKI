@@ -29,6 +29,7 @@ builder.Services.AddSingleton<IFileStorage, SupabaseFileStorage>();
 builder.Services.AddSingleton<IStorageObjectPathBuilder, StorageObjectPathBuilder>();
 builder.Services.AddSingleton<IAuditTrailWriter, AuditTrailWriter>();
 builder.Services.AddSingleton<IDocxParser, OpenXmlDocxParser>();
+builder.Services.AddSingleton<FinalDocxOutputValidator>();
 builder.Services.AddSingleton<ExactTextAnchorMaterializer>();
 builder.Services.AddSingleton<DeterministicTextCorrectionDetector>();
 builder.Services.AddSingleton<IDocumentRuleValidator, PageSizeA4Validator>();
