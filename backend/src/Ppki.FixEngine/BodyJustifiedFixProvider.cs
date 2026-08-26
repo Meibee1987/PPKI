@@ -2,7 +2,6 @@ using System.Text.Json;
 using DocumentFormat.OpenXml.Packaging;
 using DocumentFormat.OpenXml.Wordprocessing;
 using Ppki.Application;
-using Ppki.DocxEngine;
 using Ppki.Domain;
 
 namespace Ppki.FixEngine;
@@ -32,13 +31,11 @@ public sealed class BodyJustifiedFixProvider : IFixPreviewProvider, IFixApplyPro
                 || Text(expected.RootElement, "property") != "alignment"
                 || Text(expected.RootElement, "validationKey") != "body.justified"
                 || !ArrayContains(expected.RootElement, "acceptedValues", "Justified")
-                || !Integer(location.RootElement, "bodyElementIndex", out var bodyIndex)
-                || !Integer(location.RootElement, "paragraphIndex", out var paragraphIndex)
-                || bodyIndex < 0 || paragraphIndex < 0
-                || !Text(location.RootElement, "compactLocation").StartsWith("maindocument/", StringComparison.OrdinalIgnoreCase))
+                || !FormattingFixSnapshot.ParagraphLocation(location.RootElement,
+                    out var sectionIndex, out var bodyIndex, out var paragraphIndex))
                 return false;
 
-            operation = new(new("main-document-paragraph", bodyIndex, null, paragraphIndex, null),
+            operation = new(new("main-document-paragraph", bodyIndex, sectionIndex, paragraphIndex, null),
                 "paragraph.alignment", new("enum-code", "justified"),
                 "source-finding-snapshot-must-match", "set-paragraph-alignment-justified");
             diagnosticCode = "fix-operation-planned";
@@ -67,12 +64,7 @@ public sealed class BodyJustifiedFixProvider : IFixPreviewProvider, IFixApplyPro
             || operation.Target.BodyElementIndex is null || operation.Target.ParagraphIndex is null)
             throw new FixExecutionException("fix-operation-contract-invalid");
 
-        var parsed = context.SourceDocument.Paragraphs.SingleOrDefault(value =>
-            value.Location?.PartKind == DocumentPartKind.MainDocument
-            && value.Location.BodyElementIndex == operation.Target.BodyElementIndex
-            && value.Location.ParagraphIndex == operation.Target.ParagraphIndex);
-        if (parsed is null || parsed.IsInTable || parsed.IsHeading)
-            throw new FixExecutionException("fix-operation-target-precondition-failed");
+        var parsed = FormattingFixSnapshot.NormalBodyParagraph(context);
 
         using var ownedPackage = context.OpenPackage is null
             ? WordprocessingDocument.Open(context.WorkingFilePath, true, new OpenSettings { AutoSave = false })
@@ -105,13 +97,6 @@ public sealed class BodyJustifiedFixProvider : IFixPreviewProvider, IFixApplyPro
     {
         var property = root.EnumerateObject().FirstOrDefault(value => value.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
         return property.Value.ValueKind == JsonValueKind.String ? property.Value.GetString() ?? string.Empty : string.Empty;
-    }
-
-    private static bool Integer(JsonElement root, string name, out int value)
-    {
-        value = 0;
-        var property = root.EnumerateObject().FirstOrDefault(item => item.Name.Equals(name, StringComparison.OrdinalIgnoreCase));
-        return property.Value.ValueKind == JsonValueKind.Number && property.Value.TryGetInt32(out value);
     }
 
     private static bool ArrayContains(JsonElement root, string name, string expected)

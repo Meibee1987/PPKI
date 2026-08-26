@@ -87,6 +87,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
         CreateBodyFontSizeFixerDocument(mainPart);
         return;
     }
+    if (fixture.Kind == FixtureKind.ParagraphFormatFixers)
+    {
+        CreateParagraphFormatFixerDocument(mainPart);
+        return;
+    }
     AddStyles(mainPart);
 
     if (fixture.Kind == FixtureKind.TableField)
@@ -736,6 +741,92 @@ static void CreateBodyFontSizeFixerDocument(MainDocumentPart mainPart)
     mainPart.Document.Save();
 }
 
+static void CreateParagraphFormatFixerDocument(MainDocumentPart mainPart)
+{
+    AddStyles(mainPart);
+    AddNumbering(mainPart);
+    var hyperlink = mainPart.AddHyperlinkRelationship(
+        new Uri("https://example.invalid/synthetic-paragraph-format"), true);
+
+    ParagraphProperties WrongProperties() => new(
+        new Justification { Val = JustificationValues.Left },
+        new SpacingBetweenLines
+        {
+            Before = "120", After = "80", BeforeLines = 20, AfterLines = 10,
+            Line = "360", LineRule = LineSpacingRuleValues.Exact
+        },
+        new Indentation { Left = "720", Right = "400", FirstLine = "0" },
+        new Tabs(new TabStop { Val = TabStopValues.Left, Position = 1440 }),
+        new KeepNext(), new KeepLines(), new WidowControl(), new ContextualSpacing());
+
+    var allWrong = new Paragraph(
+        WrongProperties(),
+        new BookmarkStart { Name = "SyntheticParagraphAnchor", Id = "21" },
+        new Run(new RunProperties(new Bold()), new Text("Paragraf tebal sintetis ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Hyperlink(new Run(new RunProperties(new Italic(), new Underline { Val = UnderlineValues.Single }),
+            new Text("tautan sintetis ") { Space = SpaceProcessingModeValues.Preserve })) { Id = hyperlink.Id },
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Begin }),
+        new Run(new FieldCode(" REF SyntheticParagraphAnchor ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Separate }),
+        new Run(new Text("hasil referensi sintetis")),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.End }),
+        new BookmarkEnd { Id = "21" });
+
+    var wrongSpacing = new Paragraph(
+        new ParagraphProperties(
+            new Justification { Val = JustificationValues.Both },
+            new SpacingBetweenLines { Before = "100", After = "60", Line = "300", LineRule = LineSpacingRuleValues.AtLeast },
+            new Indentation { Left = "500", Right = "250", FirstLine = "567" }),
+        new Run(new Text("Paragraf jarak baris sintetis")));
+    var wrongIndent = new Paragraph(
+        new ParagraphProperties(
+            new Justification { Val = JustificationValues.Both },
+            new SpacingBetweenLines { Before = "40", After = "20", Line = "240", LineRule = LineSpacingRuleValues.Auto },
+            new Indentation { Left = "600", Right = "300", FirstLine = "120" }),
+        new Run(new Text("Paragraf indentasi sintetis")));
+    var wrongAlignment = new Paragraph(
+        new ParagraphProperties(
+            new Justification { Val = JustificationValues.Center },
+            new SpacingBetweenLines { Before = "30", After = "50", Line = "240", LineRule = LineSpacingRuleValues.Auto },
+            new Indentation { Left = "650", Right = "350", FirstLine = "567" }),
+        new Run(new Text("Paragraf perataan sintetis")));
+    var compliant = new Paragraph(
+        new ParagraphProperties(
+            new Justification { Val = JustificationValues.Both },
+            new SpacingBetweenLines { Line = "240", LineRule = LineSpacingRuleValues.Auto },
+            new Indentation { FirstLine = "567" }),
+        new Run(new Text("Paragraf patuh sintetis")));
+    var numberedHanging = new Paragraph(
+        new ParagraphProperties(
+            new NumberingProperties(new NumberingLevelReference { Val = 0 }, new NumberingId { Val = 1 }),
+            new Justification { Val = JustificationValues.Left },
+            new SpacingBetweenLines { Before = "70", After = "90", Line = "320", LineRule = LineSpacingRuleValues.Exact },
+            new Indentation { Left = "900", Right = "300", Hanging = "360" }),
+        new Run(new Text("Butir bernomor sintetis")));
+    var hanging = new Paragraph(
+        new ParagraphProperties(
+            new Justification { Val = JustificationValues.Left },
+            new SpacingBetweenLines { Line = "280", LineRule = LineSpacingRuleValues.Exact },
+            new Indentation { Left = "840", Right = "280", Hanging = "300" }),
+        new Run(new Text("Paragraf hanging sintetis")));
+    var heading = new Paragraph(
+        new ParagraphProperties(
+            new ParagraphStyleId { Val = "Heading1" },
+            new Justification { Val = JustificationValues.Left },
+            new SpacingBetweenLines { Line = "400", LineRule = LineSpacingRuleValues.Exact },
+            new Indentation { FirstLine = "0" }),
+        new Run(new Text("Heading format sintetis")));
+    var table = new Table(
+        new TableProperties(new TableWidth { Width = "5000", Type = TableWidthUnitValues.Dxa }),
+        new TableRow(new TableCell(new Paragraph(
+            WrongProperties(), new Run(new Text("Tabel format sintetis"))))));
+
+    mainPart.Document = new Document(new Body(
+        allWrong, wrongSpacing, wrongIndent, wrongAlignment, compliant,
+        numberedHanging, hanging, heading, table, StandardSection()));
+    mainPart.Document.Save();
+}
+
 static void CreateSectionPageLayoutFixerDocument(MainDocumentPart mainPart)
 {
     AddStyles(mainPart);
@@ -896,6 +987,10 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
         "Times New Roman", 24U, [], FixtureKind.BodyFontSizeFixer),
     new(
+        "paragraph-format-fixers.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.ParagraphFormatFixers),
+    new(
         "minimal-heading-layout.docx",
         11906U,
         16838U,
@@ -968,4 +1063,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor, TextCorrectionBatch, SectionPageLayoutFixers, BodyFontSizeFixer }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor, TextCorrectionBatch, SectionPageLayoutFixers, BodyFontSizeFixer, ParagraphFormatFixers }

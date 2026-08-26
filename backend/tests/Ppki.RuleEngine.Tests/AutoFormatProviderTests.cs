@@ -91,21 +91,22 @@ public sealed class AutoFormatProviderTests
                 && value.Finding.Actual.Property == "lineSpacingValue");
         var indent = Validate(new FirstLineIndentValidator(), Snapshot("body.first-line-indent-1cm", "PPKI-LAY-018",
             "{\"value\":1,\"unit\":\"cm\"}"), source)
-            .Single(value => value.Finding.Location.ParagraphIndex == 0);
+            .Single(value => value.Finding.Location.ParagraphIndex == 2);
 
         await Apply(workspace.WorkingPath, source, line, new BodyLineSpacingFixProvider());
         await Apply(workspace.WorkingPath, source, indent, new BodyFirstLineIndentFixProvider());
 
         using var package = WordprocessingDocument.Open(workspace.WorkingPath, false);
-        var properties = package.MainDocumentPart!.Document!.Body!.Elements<Paragraph>().First().ParagraphProperties!;
-        Assert.Equal("240", properties.SpacingBetweenLines!.Line!.Value);
-        Assert.Equal("120", properties.SpacingBetweenLines.Before!.Value);
-        Assert.Equal("80", properties.SpacingBetweenLines.After!.Value);
-        Assert.Equal(JustificationValues.Left, properties.Justification!.Val!.Value);
-        Assert.Equal("567", properties.Indentation!.FirstLine!.Value);
-        Assert.Null(properties.Indentation.Hanging);
-        Assert.Equal("720", properties.Indentation.Left!.Value);
-        Assert.Equal("400", properties.Indentation.Right!.Value);
+        var paragraphs = package.MainDocumentPart!.Document!.Body!.Elements<Paragraph>().ToArray();
+        var spacingProperties = paragraphs[0].ParagraphProperties!;
+        Assert.Equal("240", spacingProperties.SpacingBetweenLines!.Line!.Value);
+        Assert.Equal("120", spacingProperties.SpacingBetweenLines.Before!.Value);
+        Assert.Equal("80", spacingProperties.SpacingBetweenLines.After!.Value);
+        Assert.Equal(JustificationValues.Left, spacingProperties.Justification!.Val!.Value);
+        Assert.Equal("360", spacingProperties.Indentation!.Hanging!.Value);
+        Assert.Equal("720", spacingProperties.Indentation.Left!.Value);
+        Assert.Equal("400", spacingProperties.Indentation.Right!.Value);
+        Assert.Equal("567", paragraphs[2].ParagraphProperties!.Indentation!.FirstLine!.Value);
     }
 
     [Fact]

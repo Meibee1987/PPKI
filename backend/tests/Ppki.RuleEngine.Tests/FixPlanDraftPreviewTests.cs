@@ -361,7 +361,7 @@ public sealed class FixPlanDraftPreviewServiceTests
             .Single(value => value.ValidationKey == validationKey);
         var location = runTarget
             ? "{\"compactLocation\":\"maindocument/s:0/b:0/p:0/r:0/kind:run\",\"sectionIndex\":0,\"bodyElementIndex\":0,\"paragraphIndex\":0,\"runIndex\":0}"
-            : "{\"compactLocation\":\"maindocument/p0\",\"bodyElementIndex\":0,\"paragraphIndex\":0}";
+            : "{\"compactLocation\":\"maindocument/s:0/b:0/p:0/kind:paragraph\",\"sectionIndex\":0,\"bodyElementIndex\":0,\"paragraphIndex\":0}";
         var finding = new FixPlanFindingSnapshot(Id(80), 1, ruleCode, "layout", "body", validationKey,
             RuleSeverity.Error, FixMode.Auto, FindingStatus.Open,
             JsonSerializer.Serialize(new { property, normalizedValue = before }),
@@ -422,7 +422,7 @@ public sealed class FixPlanDraftPreviewServiceTests
             Message = "must-never-be-returned", Confidence = 0.75m,
             ActualValueJson = "{\"property\":\"alignment\",\"normalizedValue\":\"Left\"}",
             ExpectedValueJson = "{\"property\":\"alignment\",\"validationKey\":\"body.justified\",\"acceptedValues\":[\"Justified\"]}",
-            LocationJson = "{\"compactLocation\":\"maindocument/p0\",\"bodyElementIndex\":0,\"paragraphIndex\":0}"
+            LocationJson = "{\"compactLocation\":\"maindocument/s:0/b:0/p:0/kind:paragraph\",\"sectionIndex\":0,\"bodyElementIndex\":0,\"paragraphIndex\":0}"
         };
         var snapshot = new FixPlanFindingSnapshot(finding.Id, 19, finding.RuleCodeSnapshot, "layout", "body",
             "body.justified", RuleSeverity.Error, mode, finding.Status, finding.ActualValueJson,

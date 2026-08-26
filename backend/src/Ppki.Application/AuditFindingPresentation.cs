@@ -117,6 +117,7 @@ public static class AuditFindingPresentation
     {
         "Left" => "Kiri", "Center" => "Tengah", "Right" => "Kanan",
         "Justified" => "Rata kiri-kanan", "auto" => "Otomatis", "single" => "Tunggal",
+        "exact" => "Tepat", "atleast" => "Minimal",
         "unresolved" or null or "" => null, _ => null
     };
 

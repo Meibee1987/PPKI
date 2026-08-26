@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatorVersion": "5.5.0",
+  "generatorVersion": "5.6.0",
   "fixtures": [
     {
       "fixtureId": "minimal-compliant-layout",
@@ -89,6 +89,23 @@
       },
       "containsPersonalData": false,
       "generatorVersion": "5.5.0"
+    },
+    {
+      "fixtureId": "paragraph-format-fixers",
+      "filename": "paragraph-format-fixers.docx",
+      "description": "Golden paragraph-format fixture with independent and combined spacing, indent, and alignment violations plus list, hanging, heading, table, hyperlink, field, and preserved paragraph properties.",
+      "synthetic": true,
+      "intendedProperties": ["wrong-line-spacing", "wrong-first-line-indent", "wrong-alignment", "combined-violations", "compliant-body", "left-right-indent", "hanging-indent", "numbering", "list-level", "before-after-spacing", "tabs", "keep-next", "keep-lines", "contextual-spacing", "mixed-runs", "hyperlink", "field", "heading-excluded", "table-excluded"],
+      "expectedDocumentProperties": {
+        "bodyParagraphCount": 8,
+        "tableCount": 1,
+        "expectedLineSpacingTwips": 240,
+        "expectedLineRule": "auto",
+        "expectedFirstLineIndentTwips": 567,
+        "expectedAlignment": "Justified"
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "5.6.0"
     },
     {
       "fixtureId": "minimal-table-field-layout",

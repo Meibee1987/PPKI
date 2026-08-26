@@ -57,12 +57,16 @@ internal static class FormattingFixSnapshot
         return value.Length is > 0 and <= 128;
     }
 
-    public static bool ParagraphLocation(JsonElement root, out int body, out int paragraph)
+    public static bool ParagraphLocation(JsonElement root, out int section, out int body, out int paragraph)
     {
-        body = paragraph = -1;
-        var compact = Text(root, "compactLocation");
-        return Integer(root, "bodyElementIndex", out body) && Integer(root, "paragraphIndex", out paragraph)
-            && body >= 0 && paragraph >= 0 && compact.StartsWith("maindocument/", StringComparison.OrdinalIgnoreCase);
+        section = body = paragraph = -1;
+        if (!Integer(root, "sectionIndex", out section)
+            || !Integer(root, "bodyElementIndex", out body)
+            || !Integer(root, "paragraphIndex", out paragraph)
+            || section < 0 || body < 0 || paragraph < 0) return false;
+        return string.Equals(Text(root, "compactLocation"),
+            $"maindocument/s:{section}/b:{body}/p:{paragraph}/kind:paragraph",
+            StringComparison.OrdinalIgnoreCase);
     }
 
     public static bool RunLocation(JsonElement root, out int section, out int body, out int paragraph, out int run)
@@ -90,6 +94,18 @@ internal static class FormattingFixSnapshot
             && value.Location.ParagraphIndex == target.ParagraphIndex
             && (target.SectionIndex is null || value.Location.SectionIndex == target.SectionIndex))
             ?? throw new FixExecutionException("fix-operation-target-precondition-failed");
+    }
+
+    public static ParsedParagraph NormalBodyParagraph(FixApplyContext context)
+    {
+        var paragraph = Paragraph(context);
+        if (paragraph.IsInTable || paragraph.IsHeading
+            || context.SourceDocument.Headings.Any(value => value.ParagraphIndex == paragraph.Index)
+            || !paragraph.RunList.Any(value => !value.IsDeleted && !value.IsHidden
+                && value.EffectiveFormatting?.Hidden.Value != true
+                && value.TextSegments.Any(segment => !string.IsNullOrWhiteSpace(segment))))
+            throw new FixExecutionException("fix-operation-target-precondition-failed");
+        return paragraph;
     }
 
     public static Paragraph XmlParagraph(FixApplyContext context, Body body)
@@ -236,11 +252,11 @@ public abstract class ParagraphPropertyFixProvider : IFixPreviewProvider, IFixAp
         {
             var property = FormattingFixSnapshot.Text(actual.RootElement, "property");
             if (!Properties.Contains(property)
-                || !FormattingFixSnapshot.ParagraphLocation(location.RootElement, out var body, out var paragraph)
+                || !FormattingFixSnapshot.ParagraphLocation(location.RootElement, out var section, out var body, out var paragraph)
                 || !FormattingFixSnapshot.SingleExpected(expected.RootElement, property, finding.ValidationKey, out var value)) return false;
             var descriptor = Descriptor(property, value);
             if (descriptor is null) return false;
-            operation = new(new("main-document-paragraph", body, null, paragraph, null), descriptor.Value.Property,
+            operation = new(new("main-document-paragraph", body, section, paragraph, null), descriptor.Value.Property,
                 descriptor.Value.Expected, "source-finding-snapshot-must-match", descriptor.Value.Summary);
             diagnosticCode = "fix-operation-planned";
             return true;
@@ -252,7 +268,9 @@ public abstract class ParagraphPropertyFixProvider : IFixPreviewProvider, IFixAp
         cancellationToken.ThrowIfCancellationRequested();
         if (!TryCreate(context.Finding, out var approved, out _)) throw new FixExecutionException("fix-operation-source-snapshot-mismatch");
         FormattingFixSnapshot.ExactContract(context, this, approved, context.Finding.ValidationKey, Contracts[context.Finding.ValidationKey]);
-        var parsed = FormattingFixSnapshot.Paragraph(context);
+        var parsed = RequiresNormalBodyParagraph
+            ? FormattingFixSnapshot.NormalBodyParagraph(context)
+            : FormattingFixSnapshot.Paragraph(context);
         using var actual = JsonDocument.Parse(context.Finding.ActualJson);
         var property = FormattingFixSnapshot.Text(actual.RootElement, "property");
         var outcome = FormattingFixSnapshot.Mutate(context, body => Mutate(context, parsed, property, actual.RootElement,
@@ -261,6 +279,7 @@ public abstract class ParagraphPropertyFixProvider : IFixPreviewProvider, IFixAp
     }
 
     protected abstract (string Property, FixExpectedValueDescriptor Expected, string Summary)? Descriptor(string property, string value);
+    protected virtual bool RequiresNormalBodyParagraph => false;
     protected abstract FixApplyOutcome Mutate(FixApplyContext context, ParsedParagraph parsed, string property,
         JsonElement actual, Paragraph paragraph);
 }
@@ -269,6 +288,7 @@ public sealed class BodyLineSpacingFixProvider : ParagraphPropertyFixProvider
 {
     public const string Id = "body-line-spacing-direct-paragraph";
     public override string CapabilityId => Id;
+    protected override bool RequiresNormalBodyParagraph => true;
     protected override IReadOnlyDictionary<string, string[]> Contracts { get; } = new Dictionary<string, string[]>(StringComparer.Ordinal)
         { ["body.line-spacing-single"] = ["PPKI-LAY-017"] };
     protected override IReadOnlySet<string> Properties { get; } = new HashSet<string>(["lineSpacingValue", "lineSpacingRule"], StringComparer.Ordinal);
@@ -296,11 +316,16 @@ public sealed class BodyLineSpacingFixProvider : ParagraphPropertyFixProvider
         else
         {
             var wanted = context.Operation.Expected.Value;
-            var currentDirect = spacing.LineRule?.Value.ToString();
-            if (string.Equals(currentDirect, wanted, StringComparison.OrdinalIgnoreCase)) return FixApplyOutcome.NoChange;
+            var wantedRule = wanted switch
+            {
+                "auto" => LineSpacingRuleValues.Auto,
+                "exact" => LineSpacingRuleValues.Exact,
+                _ => LineSpacingRuleValues.AtLeast
+            };
+            if (spacing.LineRule?.Value == wantedRule) return FixApplyOutcome.NoChange;
             if (!FormattingFixSnapshot.ActualMatches(actual, parsed.EffectiveFormatting?.LineSpacingRule.Value))
                 throw new FixExecutionException("fix-operation-source-snapshot-mismatch");
-            spacing.LineRule = wanted switch { "auto" => LineSpacingRuleValues.Auto, "exact" => LineSpacingRuleValues.Exact, _ => LineSpacingRuleValues.AtLeast };
+            spacing.LineRule = wantedRule;
         }
         return FixApplyOutcome.Changed;
     }
@@ -364,6 +389,7 @@ public sealed class BodyFirstLineIndentFixProvider : ParagraphPropertyFixProvide
 {
     public const string Id = "body-first-line-indent-direct-paragraph";
     public override string CapabilityId => Id;
+    protected override bool RequiresNormalBodyParagraph => true;
     protected override IReadOnlyDictionary<string, string[]> Contracts { get; } = new Dictionary<string, string[]>(StringComparer.Ordinal)
         { ["body.first-line-indent-1cm"] = ["PPKI-LAY-018"] };
     protected override IReadOnlySet<string> Properties { get; } = new HashSet<string>(["firstLineIndent"], StringComparer.Ordinal);
@@ -374,13 +400,14 @@ public sealed class BodyFirstLineIndentFixProvider : ParagraphPropertyFixProvide
     {
         var wanted = context.Operation.Expected.Value;
         var indentation = paragraph.ParagraphProperties?.Indentation;
-        if (indentation?.FirstLine?.Value == wanted && indentation.Hanging is null) return FixApplyOutcome.NoChange;
+        if (indentation?.Hanging is not null || parsed.EffectiveFormatting?.HangingIndentTwips.Value is not null)
+            throw new FixExecutionException("fix-operation-indent-semantics-unsupported");
+        if (indentation?.FirstLine?.Value == wanted) return FixApplyOutcome.NoChange;
         if (!FormattingFixSnapshot.ActualMatches(actual, parsed.EffectiveFormatting?.FirstLineIndentTwips.Value?.ToString(CultureInfo.InvariantCulture)))
             throw new FixExecutionException("fix-operation-source-snapshot-mismatch");
         paragraph.ParagraphProperties ??= new ParagraphProperties();
         paragraph.ParagraphProperties.Indentation ??= new Indentation();
         paragraph.ParagraphProperties.Indentation.FirstLine = wanted;
-        paragraph.ParagraphProperties.Indentation.Hanging = null;
         return FixApplyOutcome.Changed;
     }
 }
