@@ -118,6 +118,12 @@ public static class ProductionFixCapabilities
         var firstLine = new BodyFirstLineIndentFixProvider();
         var abstractSpacing = new AbstractParagraphSpacingFixProvider();
         var chapterCentered = new ChapterCenteredFixProvider();
+        var chapterBold = new ChapterBoldFixProvider();
+        var chapterDecoration = new ChapterDecorationFixProvider();
+        var subheadingLeft = new SubheadingLeftFixProvider();
+        var subheadingDecoration = new SubheadingDecorationFixProvider();
+        var subsubheadingLeft = new SubSubheadingLeftFixProvider();
+        var subsubheadingDecoration = new SubSubheadingDecorationFixProvider();
         var pageSize = new SectionPageSizeFixProvider();
         var margins = new SectionMarginFixProvider();
         return new RemediationCapabilityRegistry([
@@ -129,7 +135,13 @@ public static class ProductionFixCapabilities
             Descriptor(firstLine, "body.first-line-indent-1cm", "body-first-line-indent-preview", "set-paragraph-first-line-indent"),
             Descriptor(abstractSpacing, "abstract.skripsi-single-spacing-zero-paragraph-spacing", "abstract-spacing-preview", "set-abstract-paragraph-spacing"),
             Descriptor(abstractSpacing, "abstract-summary-single-spacing-zero-paragraph-spacing", "abstract-summary-spacing-preview", "set-abstract-paragraph-spacing"),
+            Descriptor(chapterBold, "heading.chapter-bold", "chapter-bold-preview", "set-heading-runs-bold"),
+            Descriptor(chapterDecoration, "heading.chapter-no-period-no-underline", "chapter-decoration-preview", "set-heading-runs-underline-none"),
             Descriptor(chapterCentered, "heading.chapter-centered", "chapter-centered-preview", "set-heading-alignment-centered"),
+            Descriptor(subheadingLeft, "heading.subheading-decimal-left", "subheading-left-preview", "set-heading-alignment-left"),
+            Descriptor(subheadingDecoration, "heading.subheading-bold-no-period-no-underline", "subheading-decoration-preview", "set-heading-runs-formatting"),
+            Descriptor(subsubheadingLeft, "heading.subsubheading-decimal-left", "subsubheading-left-preview", "set-heading-alignment-left"),
+            Descriptor(subsubheadingDecoration, "heading.subsubheading-regular-no-period-no-underline", "subsubheading-decoration-preview", "set-heading-runs-formatting"),
             Descriptor(pageSize, "section.page-size-a4", "section-page-size-preview", "set-section-page-size-a4"),
             Descriptor(margins, "section.margin-left-4cm", "section-margin-left-preview", "set-section-margin"),
             Descriptor(margins, "section.margin-right-3cm", "section-margin-right-preview", "set-section-margin"),
@@ -143,7 +155,10 @@ public static class ProductionFixCapabilities
         var registry = new FixApplyCapabilityRegistry([
             new BodyJustifiedFixProvider(), new BodyFontFixProvider(), new BodyLineSpacingFixProvider(),
             new BodyFirstLineIndentFixProvider(), new AbstractParagraphSpacingFixProvider(),
-            new ChapterCenteredFixProvider(), new SectionPageSizeFixProvider(), new SectionMarginFixProvider()
+            new ChapterBoldFixProvider(), new ChapterDecorationFixProvider(), new ChapterCenteredFixProvider(),
+            new SubheadingLeftFixProvider(), new SubheadingDecorationFixProvider(),
+            new SubSubheadingLeftFixProvider(), new SubSubheadingDecorationFixProvider(),
+            new SectionPageSizeFixProvider(), new SectionMarginFixProvider()
         ]);
         if (CreatePreviewRegistry().Capabilities.Any(capability => capability.DocumentMutationImplementationExists
             && registry.GetAvailability(capability.ValidationKey, capability.CapabilityId,

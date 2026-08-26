@@ -469,7 +469,9 @@ public sealed class FixExecutionProcessor(
                 && value.Location.ParagraphIndex == operation.Target.ParagraphIndex
                 && (operation.Target.SectionIndex is null
                     || value.Location.SectionIndex == operation.Target.SectionIndex));
-            if (paragraph is null || !OperationPostcondition(paragraph, operation))
+            if (paragraph is null || !OperationPostcondition(paragraph, operation)
+                || operation.PropertyIdentifier.StartsWith("heading.", StringComparison.Ordinal)
+                    && !HeadingClassificationPostcondition(before, after, operation))
                 throw new FixExecutionException("fix-operation-postcondition-failed");
         }
     }
@@ -528,6 +530,7 @@ public sealed class FixExecutionProcessor(
     private static bool OperationPostcondition(ParsedParagraph paragraph, FixPlanOperation operation)
     {
         var expected = operation.Expected.Value;
+        var visibleRuns = VisibleRuns(paragraph);
         return operation.PropertyIdentifier switch
         {
             "paragraph.alignment" => expected switch
@@ -536,6 +539,17 @@ public sealed class FixExecutionProcessor(
                 "centered" => paragraph.DirectAlignment == ParsedAlignment.Center,
                 _ => false
             },
+            "heading.alignment" => expected switch
+            {
+                "center" => paragraph.DirectAlignment == ParsedAlignment.Center,
+                "left" => paragraph.DirectAlignment == ParsedAlignment.Left,
+                _ => false
+            },
+            "heading.runs-bold" => bool.TryParse(expected, out var bold)
+                && visibleRuns.Count > 0 && visibleRuns.All(run => run.Bold == bold),
+            "heading.runs-underline" => expected == "none"
+                && visibleRuns.Count > 0
+                && visibleRuns.All(run => string.Equals(run.Underline, "none", StringComparison.OrdinalIgnoreCase)),
             "paragraph.line-spacing-value" => paragraph.DirectLineSpacingValue?.ToString(System.Globalization.CultureInfo.InvariantCulture) == expected,
             "paragraph.line-spacing-rule" => string.Equals(paragraph.DirectLineSpacingRule, expected, StringComparison.OrdinalIgnoreCase),
             "paragraph.spacing-before" => paragraph.DirectSpacingBeforeTwips?.ToString(System.Globalization.CultureInfo.InvariantCulture) == expected,
@@ -552,6 +566,49 @@ public sealed class FixExecutionProcessor(
 
         ParsedRun? Run(FixPlanOperation value) => paragraph.RunList.SingleOrDefault(run => run.Index == value.Target.RunIndex);
     }
+
+    private static bool HeadingClassificationPostcondition(ParsedDocument before, ParsedDocument after,
+        FixPlanOperation operation)
+    {
+        ParsedHeading? Find(ParsedDocument document) => document.Headings.SingleOrDefault(value =>
+            value.Location.PartKind == DocumentPartKind.MainDocument
+            && value.Location.SectionIndex == operation.Target.SectionIndex
+            && value.Location.BodyElementIndex == operation.Target.BodyElementIndex
+            && value.Location.ParagraphIndex == operation.Target.ParagraphIndex);
+        var original = Find(before);
+        var reparsed = Find(after);
+        if (original is null || reparsed is null
+            || original.Index != reparsed.Index
+            || original.ParagraphIndex != reparsed.ParagraphIndex
+            || original.Level != reparsed.Level
+            || original.Classification != reparsed.Classification
+            || original.EffectiveParagraphStyleId != reparsed.EffectiveParagraphStyleId
+            || original.OutlineLevel != reparsed.OutlineLevel
+            || original.StartsNewSection != reparsed.StartsNewSection
+            || !original.Evidence.SequenceEqual(reparsed.Evidence)) return false;
+        var originalSections = before.DocumentStructure.Sections.Where(value => value.HeadingIndex == original.Index)
+            .OrderBy(value => value.Index).ToArray();
+        var reparsedSections = after.DocumentStructure.Sections.Where(value => value.HeadingIndex == reparsed.Index)
+            .OrderBy(value => value.Index).ToArray();
+        return originalSections.Length == reparsedSections.Length
+            && originalSections.Zip(reparsedSections).All(pair =>
+                pair.First.Index == pair.Second.Index
+                && pair.First.Kind == pair.Second.Kind
+                && pair.First.Zone == pair.Second.Zone
+                && pair.First.ClassificationState == pair.Second.ClassificationState
+                && pair.First.ClassificationBasis == pair.Second.ClassificationBasis
+                && pair.First.HeadingLevel == pair.Second.HeadingLevel
+                && pair.First.NumberingCategory == pair.Second.NumberingCategory
+                && pair.First.ParentSectionIndex == pair.Second.ParentSectionIndex
+                && pair.First.HeadingLocation == pair.Second.HeadingLocation
+                && pair.First.Evidence.SequenceEqual(pair.Second.Evidence));
+    }
+
+    private static IReadOnlyList<ParsedRun> VisibleRuns(ParsedParagraph paragraph) => paragraph.RunList
+        .Where(value => !value.IsDeleted && !value.IsHidden
+            && value.EffectiveFormatting?.Hidden.Value != true
+            && value.TextSegments.Any(segment => !string.IsNullOrEmpty(segment)))
+        .OrderBy(value => value.Index).ToArray();
 
     private static string TextDigest(ParsedDocument document)
     {

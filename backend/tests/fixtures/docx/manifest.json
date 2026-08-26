@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatorVersion": "5.6.0",
+  "generatorVersion": "5.7.0",
   "fixtures": [
     {
       "fixtureId": "minimal-compliant-layout",
@@ -242,6 +242,22 @@
       },
       "containsPersonalData": false,
       "generatorVersion": "5.3.0"
+    },
+    {
+      "fixtureId": "safe-heading-fixers-mvp",
+      "filename": "safe-heading-fixers-mvp.docx",
+      "description": "Synthetic safe heading formatting fixture with confirmed chapter and level anchors, mixed runs, field, hyperlink, non-Latin properties, excluded table content, and an ambiguous formatting-only candidate.",
+      "synthetic": true,
+      "intendedProperties": ["confirmed-chapter", "heading-level-2", "heading-level-3", "wrong-bold", "wrong-alignment", "wrong-underline", "mixed-runs", "hyperlink", "field", "bookmark", "non-latin-fonts", "body-adjacent", "table-excluded", "ambiguous-heading-candidate", "compliant-heading"],
+      "expectedDocumentProperties": {
+        "paragraphCount": 7,
+        "confirmedHeadingCount": 5,
+        "hyperlinkCount": 1,
+        "fieldCount": 1,
+        "tableCount": 1
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "5.7.0"
     }
   ]
 }

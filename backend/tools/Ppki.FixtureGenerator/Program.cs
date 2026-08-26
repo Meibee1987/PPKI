@@ -92,6 +92,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
         CreateParagraphFormatFixerDocument(mainPart);
         return;
     }
+    if (fixture.Kind == FixtureKind.SafeHeadingFixers)
+    {
+        CreateSafeHeadingFixerDocument(mainPart);
+        return;
+    }
     AddStyles(mainPart);
 
     if (fixture.Kind == FixtureKind.TableField)
@@ -827,6 +832,102 @@ static void CreateParagraphFormatFixerDocument(MainDocumentPart mainPart)
     mainPart.Document.Save();
 }
 
+static void CreateSafeHeadingFixerDocument(MainDocumentPart mainPart)
+{
+    var stylesPart = mainPart.AddNewPart<StyleDefinitionsPart>();
+    stylesPart.Styles = new Styles(
+        CreateStyle("Normal", "Normal", true),
+        HeadingStyle("Heading1", "Heading 1", 0),
+        HeadingStyle("Heading2", "Heading 2", 1),
+        HeadingStyle("Heading3", "Heading 3", 2));
+    stylesPart.Styles.Save();
+
+    var numberingPart = mainPart.AddNewPart<NumberingDefinitionsPart>();
+    numberingPart.Numbering = new Numbering(
+        new AbstractNum(
+            HeadingLevel(0, NumberFormatValues.Decimal, "%1", "Heading1", 1, LevelSuffixValues.Space),
+            HeadingLevel(1, NumberFormatValues.Decimal, "%1.%2", "Heading2", 1, LevelSuffixValues.Space),
+            HeadingLevel(2, NumberFormatValues.Decimal, "%1.%2.%3", "Heading3", 1, LevelSuffixValues.Space),
+            new MultiLevelType { Val = MultiLevelValues.Multilevel }) { AbstractNumberId = 20 },
+        new NumberingInstance(new AbstractNumId { Val = 20 }) { NumberID = 20 });
+    numberingPart.Numbering.Save();
+
+    var hyperlink = mainPart.AddHyperlinkRelationship(
+        new Uri("https://example.invalid/synthetic-safe-heading"), true);
+    var chapter = new Paragraph(
+        new ParagraphProperties(
+            new ParagraphStyleId { Val = "Heading1" },
+            new Justification { Val = JustificationValues.Left },
+            new SpacingBetweenLines { Before = "120", After = "80" },
+            new Indentation { Left = "360" }),
+        new BookmarkStart { Name = "SyntheticHeadingAnchor", Id = "31" },
+        new Run(
+            new RunProperties(
+                new RunFonts
+                {
+                    Ascii = "Times New Roman", HighAnsi = "Times New Roman",
+                    EastAsia = "MS Mincho", ComplexScript = "Arabic Typesetting"
+                },
+                new Bold { Val = false }, new Italic(),
+                new Underline { Val = UnderlineValues.Single },
+                new Languages { Val = "id-ID", EastAsia = "ja-JP", Bidi = "ar-SA" }),
+            new Text("BAB I ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Hyperlink(new Run(
+            new RunProperties(new Bold { Val = false }, new Underline { Val = UnderlineValues.Double },
+                new Color { Val = "123456" }),
+            new Text("PENDAHULUAN"))) { Id = hyperlink.Id },
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Begin }),
+        new Run(new FieldCode(" REF SyntheticHeadingAnchor ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Separate }),
+        new Run(new RunProperties(new Bold { Val = false }, new Underline { Val = UnderlineValues.Single }),
+            new Text(" I")),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.End }),
+        new BookmarkEnd { Id = "31" });
+
+    var level2 = new Paragraph(
+        new ParagraphProperties(
+            new ParagraphStyleId { Val = "Heading2" },
+            new NumberingProperties(new NumberingLevelReference { Val = 1 }, new NumberingId { Val = 20 }),
+            new Justification { Val = JustificationValues.Center },
+            new SpacingBetweenLines { Before = "40", After = "60" },
+            new Indentation { Left = "720", Hanging = "180" }),
+        new Run(new RunProperties(new Bold { Val = false }, new Underline { Val = UnderlineValues.Single }, new Italic()),
+            new Text("Subbab Sintetis")));
+    var level3 = new Paragraph(
+        new ParagraphProperties(
+            new ParagraphStyleId { Val = "Heading3" },
+            new NumberingProperties(new NumberingLevelReference { Val = 2 }, new NumberingId { Val = 20 }),
+            new Justification { Val = JustificationValues.Right },
+            new SpacingBetweenLines { Before = "20", After = "30" }),
+        new Run(new RunProperties(new Bold(), new Underline { Val = UnderlineValues.Single }, new SmallCaps()),
+            new Text("Subsubbab Sintetis")));
+    var bodyParagraph = new Paragraph(
+        new ParagraphProperties(new Justification { Val = JustificationValues.Both }),
+        new Run(new RunProperties(new Bold(), new Underline { Val = UnderlineValues.Single }),
+            new Text("Paragraf isi yang tidak boleh berubah.")));
+    var compliant = new Paragraph(
+        new ParagraphProperties(
+            new ParagraphStyleId { Val = "Heading2" },
+            new NumberingProperties(new NumberingLevelReference { Val = 1 }, new NumberingId { Val = 20 }),
+            new Justification { Val = JustificationValues.Left }),
+        new Run(new RunProperties(new Bold(), new Underline { Val = UnderlineValues.None }),
+            new Text("Subbab Patuh")));
+    var ambiguous = new Paragraph(
+        new ParagraphProperties(new Justification { Val = JustificationValues.Center }),
+        new Run(new RunProperties(new Bold(), new Underline { Val = UnderlineValues.Single }),
+            new Text("1.2 Heading Ambigu")));
+    var table = new Table(
+        new TableProperties(new TableWidth { Width = "5000", Type = TableWidthUnitValues.Dxa }),
+        new TableRow(new TableCell(new Paragraph(
+            new ParagraphProperties(new ParagraphStyleId { Val = "Heading2" }),
+            new Run(new RunProperties(new Bold { Val = false }, new Underline { Val = UnderlineValues.Single }),
+                new Text("Heading Dalam Tabel"))))));
+
+    mainPart.Document = new Document(new Body(
+        chapter, level2, level3, bodyParagraph, compliant, ambiguous, table, StandardSection()));
+    mainPart.Document.Save();
+}
+
 static void CreateSectionPageLayoutFixerDocument(MainDocumentPart mainPart)
 {
     AddStyles(mainPart);
@@ -1041,6 +1142,10 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         "text-correction-batch.docx",
         11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
         "Times New Roman", 24U, [], FixtureKind.TextCorrectionBatch)
+    ,new(
+        "safe-heading-fixers-mvp.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.SafeHeadingFixers)
 ];
 
 internal sealed record FixtureDefinition(
@@ -1063,4 +1168,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor, TextCorrectionBatch, SectionPageLayoutFixers, BodyFontSizeFixer, ParagraphFormatFixers }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor, TextCorrectionBatch, SectionPageLayoutFixers, BodyFontSizeFixer, ParagraphFormatFixers, SafeHeadingFixers }

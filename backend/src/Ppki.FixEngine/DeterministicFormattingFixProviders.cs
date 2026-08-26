@@ -108,6 +108,41 @@ internal static class FormattingFixSnapshot
         return paragraph;
     }
 
+    public static (ParsedHeading Heading, ParsedParagraph Paragraph, IReadOnlyList<ParsedRun> VisibleRuns)
+        Heading(FixApplyContext context, int level, bool chapter)
+    {
+        var paragraph = Paragraph(context);
+        var target = context.Operation.Target;
+        var heading = context.SourceDocument.Headings.SingleOrDefault(value =>
+            value.ParagraphIndex == paragraph.Index
+            && value.Location.PartKind == DocumentPartKind.MainDocument
+            && value.Location.SectionIndex == target.SectionIndex
+            && value.Location.BodyElementIndex == target.BodyElementIndex
+            && value.Location.ParagraphIndex == target.ParagraphIndex)
+            ?? throw new FixExecutionException("fix-operation-target-precondition-failed");
+        if (paragraph.IsInTable || heading.Classification != HeadingClassification.Confirmed
+            || heading.Level != level)
+            throw new FixExecutionException("fix-operation-target-precondition-failed");
+        if (chapter)
+        {
+            if (context.SourceDocument.DocumentStructure.Sections.Any(value =>
+                    value.Kind == SemanticSectionKind.Chapter
+                    && value.ClassificationState != SemanticClassificationState.Confirmed)
+                || !context.SourceDocument.DocumentStructure.Sections.Any(value =>
+                    value.Kind == SemanticSectionKind.Chapter
+                    && value.ClassificationState == SemanticClassificationState.Confirmed
+                    && value.HeadingIndex == heading.Index))
+                throw new FixExecutionException("fix-operation-target-precondition-failed");
+        }
+        var visibleRuns = paragraph.RunList
+            .Where(value => !value.IsDeleted && !value.IsHidden
+                && value.EffectiveFormatting?.Hidden.Value != true
+                && value.TextSegments.Any(segment => !string.IsNullOrEmpty(segment)))
+            .OrderBy(value => value.Index).ToArray();
+        if (visibleRuns.Length == 0) throw new FixExecutionException("fix-operation-target-precondition-failed");
+        return (heading, paragraph, visibleRuns);
+    }
+
     public static Paragraph XmlParagraph(FixApplyContext context, Body body)
     {
         var element = body.Elements().ElementAtOrDefault(context.Operation.Target.BodyElementIndex!.Value);
@@ -412,23 +447,218 @@ public sealed class BodyFirstLineIndentFixProvider : ParagraphPropertyFixProvide
     }
 }
 
-public sealed class ChapterCenteredFixProvider : ParagraphPropertyFixProvider
+public abstract class HeadingAlignmentFixProvider : ParagraphPropertyFixProvider
 {
-    public const string Id = "chapter-centered-direct-paragraph";
-    public override string CapabilityId => Id;
-    protected override IReadOnlyDictionary<string, string[]> Contracts { get; } = new Dictionary<string, string[]>(StringComparer.Ordinal)
-        { ["heading.chapter-centered"] = ["PPKI-HDG-006"] };
+    private readonly string validationKey;
+    private readonly string ruleCode;
+    private readonly int level;
+    private readonly bool chapter;
+    private readonly string expectedValue;
+    private readonly JustificationValues justification;
+
+    protected HeadingAlignmentFixProvider(string validationKey, string ruleCode, int level, bool chapter,
+        string expectedValue, JustificationValues justification)
+    {
+        this.validationKey = validationKey;
+        this.ruleCode = ruleCode;
+        this.level = level;
+        this.chapter = chapter;
+        this.expectedValue = expectedValue;
+        this.justification = justification;
+        Contracts = new Dictionary<string, string[]>(StringComparer.Ordinal) { [validationKey] = [ruleCode] };
+    }
+
+    protected override IReadOnlyDictionary<string, string[]> Contracts { get; }
     protected override IReadOnlySet<string> Properties { get; } = new HashSet<string>(["alignment"], StringComparer.Ordinal);
     protected override (string, FixExpectedValueDescriptor, string)? Descriptor(string property, string value) =>
-        string.Equals(value, "Center", StringComparison.Ordinal) ? ("paragraph.alignment", new("enum-code", "centered"), "set-heading-alignment-centered") : null;
+        string.Equals(value, expectedValue, StringComparison.Ordinal)
+            ? ("heading.alignment", new("enum-code", expectedValue.ToLowerInvariant()), "set-heading-alignment") : null;
     protected override FixApplyOutcome Mutate(FixApplyContext context, ParsedParagraph parsed, string property, JsonElement actual, Paragraph paragraph)
     {
-        if (!parsed.IsHeading || paragraph.ParagraphProperties?.Justification?.Val?.Value == JustificationValues.Center)
-            return parsed.IsHeading ? FixApplyOutcome.NoChange : throw new FixExecutionException("fix-operation-target-precondition-failed");
+        _ = FormattingFixSnapshot.Heading(context, level, chapter);
+        if (paragraph.ParagraphProperties?.Justification?.Val?.Value == justification
+            && parsed.EffectiveFormatting?.Alignment.Value?.ToString() == expectedValue)
+            return FixApplyOutcome.NoChange;
         if (!FormattingFixSnapshot.ActualMatches(actual, parsed.EffectiveFormatting?.Alignment.Value?.ToString()))
             throw new FixExecutionException("fix-operation-source-snapshot-mismatch");
         paragraph.ParagraphProperties ??= new ParagraphProperties();
-        paragraph.ParagraphProperties.Justification = new Justification { Val = JustificationValues.Center };
+        paragraph.ParagraphProperties.Justification = new Justification { Val = justification };
         return FixApplyOutcome.Changed;
     }
+}
+
+public sealed class ChapterCenteredFixProvider : HeadingAlignmentFixProvider
+{
+    public const string Id = "chapter-centered-direct-paragraph";
+    public override string CapabilityId => Id;
+    public ChapterCenteredFixProvider() : base("heading.chapter-centered", "PPKI-HDG-006", 1, true,
+        "Center", JustificationValues.Center) { }
+}
+
+public sealed class SubheadingLeftFixProvider : HeadingAlignmentFixProvider
+{
+    public const string Id = "subheading-left-direct-paragraph";
+    public override string CapabilityId => Id;
+    public SubheadingLeftFixProvider() : base("heading.subheading-decimal-left", "PPKI-HDG-007", 2, false,
+        "Left", JustificationValues.Left) { }
+}
+
+public sealed class SubSubheadingLeftFixProvider : HeadingAlignmentFixProvider
+{
+    public const string Id = "subsubheading-left-direct-paragraph";
+    public override string CapabilityId => Id;
+    public SubSubheadingLeftFixProvider() : base("heading.subsubheading-decimal-left", "PPKI-HDG-011", 3, false,
+        "Left", JustificationValues.Left) { }
+}
+
+public abstract class HeadingRunFormattingFixProvider : IFixPreviewProvider, IFixApplyProvider
+{
+    private readonly string validationKey;
+    private readonly string ruleCode;
+    private readonly int level;
+    private readonly bool chapter;
+    private readonly IReadOnlyDictionary<string, bool?> properties;
+
+    protected HeadingRunFormattingFixProvider(string validationKey, string ruleCode, int level, bool chapter,
+        IReadOnlyDictionary<string, bool?> properties)
+    {
+        this.validationKey = validationKey;
+        this.ruleCode = ruleCode;
+        this.level = level;
+        this.chapter = chapter;
+        this.properties = properties;
+        ValidationKeys = new HashSet<string>([validationKey], StringComparer.Ordinal);
+    }
+
+    public abstract string CapabilityId { get; }
+    public string CapabilityVersion => "1.0";
+    public IReadOnlySet<string> ValidationKeys { get; }
+
+    public bool TryCreate(FixPlanFindingSnapshot finding, out FixOperationDraft operation, out string diagnosticCode)
+    {
+        operation = null!;
+        diagnosticCode = "fix-preview-provider-rejected-snapshot";
+        if (!FormattingFixSnapshot.Common(finding, validationKey, ruleCode)
+            || !FormattingFixSnapshot.TryRead(finding, out var actual, out var expected, out var location)) return false;
+        using (actual) using (expected) using (location)
+        {
+            var property = FormattingFixSnapshot.Text(actual.RootElement, "property");
+            if (!properties.TryGetValue(property, out var wantedBold)
+                || !FormattingFixSnapshot.ParagraphLocation(location.RootElement, out var section, out var body, out var paragraph)
+                || !FormattingFixSnapshot.SingleExpected(expected.RootElement, property, validationKey, out var value)) return false;
+            if (property == "bold")
+            {
+                var wanted = wantedBold == true ? "true" : "false";
+                if (value != wanted) return false;
+                operation = new(new("main-document-paragraph", body, section, paragraph, null), "heading.runs-bold",
+                    new("boolean", wanted), "source-finding-snapshot-must-match", "set-heading-runs-bold");
+            }
+            else if (property == "underline")
+            {
+                if (wantedBold is not null || value != "none") return false;
+                operation = new(new("main-document-paragraph", body, section, paragraph, null), "heading.runs-underline",
+                    new("enum-code", "none"), "source-finding-snapshot-must-match", "set-heading-runs-underline-none");
+            }
+            else return false;
+            diagnosticCode = "fix-operation-planned";
+            return true;
+        }
+    }
+
+    public Task<FixApplyOutcome> ApplyAsync(FixApplyContext context, CancellationToken cancellationToken)
+    {
+        cancellationToken.ThrowIfCancellationRequested();
+        if (!TryCreate(context.Finding, out var approved, out _))
+            throw new FixExecutionException("fix-operation-source-snapshot-mismatch");
+        FormattingFixSnapshot.ExactContract(context, this, approved, validationKey, ruleCode);
+        var (_, _, visibleRuns) = FormattingFixSnapshot.Heading(context, level, chapter);
+        using var actual = JsonDocument.Parse(context.Finding.ActualJson);
+        var property = FormattingFixSnapshot.Text(actual.RootElement, "property");
+        var current = property == "bold" ? BoldCategory(visibleRuns) : UnderlineCategory(visibleRuns);
+        var wantedCategory = context.Operation.Expected.Value;
+        var directSatisfied = property == "bold"
+            ? bool.TryParse(wantedCategory, out var wantedBold) && visibleRuns.All(value => value.Bold == wantedBold)
+            : wantedCategory == "none" && visibleRuns.All(value =>
+                string.Equals(value.Underline, "none", StringComparison.OrdinalIgnoreCase));
+        if (current == wantedCategory && directSatisfied) return Task.FromResult(FixApplyOutcome.NoChange);
+        if (!FormattingFixSnapshot.ActualMatches(actual.RootElement, current))
+            throw new FixExecutionException("fix-operation-source-snapshot-mismatch");
+        var visibleIndexes = visibleRuns.Select(value => value.Index).ToHashSet();
+        var outcome = FormattingFixSnapshot.Mutate(context, body =>
+        {
+            var paragraph = FormattingFixSnapshot.XmlParagraph(context, body);
+            var runs = paragraph.Descendants<Run>().Select((run, index) => (run, index))
+                .Where(value => visibleIndexes.Contains(value.index)).Select(value => value.run).ToArray();
+            if (runs.Length != visibleIndexes.Count)
+                throw new FixExecutionException("fix-operation-target-precondition-failed");
+            var changed = false;
+            foreach (var run in runs)
+            {
+                run.RunProperties ??= new RunProperties();
+                if (property == "bold")
+                {
+                    var wanted = context.Operation.Expected.Value == "true";
+                    if (run.RunProperties.Bold is not null && run.RunProperties.Bold.Val?.Value == wanted) continue;
+                    run.RunProperties.Bold = new Bold { Val = wanted };
+                }
+                else
+                {
+                    if (run.RunProperties.Underline?.Val?.Value == UnderlineValues.None) continue;
+                    run.RunProperties.Underline = new Underline { Val = UnderlineValues.None };
+                }
+                changed = true;
+            }
+            return changed ? FixApplyOutcome.Changed : FixApplyOutcome.NoChange;
+        });
+        return Task.FromResult(outcome);
+    }
+
+    private static string BoldCategory(IReadOnlyList<ParsedRun> runs)
+    {
+        if (runs.Count == 0) return "empty";
+        var values = runs.Select(value => value.EffectiveFormatting?.Bold).ToArray();
+        if (values.Any(value => value?.State != FormattingResolutionState.Resolved || value.Value is null)) return "unresolved";
+        var distinct = values.Select(value => value!.Value!.Value).Distinct().ToArray();
+        return distinct.Length == 1 ? distinct[0].ToString().ToLowerInvariant() : "mixed";
+    }
+
+    private static string UnderlineCategory(IReadOnlyList<ParsedRun> runs)
+    {
+        var values = runs.Select(value => value.EffectiveFormatting?.Underline.Value).ToArray();
+        if (values.All(value => string.IsNullOrEmpty(value) || value.Equals("none", StringComparison.OrdinalIgnoreCase))) return "none";
+        return values.Select(value => string.IsNullOrEmpty(value) ? "none" : "present")
+            .Distinct(StringComparer.Ordinal).Count() == 1 ? "present" : "mixed";
+    }
+}
+
+public sealed class ChapterBoldFixProvider : HeadingRunFormattingFixProvider
+{
+    public const string Id = "chapter-bold-direct-heading-runs";
+    public override string CapabilityId => Id;
+    public ChapterBoldFixProvider() : base("heading.chapter-bold", "PPKI-HDG-004", 1, true,
+        new Dictionary<string, bool?>(StringComparer.Ordinal) { ["bold"] = true }) { }
+}
+
+public sealed class ChapterDecorationFixProvider : HeadingRunFormattingFixProvider
+{
+    public const string Id = "chapter-decoration-direct-heading-runs";
+    public override string CapabilityId => Id;
+    public ChapterDecorationFixProvider() : base("heading.chapter-no-period-no-underline", "PPKI-HDG-005", 1, true,
+        new Dictionary<string, bool?>(StringComparer.Ordinal) { ["underline"] = null }) { }
+}
+
+public sealed class SubheadingDecorationFixProvider : HeadingRunFormattingFixProvider
+{
+    public const string Id = "subheading-decoration-direct-heading-runs";
+    public override string CapabilityId => Id;
+    public SubheadingDecorationFixProvider() : base("heading.subheading-bold-no-period-no-underline", "PPKI-HDG-009", 2, false,
+        new Dictionary<string, bool?>(StringComparer.Ordinal) { ["bold"] = true, ["underline"] = null }) { }
+}
+
+public sealed class SubSubheadingDecorationFixProvider : HeadingRunFormattingFixProvider
+{
+    public const string Id = "subsubheading-decoration-direct-heading-runs";
+    public override string CapabilityId => Id;
+    public SubSubheadingDecorationFixProvider() : base("heading.subsubheading-regular-no-period-no-underline", "PPKI-HDG-013", 3, false,
+        new Dictionary<string, bool?>(StringComparer.Ordinal) { ["bold"] = false, ["underline"] = null }) { }
 }

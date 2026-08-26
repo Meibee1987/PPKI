@@ -162,14 +162,17 @@ public sealed class AutoFormatProviderTests
     }
 
     [Fact]
-    public void Registry_is_explicit_and_unsafe_formatting_contracts_remain_unregistered()
+    public void Registry_is_explicit_and_unsafe_heading_rewrites_remain_unregistered()
     {
         var capabilities = ProductionFixCapabilities.CreatePreviewRegistry().Capabilities;
         Assert.All(capabilities, value => Assert.Equal("1.0", value.CapabilityVersion));
+        Assert.Contains(capabilities, value => value.ValidationKey == "heading.chapter-bold");
+        Assert.Contains(capabilities, value => value.ValidationKey == "heading.chapter-no-period-no-underline");
+        Assert.Contains(capabilities, value => value.ValidationKey == "heading.subheading-bold-no-period-no-underline");
+        Assert.Contains(capabilities, value => value.ValidationKey == "heading.subsubheading-regular-no-period-no-underline");
         Assert.DoesNotContain(capabilities, value => value.ValidationKey is
-            "heading.chapter-bold" or "heading.chapter-no-period-no-underline"
-            or "heading.subheading-bold-no-period-no-underline"
-            or "heading.subsubheading-regular-no-period-no-underline");
+            "heading.chapter-uppercase" or "heading.chapter-number-upper-roman-no-period"
+            or "heading.maximum-depth-3");
         var source = File.ReadAllText(Path.Combine(RepositoryRoot(), "backend", "src", "Ppki.FixEngine", "DeterministicFormattingFixProviders.cs"));
         Assert.DoesNotContain("public.rules", source, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("rules.json", source, StringComparison.OrdinalIgnoreCase);

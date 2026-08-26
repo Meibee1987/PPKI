@@ -51,6 +51,10 @@ public static class AuditFindingPresentation
                     HalfPoint(current), accepted.Select(HalfPoint).FirstOrDefault()),
                 "font.ascii" or "font.highAnsi" => Comparison("Jenis huruf", "Jenis huruf tidak sesuai persyaratan.",
                     Font(current), accepted.Select(Font).FirstOrDefault()),
+                "bold" => Comparison("Ketebalan heading", "Ketebalan heading tidak sesuai persyaratan.",
+                    Bold(current), accepted.Select(Bold).FirstOrDefault()),
+                "underline" => Comparison("Garis bawah heading", "Garis bawah heading tidak sesuai persyaratan.",
+                    Underline(current), accepted.Select(Underline).FirstOrDefault()),
                 _ => Unavailable(property)
             };
         }
@@ -90,6 +94,8 @@ public static class AuditFindingPresentation
         "numberingTrailingPeriod" => "Tanda titik setelah nomor",
         "numberingPattern" => "Pola penomoran",
         "alignment" => "Perataan teks",
+        "bold" => "Ketebalan heading",
+        "underline" => "Garis bawah heading",
         "marginLeft" => "Margin kiri",
         _ => "Persyaratan dokumen"
     };
@@ -150,6 +156,18 @@ public static class AuditFindingPresentation
     private static string? Font(string? value) => value is { Length: > 0 and <= 64 }
         && value.All(character => char.IsLetterOrDigit(character) || character is ' ' or '.' or '-' or '_')
         ? value : null;
+
+    private static string? Bold(string? value) => value switch
+    {
+        "true" => "Tebal", "false" => "Tidak tebal", "mixed" => "Campuran",
+        "unresolved" or "empty" or null or "" => null, _ => null
+    };
+
+    private static string? Underline(string? value) => value switch
+    {
+        "none" => "Tanpa garis bawah", "present" => "Dengan garis bawah", "mixed" => "Campuran",
+        "unresolved" or null or "" => null, _ => null
+    };
 
     private static bool Decimal(string? value, out decimal number) =>
         decimal.TryParse(value, NumberStyles.Number, CultureInfo.InvariantCulture, out number)

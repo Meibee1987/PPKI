@@ -21,7 +21,7 @@ public sealed class FixApplyCapabilityTests
     public void Production_registry_contains_explicit_versioned_formatting_capabilities()
     {
         var registry = ProductionFixCapabilities.CreatePreviewRegistry();
-        Assert.Equal(12, registry.Capabilities.Count);
+        Assert.Equal(18, registry.Capabilities.Count);
         var capability = registry.Capabilities.Single(value => value.ValidationKey == "body.justified");
         Assert.Equal("body.justified", capability.ValidationKey);
         Assert.Equal(BodyJustifiedFixProvider.Id, capability.CapabilityId);
@@ -33,6 +33,12 @@ public sealed class FixApplyCapabilityTests
         Assert.Contains(registry.Capabilities, value => value.CapabilityId == BodyFirstLineIndentFixProvider.Id);
         Assert.Contains(registry.Capabilities, value => value.CapabilityId == AbstractParagraphSpacingFixProvider.Id);
         Assert.Contains(registry.Capabilities, value => value.CapabilityId == ChapterCenteredFixProvider.Id);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == ChapterBoldFixProvider.Id);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == ChapterDecorationFixProvider.Id);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == SubheadingLeftFixProvider.Id);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == SubheadingDecorationFixProvider.Id);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == SubSubheadingLeftFixProvider.Id);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == SubSubheadingDecorationFixProvider.Id);
         Assert.Contains(registry.Capabilities, value => value.CapabilityId == SectionPageSizeFixProvider.Id);
         Assert.Equal(4, registry.Capabilities.Count(value => value.CapabilityId == SectionMarginFixProvider.Id));
         var apply = ProductionFixCapabilities.CreateApplyRegistry();
