@@ -7,15 +7,31 @@ using Ppki.Application;
 
 namespace Ppki.Infrastructure;
 
-public sealed class SupabaseFileStorage(IHttpClientFactory httpClientFactory, IOptions<SupabaseOptions> options, IStorageObjectPathBuilder pathBuilder) : IFileStorage
+public sealed class SupabaseFileStorage : IFileStorage
 {
     private const long MaximumDocumentBytes = 50L * 1024 * 1024;
-    private readonly SupabaseOptions _options = options.Value;
+    private readonly IHttpClientFactory httpClientFactory;
+    private readonly IStorageObjectPathBuilder pathBuilder;
+    private readonly SupabaseOptions _options;
+    private readonly string temporaryRoot;
+
+    public SupabaseFileStorage(IHttpClientFactory httpClientFactory, IOptions<SupabaseOptions> options,
+        IStorageObjectPathBuilder pathBuilder)
+        : this(httpClientFactory, options, pathBuilder, Path.GetTempPath()) { }
+
+    internal SupabaseFileStorage(IHttpClientFactory httpClientFactory, IOptions<SupabaseOptions> options,
+        IStorageObjectPathBuilder pathBuilder, string temporaryRoot)
+    {
+        this.httpClientFactory = httpClientFactory;
+        this.pathBuilder = pathBuilder;
+        _options = options.Value;
+        this.temporaryRoot = Path.GetFullPath(temporaryRoot);
+    }
 
     public async Task<StoredFile> SaveAsync(Stream source, string originalFilename, string contentType, string bucket, string objectPath, CancellationToken cancellationToken)
     {
         pathBuilder.ValidateStoredPath(bucket, objectPath);
-        var temp = Path.Combine(Path.GetTempPath(), $"ppki-upload-{Guid.NewGuid():N}.tmp");
+        var temp = OwnedTempPath("ppki-upload", ".tmp");
         try
         {
             byte[] hash;
@@ -51,7 +67,7 @@ public sealed class SupabaseFileStorage(IHttpClientFactory httpClientFactory, IO
         if (response.Content.Headers.ContentLength is > MaximumDocumentBytes)
             throw new FileStorageException(FileStorageFailureKind.SizeLimit);
 
-        var temp = Path.Combine(Path.GetTempPath(), $"ppki-{Guid.NewGuid():N}.docx");
+        var temp = OwnedTempPath("ppki", ".docx");
         try
         {
             await using var input = await response.Content.ReadAsStreamAsync(cancellationToken);
@@ -100,6 +116,17 @@ public sealed class SupabaseFileStorage(IHttpClientFactory httpClientFactory, IO
     }
 
     private HttpClient Client() => httpClientFactory.CreateClient(nameof(SupabaseFileStorage));
+
+    private string OwnedTempPath(string prefix, string extension)
+    {
+        var path = Path.GetFullPath(Path.Combine(temporaryRoot, $"{prefix}-{Guid.NewGuid():N}{extension}"));
+        if (!string.Equals(Directory.GetParent(path)?.FullName,
+                Path.TrimEndingDirectorySeparator(temporaryRoot),
+                OperatingSystem.IsWindows() ? StringComparison.OrdinalIgnoreCase : StringComparison.Ordinal))
+            throw new InvalidOperationException("Generated temporary storage path is invalid.");
+        return path;
+    }
+
     private async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
     {
         try { return await Client().SendAsync(request, cancellationToken); }

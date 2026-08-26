@@ -251,16 +251,26 @@ public sealed class FixExecutionWorkspaceTests
     [Fact]
     public async Task Partial_storage_download_failure_deletes_generated_temp_file()
     {
-        var before = Directory.EnumerateFiles(Path.GetTempPath(), "ppki-*.docx").ToHashSet(StringComparer.Ordinal);
-        var handler = new StorageHandler(() => new ThrowAfterFirstReadStream(RandomNumberGenerator.GetBytes(4096)));
-        var storage = Storage(handler);
+        var root = TestRoot();
+        string? partialPath = null;
+        try
+        {
+            var handler = new StorageHandler(() => new ThrowAfterFirstReadStream(
+                RandomNumberGenerator.GetBytes(4096),
+                () => partialPath = Directory.EnumerateFiles(root, "ppki-*.docx").Single()));
+            var storage = Storage(handler, root);
 
-        await Assert.ThrowsAsync<IOException>(() => storage.MaterializeToTempFileAsync(
-            StorageObjectPathBuilder.OriginalBucket, OriginalObjectPath(), CancellationToken.None));
+            await Assert.ThrowsAsync<IOException>(() => storage.MaterializeToTempFileAsync(
+                StorageObjectPathBuilder.OriginalBucket, OriginalObjectPath(), CancellationToken.None));
 
-        var after = Directory.EnumerateFiles(Path.GetTempPath(), "ppki-*.docx").ToHashSet(StringComparer.Ordinal);
-        Assert.True(before.SetEquals(after));
-        Assert.Equal(HttpMethod.Get, handler.Method);
+            Assert.NotNull(partialPath);
+            Assert.Equal(Path.GetFullPath(root), Directory.GetParent(partialPath)!.FullName);
+            Assert.Matches("^ppki-[0-9a-f]{32}\\.docx$", Path.GetFileName(partialPath));
+            Assert.False(File.Exists(partialPath));
+            Assert.Empty(Directory.EnumerateFileSystemEntries(root));
+            Assert.Equal(HttpMethod.Get, handler.Method);
+        }
+        finally { DeleteRoot(root); }
     }
 
     private static string TestRoot()
@@ -281,15 +291,20 @@ public sealed class FixExecutionWorkspaceTests
         return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream));
     }
 
-    private static SupabaseFileStorage Storage(StorageHandler handler) => new(
-        new TestHttpClientFactory(handler),
-        Options.Create(new SupabaseOptions
+    private static SupabaseFileStorage Storage(StorageHandler handler, string? temporaryRoot = null)
+    {
+        var factory = new TestHttpClientFactory(handler);
+        var options = Options.Create(new SupabaseOptions
         {
             Url = "http://127.0.0.1:54321",
             PublishableKey = "synthetic-publishable-key",
             SecretKey = "synthetic-secret-key"
-        }),
-        new StorageObjectPathBuilder());
+        });
+        var paths = new StorageObjectPathBuilder();
+        return temporaryRoot is null
+            ? new(factory, options, paths)
+            : new(factory, options, paths, temporaryRoot);
+    }
 
     private static string OriginalObjectPath() => new StorageObjectPathBuilder().BuildOriginalPath(
         Guid.Parse("10000000-0000-0000-0000-000000000001"),
@@ -316,7 +331,7 @@ public sealed class FixExecutionWorkspaceTests
         }
     }
 
-    private sealed class ThrowAfterFirstReadStream(byte[] bytes) : MemoryStream(bytes, writable: false)
+    private sealed class ThrowAfterFirstReadStream(byte[] bytes, Action? beforeFailure = null) : MemoryStream(bytes, writable: false)
     {
         private bool read;
 
@@ -324,7 +339,11 @@ public sealed class FixExecutionWorkspaceTests
             Memory<byte> buffer, CancellationToken cancellationToken = default)
         {
             cancellationToken.ThrowIfCancellationRequested();
-            if (read) throw new IOException("synthetic partial download failure");
+            if (read)
+            {
+                beforeFailure?.Invoke();
+                throw new IOException("synthetic partial download failure");
+            }
             read = true;
             return ValueTask.FromResult(Read(buffer.Span[..Math.Min(16, buffer.Length)]));
         }
