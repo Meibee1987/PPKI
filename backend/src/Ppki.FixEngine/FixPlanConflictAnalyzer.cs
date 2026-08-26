@@ -304,6 +304,7 @@ public sealed class DeterministicFixPlanConflictAnalyzer : IFixPlanConflictAnaly
             "integer" or "twips" or "half-points" => long.TryParse(value.Value,
                 System.Globalization.NumberStyles.AllowLeadingSign,
                 System.Globalization.CultureInfo.InvariantCulture, out _),
+            "twips-pair" => ValidTwipsPair(value.Value),
             "decimal" => decimal.TryParse(value.Value,
                 System.Globalization.NumberStyles.AllowLeadingSign | System.Globalization.NumberStyles.AllowDecimalPoint,
                 System.Globalization.CultureInfo.InvariantCulture, out _),
@@ -311,6 +312,14 @@ public sealed class DeterministicFixPlanConflictAnalyzer : IFixPlanConflictAnaly
             "enum-code" => SafeIdentifier.IsMatch(value.Value),
             _ => false
         };
+    }
+
+    private static bool ValidTwipsPair(string value)
+    {
+        var parts = value.Split('x', StringSplitOptions.None);
+        return parts.Length == 2 && parts.All(part => long.TryParse(part,
+            System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsed) && parsed > 0);
     }
     private static string Meaning(FixPlanMutationCandidate value) => string.Join("\n",
         value.Capability!.OperationKind, value.Operation!.Expected.Type,

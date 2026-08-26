@@ -284,6 +284,7 @@ public sealed class DeterministicFixPlanPreviewPlanner(
             "integer" or "twips" or "half-points" =>
                 long.TryParse(expected.Value, System.Globalization.NumberStyles.AllowLeadingSign,
                     System.Globalization.CultureInfo.InvariantCulture, out _),
+            "twips-pair" => ValidTwipsPair(expected.Value),
             "decimal" => decimal.TryParse(expected.Value,
                 System.Globalization.NumberStyles.AllowLeadingSign | System.Globalization.NumberStyles.AllowDecimalPoint,
                 System.Globalization.CultureInfo.InvariantCulture, out _),
@@ -291,6 +292,14 @@ public sealed class DeterministicFixPlanPreviewPlanner(
             "enum-code" => SafeCode.IsMatch(expected.Value),
             _ => false
         };
+    }
+
+    private static bool ValidTwipsPair(string value)
+    {
+        var parts = value.Split('x', StringSplitOptions.None);
+        return parts.Length == 2 && parts.All(part => long.TryParse(part,
+            System.Globalization.NumberStyles.None,
+            System.Globalization.CultureInfo.InvariantCulture, out var parsed) && parsed > 0);
     }
 
     private static bool TrySnapshotIdentity(FixPlanFindingSnapshot finding, out SnapshotIdentity identity)

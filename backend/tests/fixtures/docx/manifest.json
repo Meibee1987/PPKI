@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatorVersion": "5.0.0",
+  "generatorVersion": "5.4.0",
   "fixtures": [
     {
       "fixtureId": "minimal-compliant-layout",
@@ -57,6 +57,21 @@
       },
       "containsPersonalData": false,
       "generatorVersion": "5.0.0"
+    },
+    {
+      "fixtureId": "section-page-layout-fixers",
+      "filename": "section-page-layout-fixers.docx",
+      "description": "Golden multi-section source with invalid portrait and landscape page layout plus preserved section metadata.",
+      "synthetic": true,
+      "intendedProperties": ["paragraph-section", "final-section", "invalid-page-size", "invalid-margins", "portrait", "landscape", "header-footer", "section-type", "columns", "page-numbering"],
+      "expectedDocumentProperties": {
+        "sectionCount": 2,
+        "orientation": ["Portrait", "Landscape"],
+        "targetPageSizeCm": { "width": 21.0, "height": 29.7 },
+        "targetMarginsCm": { "top": 3.0, "right": 3.0, "bottom": 3.0, "left": 4.0 }
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "5.4.0"
     },
     {
       "fixtureId": "minimal-table-field-layout",

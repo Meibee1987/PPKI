@@ -77,6 +77,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
         CreateTextCorrectionBatchDocument(mainPart);
         return;
     }
+    if (fixture.Kind == FixtureKind.SectionPageLayoutFixers)
+    {
+        CreateSectionPageLayoutFixerDocument(mainPart);
+        return;
+    }
     AddStyles(mainPart);
 
     if (fixture.Kind == FixtureKind.TableField)
@@ -632,6 +637,41 @@ static void CreateHeaderFooterDocument(MainDocumentPart mainPart, FixtureDefinit
     mainPart.Document.Save();
 }
 
+static void CreateSectionPageLayoutFixerDocument(MainDocumentPart mainPart)
+{
+    AddStyles(mainPart);
+    var headerPart = mainPart.AddNewPart<HeaderPart>();
+    headerPart.Header = new Header(new Paragraph(new Run(new Text("Header fixer sintetis"))));
+    headerPart.Header.Save();
+    var footerPart = mainPart.AddNewPart<FooterPart>();
+    footerPart.Footer = new Footer(new Paragraph(new Run(new Text("Footer fixer sintetis"))));
+    footerPart.Footer.Save();
+
+    var firstSection = new SectionProperties(
+        new HeaderReference { Type = HeaderFooterValues.Default, Id = mainPart.GetIdOfPart(headerPart) },
+        new SectionType { Val = SectionMarkValues.NextPage },
+        new PageSize { Width = 12240U, Height = 15840U },
+        new PageMargin { Top = 1440, Right = 1441U, Bottom = 1442, Left = 1443U, Header = 701U, Footer = 702U, Gutter = 33U },
+        new Columns { ColumnCount = 2, Space = "333" },
+        new PageNumberType { Start = 3 });
+    var firstParagraph = new Paragraph(
+        new ParagraphProperties(firstSection),
+        new Run(new Text("Bagian potret fixer sintetis")));
+
+    var finalSection = new SectionProperties(
+        new FooterReference { Type = HeaderFooterValues.Default, Id = mainPart.GetIdOfPart(footerPart) },
+        new SectionType { Val = SectionMarkValues.Continuous },
+        new PageSize { Width = 15840U, Height = 12240U, Orient = PageOrientationValues.Landscape },
+        new PageMargin { Top = 1450, Right = 1451U, Bottom = 1452, Left = 1453U, Header = 711U, Footer = 712U, Gutter = 44U },
+        new Columns { ColumnCount = 1, Space = "444" },
+        new PageNumberType { Start = 9 });
+    mainPart.Document = new Document(new Body(
+        firstParagraph,
+        new Paragraph(new Run(new Text("Bagian lanskap fixer sintetis"))),
+        finalSection));
+    mainPart.Document.Save();
+}
+
 static SectionProperties StandardSection(params OpenXmlElement[] references) => new(
     references.Concat<OpenXmlElement>([
         new PageSize { Width = 11906U, Height = 16838U },
@@ -749,6 +789,10 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         22U,
         [new ParagraphDefinition("Paragraf sintetis untuk pengujian parser.", null, JustificationValues.Both, 276U, null)], FixtureKind.Basic),
     new(
+        "section-page-layout-fixers.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.SectionPageLayoutFixers),
+    new(
         "minimal-heading-layout.docx",
         11906U,
         16838U,
@@ -821,4 +865,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor, TextCorrectionBatch }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor, TextCorrectionBatch, SectionPageLayoutFixers }

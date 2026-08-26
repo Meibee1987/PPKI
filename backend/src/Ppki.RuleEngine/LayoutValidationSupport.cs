@@ -11,15 +11,15 @@ public static class LayoutUnitConverter
     {
         try
         {
-            return Normalize(unit) switch
-            {
-                "twip" or "twips" => Round(value),
-                "cm" => Round(value * 144_000m / 254m),
-                "mm" => Round(value * 14_400m / 254m),
-                "in" or "inch" => Round(value * 1_440m),
-                "pt" or "point" => Round(value * 20m),
-                _ => throw new LayoutRuleConfigurationException("validation-unit-unsupported")
-            };
+            return OpenXmlLayoutUnitConverter.ToTwips(value, unit);
+        }
+        catch (ArgumentOutOfRangeException exception) when (exception.ParamName == "unit")
+        {
+            throw new LayoutRuleConfigurationException("validation-unit-unsupported");
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            throw new LayoutRuleConfigurationException("validation-parameter-out-of-range");
         }
         catch (OverflowException)
         {

@@ -133,6 +133,8 @@ public static class ProductionFixCapabilities
         var firstLine = new BodyFirstLineIndentFixProvider();
         var abstractSpacing = new AbstractParagraphSpacingFixProvider();
         var chapterCentered = new ChapterCenteredFixProvider();
+        var pageSize = new SectionPageSizeFixProvider();
+        var margins = new SectionMarginFixProvider();
         return new RemediationCapabilityRegistry([
             new(BodyJustifiedFixProvider.Id, BodyJustifiedFixProvider.Version, "body.justified",
                 FixOperationKind.SetProperty, ["actual", "expected", "location"], false, true,
@@ -142,7 +144,12 @@ public static class ProductionFixCapabilities
             Descriptor(firstLine, "body.first-line-indent-1cm", "body-first-line-indent-preview", "set-paragraph-first-line-indent"),
             Descriptor(abstractSpacing, "abstract.skripsi-single-spacing-zero-paragraph-spacing", "abstract-spacing-preview", "set-abstract-paragraph-spacing"),
             Descriptor(abstractSpacing, "abstract-summary-single-spacing-zero-paragraph-spacing", "abstract-summary-spacing-preview", "set-abstract-paragraph-spacing"),
-            Descriptor(chapterCentered, "heading.chapter-centered", "chapter-centered-preview", "set-heading-alignment-centered")
+            Descriptor(chapterCentered, "heading.chapter-centered", "chapter-centered-preview", "set-heading-alignment-centered"),
+            Descriptor(pageSize, "section.page-size-a4", "section-page-size-preview", "set-section-page-size-a4"),
+            Descriptor(margins, "section.margin-left-4cm", "section-margin-left-preview", "set-section-margin"),
+            Descriptor(margins, "section.margin-right-3cm", "section-margin-right-preview", "set-section-margin"),
+            Descriptor(margins, "section.margin-top-3cm", "section-margin-top-preview", "set-section-margin"),
+            Descriptor(margins, "section.margin-bottom-3cm", "section-margin-bottom-preview", "set-section-margin")
         ]);
     }
 
@@ -151,7 +158,7 @@ public static class ProductionFixCapabilities
         var registry = new FixApplyCapabilityRegistry([
             new BodyJustifiedFixProvider(), new BodyFontFixProvider(), new BodyLineSpacingFixProvider(),
             new BodyFirstLineIndentFixProvider(), new AbstractParagraphSpacingFixProvider(),
-            new ChapterCenteredFixProvider()
+            new ChapterCenteredFixProvider(), new SectionPageSizeFixProvider(), new SectionMarginFixProvider()
         ]);
         if (CreatePreviewRegistry().Capabilities.Any(capability => capability.DocumentMutationImplementationExists
             && registry.GetAvailability(capability.ValidationKey, capability.CapabilityId,

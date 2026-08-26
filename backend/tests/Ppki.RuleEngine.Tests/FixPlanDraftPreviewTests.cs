@@ -336,9 +336,13 @@ public sealed class FixPlanDraftPreviewServiceTests
     [InlineData("section.margin-right-3cm")]
     [InlineData("section.margin-top-3cm")]
     [InlineData("section.margin-bottom-3cm")]
-    public void Validator_only_layout_targets_remain_fail_closed_without_apply_fabrication(string validationKey)
+    public void Section_layout_targets_have_exact_preview_and_apply_capabilities(string validationKey)
     {
-        Assert.False(ProductionFixCapabilities.CreatePreviewRegistry().TryGet(validationKey, out _));
+        Assert.True(ProductionFixCapabilities.CreatePreviewRegistry().TryGet(validationKey, out var capability));
+        Assert.Contains(ProductionFixCapabilities.CreateApplyRegistry().Providers,
+            provider => provider.CapabilityId == capability.CapabilityId
+                && provider.CapabilityVersion == capability.CapabilityVersion
+                && provider.ValidationKeys.Contains(validationKey));
     }
 
     [Theory]

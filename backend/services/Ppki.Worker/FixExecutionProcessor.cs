@@ -454,6 +454,15 @@ public sealed class FixExecutionProcessor(
             throw new FixExecutionException("fix-execution-document-integrity-failed");
         foreach (var operation in operations)
         {
+            if (operation.Target.Scope == "main-document-section")
+            {
+                var section = after.Sections.SingleOrDefault(value => value.Index == operation.Target.SectionIndex
+                    && value.Location?.PartKind == DocumentPartKind.MainDocument
+                    && value.Location.BodyElementIndex == operation.Target.BodyElementIndex);
+                if (section is null || !SectionOperationPostcondition(section, operation))
+                    throw new FixExecutionException("fix-operation-postcondition-failed");
+                continue;
+            }
             var paragraph = after.Paragraphs.SingleOrDefault(value =>
                 value.Location?.PartKind == DocumentPartKind.MainDocument
                 && value.Location.BodyElementIndex == operation.Target.BodyElementIndex
@@ -461,6 +470,21 @@ public sealed class FixExecutionProcessor(
             if (paragraph is null || !OperationPostcondition(paragraph, operation))
                 throw new FixExecutionException("fix-operation-postcondition-failed");
         }
+    }
+
+    private static bool SectionOperationPostcondition(ParsedSection section, FixPlanOperation operation)
+    {
+        var expected = operation.Expected.Value;
+        var formatting = section.EffectiveFormatting;
+        return operation.PropertyIdentifier switch
+        {
+            "section.page-size" => $"{formatting?.PageWidthTwips.Value}x{formatting?.PageHeightTwips.Value}" == expected,
+            "section.margin-left" => formatting?.MarginLeftTwips.Value?.ToString(System.Globalization.CultureInfo.InvariantCulture) == expected,
+            "section.margin-right" => formatting?.MarginRightTwips.Value?.ToString(System.Globalization.CultureInfo.InvariantCulture) == expected,
+            "section.margin-top" => formatting?.MarginTopTwips.Value?.ToString(System.Globalization.CultureInfo.InvariantCulture) == expected,
+            "section.margin-bottom" => formatting?.MarginBottomTwips.Value?.ToString(System.Globalization.CultureInfo.InvariantCulture) == expected,
+            _ => false
+        };
     }
 
     private static void ValidateCorrectionPostconditions(ParsedDocument before, ParsedDocument after,

@@ -21,7 +21,7 @@ public sealed class FixApplyCapabilityTests
     public void Production_registry_contains_explicit_versioned_formatting_capabilities()
     {
         var registry = ProductionFixCapabilities.CreatePreviewRegistry();
-        Assert.Equal(7, registry.Capabilities.Count);
+        Assert.Equal(12, registry.Capabilities.Count);
         var capability = registry.Capabilities.Single(value => value.ValidationKey == "body.justified");
         Assert.Equal("body.justified", capability.ValidationKey);
         Assert.Equal(BodyJustifiedFixProvider.Id, capability.CapabilityId);
@@ -33,6 +33,8 @@ public sealed class FixApplyCapabilityTests
         Assert.Contains(registry.Capabilities, value => value.CapabilityId == BodyFirstLineIndentFixProvider.Id);
         Assert.Contains(registry.Capabilities, value => value.CapabilityId == AbstractParagraphSpacingFixProvider.Id);
         Assert.Contains(registry.Capabilities, value => value.CapabilityId == ChapterCenteredFixProvider.Id);
+        Assert.Contains(registry.Capabilities, value => value.CapabilityId == SectionPageSizeFixProvider.Id);
+        Assert.Equal(4, registry.Capabilities.Count(value => value.CapabilityId == SectionMarginFixProvider.Id));
         var apply = ProductionFixCapabilities.CreateApplyRegistry();
         Assert.All(registry.Capabilities.Where(value => value.DocumentMutationImplementationExists), capability =>
             Assert.Equal(FixApplyProviderAvailability.Available, apply.GetAvailability(
