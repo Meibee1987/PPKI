@@ -93,3 +93,10 @@ locations, a target split over ordinary/bold/italic runs, hyperlink text,
 field-adjacent and field-result text, tabs, line breaks, NBSP, soft hyphen,
 non-BMP and decomposed/composed Unicode, plus revision markup that must fail
 closed. The fixture is inspected read-only and never used for replacement.
+
+The S8-T10 addition is `sprint8-golden-regression-matrix`. It is a compact
+cross-fixer fixture with portrait and landscape sections, distinct margins,
+header/footer references, mixed semantic run formatting, non-Latin font slots,
+numbering and hanging indentation, a heading, table, hyperlink, bookmark, and
+complete synthetic citation field. It is used only through isolated working
+copies for normalized expected-diff, corruption, cancellation, and retry tests.

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatorVersion": "5.7.0",
+  "generatorVersion": "5.8.0",
   "fixtures": [
     {
       "fixtureId": "minimal-compliant-layout",
@@ -258,6 +258,24 @@
       },
       "containsPersonalData": false,
       "generatorVersion": "5.7.0"
+    },
+    {
+      "fixtureId": "sprint8-golden-regression-matrix",
+      "filename": "sprint8-golden-regression-matrix.docx",
+      "description": "Synthetic Sprint 8 cross-fixer matrix with two sections, mixed runs, numbering, table, citation field, hyperlink, bookmark, header, and footer.",
+      "synthetic": true,
+      "intendedProperties": ["multi-section", "portrait", "landscape", "invalid-page-layout", "mixed-runs", "bold", "italic", "underline", "superscript", "non-latin-fonts", "heading", "numbering", "hanging-indent", "table", "citation-field", "hyperlink", "bookmark", "header", "footer"],
+      "expectedDocumentProperties": {
+        "sectionCount": 2,
+        "mainParagraphCount": 3,
+        "tableCount": 1,
+        "headerCount": 1,
+        "footerCount": 1,
+        "hyperlinkCount": 1,
+        "fieldInstruction": "CITATION"
+      },
+      "containsPersonalData": false,
+      "generatorVersion": "5.8.0"
     }
   ]
 }

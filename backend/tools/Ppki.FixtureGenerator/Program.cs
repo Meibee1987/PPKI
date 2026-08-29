@@ -97,6 +97,11 @@ static void CreateDocument(string filePath, FixtureDefinition fixture)
         CreateSafeHeadingFixerDocument(mainPart);
         return;
     }
+    if (fixture.Kind == FixtureKind.GoldenRegressionMatrix)
+    {
+        CreateGoldenRegressionMatrixDocument(mainPart);
+        return;
+    }
     AddStyles(mainPart);
 
     if (fixture.Kind == FixtureKind.TableField)
@@ -963,6 +968,85 @@ static void CreateSectionPageLayoutFixerDocument(MainDocumentPart mainPart)
     mainPart.Document.Save();
 }
 
+static void CreateGoldenRegressionMatrixDocument(MainDocumentPart mainPart)
+{
+    AddStyles(mainPart);
+    AddNumbering(mainPart);
+    var headerPart = mainPart.AddNewPart<HeaderPart>();
+    headerPart.Header = new Header(new Paragraph(new Run(new Text("Header matrix sintetis"))));
+    headerPart.Header.Save();
+    var footerPart = mainPart.AddNewPart<FooterPart>();
+    footerPart.Footer = new Footer(new Paragraph(new Run(new Text("Footer matrix sintetis"))));
+    footerPart.Footer.Save();
+    var hyperlink = mainPart.AddHyperlinkRelationship(
+        new Uri("https://example.invalid/sprint8-golden-matrix"), true);
+
+    var firstSection = new SectionProperties(
+        new HeaderReference { Type = HeaderFooterValues.Default, Id = mainPart.GetIdOfPart(headerPart) },
+        new SectionType { Val = SectionMarkValues.NextPage },
+        new PageSize { Width = 12240U, Height = 15840U },
+        new PageMargin { Top = 1440, Right = 1440U, Bottom = 1440, Left = 1440U,
+            Header = 720U, Footer = 720U, Gutter = 0U });
+    var bodyProperties = new ParagraphProperties(
+        new Justification { Val = JustificationValues.Left },
+        new SpacingBetweenLines { Before = "120", After = "80", Line = "360",
+            LineRule = LineSpacingRuleValues.Exact },
+        new Indentation { Left = "720", Right = "360", FirstLine = "0" });
+    bodyProperties.Append(firstSection);
+    var bodyParagraph = new Paragraph(
+        bodyProperties,
+        new BookmarkStart { Name = "Sprint8MatrixAnchor", Id = "81" },
+        new Run(
+            new RunProperties(
+                new RunFonts { Ascii = "Arial", HighAnsi = "Arial", EastAsia = "MS Mincho",
+                    ComplexScript = "Arabic Typesetting" },
+                new FontSize { Val = "20" }, new Bold(), new Italic(),
+                new Underline { Val = UnderlineValues.Single },
+                new VerticalTextAlignment { Val = VerticalPositionValues.Superscript }),
+            new Text("Isi matrix sintetis ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Hyperlink(
+            new Run(
+                new RunProperties(new RunFonts { Ascii = "Calibri", HighAnsi = "Calibri" },
+                    new FontSize { Val = "22" }),
+                new Text("tautan sintetis ") { Space = SpaceProcessingModeValues.Preserve })) { Id = hyperlink.Id },
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Begin }),
+        new Run(new FieldCode(" CITATION MatrixSynthetic ") { Space = SpaceProcessingModeValues.Preserve }),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.Separate }),
+        new Run(new Text("hasil sintetis")),
+        new Run(new FieldChar { FieldCharType = FieldCharValues.End }),
+        new BookmarkEnd { Id = "81" });
+
+    var numbered = new Paragraph(
+        new ParagraphProperties(
+            new NumberingProperties(new NumberingLevelReference { Val = 0 }, new NumberingId { Val = 1 }),
+            new Justification { Val = JustificationValues.Left },
+            new SpacingBetweenLines { Line = "320", LineRule = LineSpacingRuleValues.Exact },
+            new Indentation { Left = "900", Right = "300", Hanging = "360" }),
+        new Run(new Text("Butir matrix sintetis")));
+    var heading = new Paragraph(
+        new ParagraphProperties(
+            new ParagraphStyleId { Val = "Heading1" },
+            new Justification { Val = JustificationValues.Left }),
+        new Run(
+            new RunProperties(new Bold { Val = false },
+                new Underline { Val = UnderlineValues.Single }),
+            new Text("BAB I PENDAHULUAN")));
+    var table = new Table(
+        new TableProperties(new TableWidth { Width = "5000", Type = TableWidthUnitValues.Dxa }),
+        new TableGrid(new GridColumn { Width = "2500" }, new GridColumn { Width = "2500" }),
+        new TableRow(
+            new TableCell(new Paragraph(new Run(new Text("Sel matrix satu")))),
+            new TableCell(new Paragraph(new Run(new Text("Sel matrix dua"))))));
+    var finalSection = new SectionProperties(
+        new FooterReference { Type = HeaderFooterValues.Default, Id = mainPart.GetIdOfPart(footerPart) },
+        new PageSize { Width = 15840U, Height = 12240U, Orient = PageOrientationValues.Landscape },
+        new PageMargin { Top = 1700, Right = 1800U, Bottom = 1900, Left = 2000U,
+            Header = 721U, Footer = 722U, Gutter = 0U });
+
+    mainPart.Document = new Document(new Body(bodyParagraph, numbered, heading, table, finalSection));
+    mainPart.Document.Save();
+}
+
 static SectionProperties StandardSection(params OpenXmlElement[] references) => new(
     references.Concat<OpenXmlElement>([
         new PageSize { Width = 11906U, Height = 16838U },
@@ -1146,6 +1230,10 @@ static IReadOnlyList<FixtureDefinition> CreateFixtures() =>
         "safe-heading-fixers-mvp.docx",
         11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
         "Times New Roman", 24U, [], FixtureKind.SafeHeadingFixers)
+    ,new(
+        "sprint8-golden-regression-matrix.docx",
+        11906U, 16838U, 1701U, 1701U, 1701U, 2268U,
+        "Times New Roman", 24U, [], FixtureKind.GoldenRegressionMatrix)
 ];
 
 internal sealed record FixtureDefinition(
@@ -1168,4 +1256,4 @@ internal sealed record ParagraphDefinition(
     uint LineSpacingTwips,
     uint? FirstLineIndentTwips);
 
-internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor, TextCorrectionBatch, SectionPageLayoutFixers, BodyFontSizeFixer, ParagraphFormatFixers, SafeHeadingFixers }
+internal enum FixtureKind { Basic, TableField, HeaderFooter, StyleInheritance, NumberedHeading, DocumentSections, AutoFormatProviders, DocumentPageMap, ExactTextAnchor, TextCorrectionBatch, SectionPageLayoutFixers, BodyFontSizeFixer, ParagraphFormatFixers, SafeHeadingFixers, GoldenRegressionMatrix }
