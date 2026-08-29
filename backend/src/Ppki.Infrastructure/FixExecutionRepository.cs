@@ -21,6 +21,7 @@ public sealed class FixExecutionRepository(IDbContextFactory<PpkiDbContext> dbFa
         var job = new FixExecutionJob
         {
             Id = candidate.ExecutionId,
+            FixPlanId = candidate.FixPlanId,
             AuditJobId = candidate.AuditJobId,
             SourceDocumentVersionId = candidate.SourceDocumentVersionId,
             RequestedByUserId = candidate.RequestedByUserId,
@@ -77,6 +78,7 @@ public sealed class FixExecutionRepository(IDbContextFactory<PpkiDbContext> dbFa
     private static FixExecutionEnqueueResult Compare(FixExecutionJob existing, FixExecutionCandidate candidate)
     {
         var sameRequest = existing.AuditJobId == candidate.AuditJobId
+            && existing.FixPlanId == candidate.FixPlanId
             && existing.SourceDocumentVersionId == candidate.SourceDocumentVersionId
             && existing.PlanHash == candidate.PlanHash
             && SameSelection(existing.SelectedFindingIdsJson, candidate.SelectedFindingIdsJson);

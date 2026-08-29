@@ -23,6 +23,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
     public DbSet<FixPlanItemRecord> FixPlanItems => Set<FixPlanItemRecord>();
     public DbSet<FixPlanApprovalSnapshotRecord> FixPlanApprovalSnapshots => Set<FixPlanApprovalSnapshotRecord>();
     public DbSet<FixExecutionJob> FixExecutionJobs => Set<FixExecutionJob>();
+    public DbSet<FixItemResult> FixItemResults => Set<FixItemResult>();
     public DbSet<AutomaticRemediationOrchestration> AutomaticRemediationOrchestrations => Set<AutomaticRemediationOrchestration>();
     public DbSet<FindingResolutionCase> FindingResolutionCases => Set<FindingResolutionCase>();
     public DbSet<FindingResolutionEvent> FindingResolutionEvents => Set<FindingResolutionEvent>();
@@ -370,6 +371,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
         {
             entity.ToTable("fix_execution_jobs");
             Common(entity);
+            entity.Property(x => x.FixPlanId).HasColumnName("fix_plan_id");
             entity.Property(x => x.AuditJobId).HasColumnName("audit_job_id");
             entity.Property(x => x.SourceDocumentVersionId).HasColumnName("source_document_version_id");
             entity.Property(x => x.ResultDocumentVersionId).HasColumnName("result_document_version_id");
@@ -397,8 +399,43 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             entity.Property(x => x.CompletedAt).HasColumnName("completed_at");
             entity.HasIndex(x => new { x.AuditJobId, x.IdempotencyKey }).IsUnique();
             entity.HasIndex(x => new { x.SourceDocumentVersionId, x.PlanHash }).IsUnique();
+            entity.HasIndex(x => x.FixPlanId).IsUnique().HasFilter("fix_plan_id is not null")
+                .HasDatabaseName("uq_fix_execution_jobs_fix_plan");
             entity.HasIndex(x => new { x.State, x.CreatedAt }).HasDatabaseName("ix_fix_execution_jobs_worker_queue");
             entity.HasOne(x => x.AuditJob).WithMany().HasForeignKey(x => x.AuditJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.SourceDocumentVersion).WithMany().HasForeignKey(x => x.SourceDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.ResultDocumentVersion).WithMany().HasForeignKey(x => x.ResultDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.FixPlan).WithOne().HasForeignKey<FixExecutionJob>(x => x.FixPlanId).OnDelete(DeleteBehavior.Restrict);
+        });
+
+        builder.Entity<FixItemResult>(entity =>
+        {
+            entity.ToTable("fix_item_results");
+            Common(entity);
+            entity.Property(x => x.FixExecutionJobId).HasColumnName("fix_execution_job_id");
+            entity.Property(x => x.FixPlanId).HasColumnName("fix_plan_id");
+            entity.Property(x => x.FixPlanItemId).HasColumnName("fix_plan_item_id");
+            entity.Property(x => x.SourceDocumentVersionId).HasColumnName("source_document_version_id");
+            entity.Property(x => x.ResultDocumentVersionId).HasColumnName("result_document_version_id");
+            entity.Property(x => x.AttemptNumber).HasColumnName("attempt_number");
+            entity.Property(x => x.ClaimToken).HasColumnName("claim_token");
+            entity.Property(x => x.OperationOrdinal).HasColumnName("operation_ordinal");
+            entity.Property(x => x.Outcome).HasColumnName("outcome").HasConversion<string>();
+            entity.Property(x => x.ValidationKey).HasColumnName("validation_key").HasMaxLength(128).IsRequired();
+            entity.Property(x => x.FixKey).HasColumnName("fix_key").HasMaxLength(128).IsRequired();
+            entity.Property(x => x.FixerVersion).HasColumnName("fixer_version").HasMaxLength(128).IsRequired();
+            entity.Property(x => x.PropertyIdentifier).HasColumnName("property_identifier").HasMaxLength(128).IsRequired();
+            entity.Property(x => x.StructuralAnchorJson).HasColumnName("structural_anchor").HasColumnType("jsonb").IsRequired();
+            entity.Property(x => x.BeforePayloadJson).HasColumnName("before_payload").HasColumnType("jsonb");
+            entity.Property(x => x.AfterPayloadJson).HasColumnName("after_payload").HasColumnType("jsonb");
+            entity.Property(x => x.SafeFailureCode).HasColumnName("safe_failure_code").HasMaxLength(128);
+            entity.HasIndex(x => new { x.FixExecutionJobId, x.AttemptNumber, x.FixPlanItemId }).IsUnique()
+                .HasDatabaseName("uq_fix_item_results_attempt_item");
+            entity.HasIndex(x => new { x.FixPlanId, x.FixPlanItemId }).HasDatabaseName("ix_fix_item_results_plan_item");
+            entity.HasIndex(x => x.ResultDocumentVersionId).HasDatabaseName("ix_fix_item_results_result_version");
+            entity.HasOne(x => x.FixExecutionJob).WithMany().HasForeignKey(x => x.FixExecutionJobId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.FixPlan).WithMany().HasForeignKey(x => x.FixPlanId).OnDelete(DeleteBehavior.Restrict);
+            entity.HasOne(x => x.FixPlanItem).WithMany().HasForeignKey(x => x.FixPlanItemId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.SourceDocumentVersion).WithMany().HasForeignKey(x => x.SourceDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne(x => x.ResultDocumentVersion).WithMany().HasForeignKey(x => x.ResultDocumentVersionId).OnDelete(DeleteBehavior.Restrict);
         });
@@ -690,6 +727,7 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
         var immutableFixProperties = new[]
         {
             nameof(FixExecutionJob.AuditJobId), nameof(FixExecutionJob.SourceDocumentVersionId),
+            nameof(FixExecutionJob.FixPlanId),
             nameof(FixExecutionJob.RequestedByUserId), nameof(FixExecutionJob.IdempotencyKey),
             nameof(FixExecutionJob.PlanHash), nameof(FixExecutionJob.PlannerVersion),
             nameof(FixExecutionJob.SelectedFindingIdsJson), nameof(FixExecutionJob.ApprovedPlanSnapshotJson),
@@ -778,6 +816,9 @@ public sealed class PpkiDbContext(DbContextOptions<PpkiDbContext> options) : DbC
             if (originalState != FixPlanLifecycleState.Draft && originalState == currentState)
                 throw new InvalidOperationException("Approved or historical fix plans cannot be edited.");
         }
+
+        if (ChangeTracker.Entries<FixItemResult>().Any(entry => entry.State is EntityState.Modified or EntityState.Deleted))
+            throw new InvalidOperationException("Fix item results are append-only.");
 
         var planStates = ChangeTracker.Entries<FixPlanRecord>().ToDictionary(entry => entry.Entity.Id, entry => entry.Entity.State);
         foreach (var entry in ChangeTracker.Entries<FixPlanItemRecord>())

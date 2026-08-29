@@ -84,7 +84,8 @@ public sealed record FixExecutionCandidate(
     string SelectedFindingIdsJson,
     string ApprovedPlanSnapshotJson,
     int PlannedOperationCount,
-    DateTimeOffset CreatedAt);
+    DateTimeOffset CreatedAt,
+    Guid? FixPlanId = null);
 
 public sealed record FixExecutionEnqueueResult(
     FixExecutionJob? Job,

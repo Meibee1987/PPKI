@@ -39,6 +39,7 @@ public sealed class FixExecutionProcessor(
             ApprovedTextCorrectionExecutionPlanSerializer.PlannerVersion, StringComparison.Ordinal);
         ApprovedFixExecutionPlan? approved = null;
         IReadOnlyList<ResolvedApprovedFixOperation>? resolvedOperations = null;
+        ApprovedFixPlanSnapshot? approvedFixPlan = null;
         if (!correctionMode)
         {
             try { approved = ApprovedFixExecutionPlanSerializer.Deserialize(source.ApprovedPlanSnapshotJson); }
@@ -46,6 +47,8 @@ public sealed class FixExecutionProcessor(
             { throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-invalid", exception); }
             ValidateApprovedSnapshot(source, approved);
             resolvedOperations = ResolveApprovedOperations(approved, capabilities);
+            if (source.FixPlanId is not null)
+                approvedFixPlan = await LoadApprovedFixPlanAsync(source, cancellationToken);
         }
 
         string? materialized = null;
@@ -139,7 +142,10 @@ public sealed class FixExecutionProcessor(
             var outputSha = validatedOutput.Sha256;
             if (changed == 0 || string.Equals(outputSha, source.SourceSha256, StringComparison.Ordinal))
             {
-                try { await CompleteNoChangeAsync(claim, source, source.PlannedOperationCount, cancellationToken); }
+                var results = approvedFixPlan is null ? [] : FixItemOutcomeCapture.Successful(
+                    claim.ExecutionId, claim.AttemptNumber, approvedFixPlan, before,
+                    validatedOutput.ParsedDocument, null);
+                try { await CompleteNoChangeAsync(claim, source, source.PlannedOperationCount, results, cancellationToken); }
                 catch (Exception exception) when (DatabaseTransient(exception))
                 { throw new FixExecutionException(FixFailureCategory.TransientInfrastructure, "database-transient", exception); }
                 return;
@@ -186,9 +192,12 @@ public sealed class FixExecutionProcessor(
                 claim.AttemptNumber, cancellationToken);
             try
             {
+                var results = approvedFixPlan is null ? [] : FixItemOutcomeCapture.Successful(
+                    claim.ExecutionId, claim.AttemptNumber, approvedFixPlan, before,
+                    publishedOutput.ParsedDocument, resultId);
                 await faults.CheckpointAsync(RemediationCheckpoint.BeforeDatabaseFinalization, claim.ExecutionId,
                     claim.AttemptNumber, cancellationToken);
-                await CompleteWithVersion(claim, source, uploaded, resultId, source.PlannedOperationCount,
+                await CompleteWithVersion(claim, source, uploaded, resultId, source.PlannedOperationCount, results,
                     ownsUploadedObject, cancellationToken);
                 // Database commit made this object canonical; a lost response must not delete it.
                 uploaded = null;
@@ -251,7 +260,8 @@ public sealed class FixExecutionProcessor(
     }
 
     private async Task CompleteWithVersion(FixExecutionClaim claim, SourceRow source, StoredFile stored,
-        Guid resultId, int operationCount, bool objectCreatedByAttempt, CancellationToken cancellationToken)
+        Guid resultId, int operationCount, IReadOnlyList<FixItemResultDraft> results,
+        bool objectCreatedByAttempt, CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(System.Data.IsolationLevel.Serializable, cancellationToken);
@@ -284,6 +294,11 @@ public sealed class FixExecutionProcessor(
         };
         db.DocumentVersions.Add(resultVersion);
         db.DocumentRenderJobs.Add(CanonicalDocumentRenderContract.CreateJob(resultVersion.Id, resultVersion.Sha256));
+        // The database insert fence only accepts item results while the claim is active and
+        // the plan is Applying. Keep all phases in this transaction, but flush them in order.
+        await db.SaveChangesAsync(cancellationToken);
+        AddResults(db, source, claim, results, resultId);
+        await db.SaveChangesAsync(cancellationToken);
         document.CurrentVersionNo = nextVersion;
         document.UpdatedAt = DateTimeOffset.UtcNow;
         job.State = FixExecutionState.Completed;
@@ -295,11 +310,13 @@ public sealed class FixExecutionProcessor(
         job.ClaimToken = null;
         job.LeaseExpiresAt = null;
         job.CompletedAt = DateTimeOffset.UtcNow;
+        await CompletePlanAsync(db, source.FixPlanId, true, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
 
     private async Task CompleteNoChangeAsync(FixExecutionClaim claim, SourceRow source, int operationCount,
+        IReadOnlyList<FixItemResultDraft> results,
         CancellationToken cancellationToken)
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
@@ -313,11 +330,14 @@ public sealed class FixExecutionProcessor(
             throw new FixExecutionException(FixFailureCategory.TransientInfrastructure, "worker-lease-lost");
         if (document.CurrentVersionNo != source.SourceVersionNo)
             throw new FixExecutionException(FixFailureCategory.Conflict, "fix-source-version-superseded");
+        AddResults(db, source, claim, results, null);
+        await db.SaveChangesAsync(cancellationToken);
         job.State = FixExecutionState.NoChange;
         job.CompletedOperationCount = operationCount;
         job.ClaimToken = null;
         job.LeaseExpiresAt = null;
         job.CompletedAt = DateTimeOffset.UtcNow;
+        await CompletePlanAsync(db, source.FixPlanId, true, cancellationToken);
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
     }
@@ -328,7 +348,7 @@ public sealed class FixExecutionProcessor(
         return await db.FixExecutionJobs.AsNoTracking()
             .Where(value => value.Id == claim.ExecutionId && value.State == FixExecutionState.Processing
                 && value.ClaimToken == claim.Token && value.LeaseExpiresAt > DateTimeOffset.UtcNow)
-            .Select(value => new SourceRow(value.Id, value.ApprovedPlanSnapshotJson,
+            .Select(value => new SourceRow(value.Id, value.FixPlanId, value.ApprovedPlanSnapshotJson,
                 value.SourceDocumentVersionId, value.SourceDocumentVersion!.Sha256,
                 value.SourceDocumentVersion.StorageBucket, value.SourceDocumentVersion.StorageKey,
                 value.SourceDocumentVersion.OriginalFilename, value.SourceDocumentVersion.DocumentId,
@@ -336,6 +356,65 @@ public sealed class FixExecutionProcessor(
                 value.SourceDocumentVersion.VersionNo, value.SourceDocumentVersion.Document.CurrentVersionNo,
                 value.PlanHash, value.PlannerVersion, value.SelectedFindingIdsJson, value.PlannedOperationCount))
             .SingleOrDefaultAsync(cancellationToken);
+    }
+
+    private async Task<ApprovedFixPlanSnapshot> LoadApprovedFixPlanAsync(SourceRow source,
+        CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        var json = await db.FixPlanApprovalSnapshots.AsNoTracking()
+            .Where(value => value.FixPlanId == source.FixPlanId)
+            .Select(value => value.SnapshotJson).SingleOrDefaultAsync(cancellationToken)
+            ?? throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-invalid");
+        ApprovedFixPlanSnapshot snapshot;
+        try { snapshot = FixPlanApprovalSnapshotSerializer.Deserialize(json); }
+        catch (FixPlanApprovalException exception)
+        { throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-invalid", exception); }
+        if (snapshot.PlanId != source.FixPlanId || snapshot.PlanHash != source.PlanHash
+            || snapshot.SourceDocumentVersionId != source.SourceVersionId)
+            throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-hash-invalid");
+        return snapshot;
+    }
+
+    private static void AddResults(PpkiDbContext db, SourceRow source, FixExecutionClaim claim,
+        IReadOnlyList<FixItemResultDraft> results, Guid? resultVersionId)
+    {
+        if (source.FixPlanId is null && results.Count == 0) return;
+        if (source.FixPlanId is null || results.Count == 0)
+            throw new FixExecutionException("fix-item-result-persistence-invalid");
+        var now = DateTimeOffset.UtcNow;
+        db.FixItemResults.AddRange(results.Select(value => new FixItemResult
+        {
+            Id = value.Id,
+            FixExecutionJobId = source.ExecutionId,
+            FixPlanId = source.FixPlanId.Value,
+            FixPlanItemId = value.FixPlanItemId,
+            SourceDocumentVersionId = source.SourceVersionId,
+            ResultDocumentVersionId = resultVersionId,
+            AttemptNumber = claim.AttemptNumber,
+            ClaimToken = claim.Token,
+            OperationOrdinal = value.OperationOrdinal,
+            Outcome = value.Outcome,
+            ValidationKey = value.ValidationKey,
+            FixKey = value.FixKey,
+            FixerVersion = value.FixerVersion,
+            PropertyIdentifier = value.PropertyIdentifier,
+            StructuralAnchorJson = value.StructuralAnchorJson,
+            BeforePayloadJson = value.BeforePayloadJson,
+            AfterPayloadJson = value.AfterPayloadJson,
+            SafeFailureCode = value.SafeFailureCode,
+            CreatedAt = now
+        }));
+    }
+
+    private static async Task CompletePlanAsync(PpkiDbContext db, Guid? planId, bool successful,
+        CancellationToken cancellationToken)
+    {
+        if (planId is null) return;
+        var plan = await db.FixPlans.SingleAsync(value => value.Id == planId, cancellationToken);
+        if (plan.State != FixPlanLifecycleState.Applying)
+            throw new FixExecutionException(FixFailureCategory.Conflict, "fix-execution-conflict");
+        if (successful) plan.Complete(DateTimeOffset.UtcNow); else plan.Fail(DateTimeOffset.UtcNow);
     }
 
     private static void ValidateApprovedSnapshot(SourceRow source, ApprovedFixExecutionPlan approved)
@@ -631,7 +710,7 @@ public sealed class FixExecutionProcessor(
         return Convert.ToHexStringLower(await SHA256.HashDataAsync(stream, cancellationToken));
     }
 
-    private sealed record SourceRow(Guid ExecutionId, string ApprovedPlanSnapshotJson, Guid SourceVersionId,
+    private sealed record SourceRow(Guid ExecutionId, Guid? FixPlanId, string ApprovedPlanSnapshotJson, Guid SourceVersionId,
         string SourceSha256, string StorageBucket, string StorageKey, string OriginalFilename,
         Guid DocumentId, Guid OwnerUserId, Guid RequestedByUserId, int SourceVersionNo,
         int CurrentVersionNo, string PlanHash, string PlannerVersion, string SelectedFindingIdsJson,

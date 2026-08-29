@@ -175,7 +175,7 @@ public sealed class OutputPublicationArchitectureTests
     }
 
     [Fact]
-    public void Nochange_creates_no_version_and_s8_t08_or_reaudit_persistence_is_not_added()
+    public void Nochange_creates_no_version_but_persists_s8_t08_results_without_reaudit()
     {
         var processor = Source("backend", "services", "Ppki.Worker", "FixExecutionProcessor.cs");
         var noChangeStart = processor.IndexOf("private async Task CompleteNoChangeAsync", StringComparison.Ordinal);
@@ -184,7 +184,8 @@ public sealed class OutputPublicationArchitectureTests
         Assert.Contains("job.State = FixExecutionState.NoChange", noChange, StringComparison.Ordinal);
         Assert.DoesNotContain("DocumentVersions.Add", noChange, StringComparison.Ordinal);
         Assert.DoesNotContain("FixAction", processor, StringComparison.Ordinal);
-        Assert.DoesNotContain("FixItemResult", processor, StringComparison.Ordinal);
+        Assert.Contains("AddResults", noChange, StringComparison.Ordinal);
+        Assert.Contains("FixItemResult", processor, StringComparison.Ordinal);
         Assert.DoesNotContain("Reaudit", processor, StringComparison.OrdinalIgnoreCase);
         Assert.DoesNotContain("FindingStatus.Fixed", processor, StringComparison.Ordinal);
     }

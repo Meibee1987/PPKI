@@ -97,6 +97,13 @@ public enum FixExecutionState
     NoChange
 }
 
+public enum FixItemOutcome
+{
+    Applied,
+    Skipped,
+    Failed
+}
+
 public enum FixPlanLifecycleState
 {
     Draft,

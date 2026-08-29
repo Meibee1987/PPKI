@@ -1,6 +1,7 @@
 using Microsoft.EntityFrameworkCore;
 using Ppki.Application;
 using Ppki.Domain;
+using Ppki.FixEngine;
 using Ppki.Infrastructure;
 
 namespace Ppki.Worker;
@@ -55,20 +56,13 @@ public sealed class QueuedFixExecutionWorker(
 
     internal async Task<FixExecutionClaim?> ClaimAsync(CancellationToken cancellationToken)
     {
+        var exhausted = await ReclaimExhaustedAsync(cancellationToken);
+        if (exhausted is not null)
+            await RetryOrFailAsync(exhausted.Value, new FixExecutionException(
+                FixFailureCategory.TransientInfrastructure, "worker-lease-lost"), cancellationToken);
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
         var now = DateTimeOffset.UtcNow;
-        await db.FixExecutionJobs
-            .Where(value => value.State == FixExecutionState.Processing && value.LeaseExpiresAt < now
-                && value.AttemptCount >= value.MaxAttempts)
-            .ExecuteUpdateAsync(update => update
-                .SetProperty(value => value.State, FixExecutionState.Failed)
-                .SetProperty(value => value.ClaimToken, (Guid?)null)
-                .SetProperty(value => value.LeaseExpiresAt, (DateTimeOffset?)null)
-                .SetProperty(value => value.FailureCategory, FixFailureCategory.TransientInfrastructure)
-                .SetProperty(value => value.SafeFailureCode, "worker-lease-lost")
-                .SetProperty(value => value.FailedOperationCount, 1)
-                .SetProperty(value => value.CompletedAt, now), cancellationToken);
         var job = await db.FixExecutionJobs.FromSqlRaw("""
             select * from public.fix_execution_jobs
             where (state = 'Queued' and (next_attempt_at is null or next_attempt_at <= now()))
@@ -87,9 +81,38 @@ public sealed class QueuedFixExecutionWorker(
         job.FailureCategory = null;
         job.SafeFailureCode = null;
         job.LeaseExpiresAt = now.Add(LeaseDuration);
+        if (job.FixPlanId is not null)
+        {
+            var plan = await db.FixPlans.SingleAsync(value => value.Id == job.FixPlanId, cancellationToken);
+            if (plan.State == FixPlanLifecycleState.Approved) plan.BeginApplying(now);
+            else if (plan.State != FixPlanLifecycleState.Applying)
+                throw new FixExecutionException(FixFailureCategory.Conflict, "fix-execution-conflict");
+        }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);
         return new(job.Id, token, job.AttemptCount, job.LeaseExpiresAt.Value);
+    }
+
+    private async Task<FixExecutionClaim?> ReclaimExhaustedAsync(CancellationToken cancellationToken)
+    {
+        await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
+        await using var transaction = await db.Database.BeginTransactionAsync(cancellationToken);
+        var job = await db.FixExecutionJobs.FromSqlRaw("""
+            select * from public.fix_execution_jobs
+            where state = 'Processing' and lease_expires_at < now()
+              and attempt_count >= max_attempts and claim_token is not null
+            order by created_at
+            for update skip locked
+            limit 1
+            """).SingleOrDefaultAsync(cancellationToken);
+        if (job is null) return null;
+        var token = Guid.NewGuid();
+        var lease = DateTimeOffset.UtcNow.Add(LeaseDuration);
+        job.ClaimToken = token;
+        job.LeaseExpiresAt = lease;
+        await db.SaveChangesAsync(cancellationToken);
+        await transaction.CommitAsync(cancellationToken);
+        return new(job.Id, token, job.AttemptCount, lease);
     }
 
     internal async Task<bool> HeartbeatAsync(FixExecutionClaim claim, CancellationToken cancellationToken)
@@ -113,9 +136,45 @@ public sealed class QueuedFixExecutionWorker(
             .SingleOrDefaultAsync(cancellationToken);
         if (job is not null && (job.State != FixExecutionState.Processing || job.ClaimToken != claim.Token)) job = null;
         if (job is null) return;
-        job.FailureCategory = failure.Category;
-        job.SafeFailureCode = FixFailureCatalog.IsSafe(failure.DiagnosticCode)
+        var safeFailure = FixFailureCatalog.IsSafe(failure.DiagnosticCode)
             ? failure.DiagnosticCode : "database-finalization-terminal";
+        if (job.FixPlanId is not null)
+        {
+            var snapshotJson = await db.FixPlanApprovalSnapshots.AsNoTracking()
+                .Where(value => value.FixPlanId == job.FixPlanId)
+                .Select(value => value.SnapshotJson).SingleAsync(cancellationToken);
+            ApprovedFixPlanSnapshot approved;
+            try { approved = FixPlanApprovalSnapshotSerializer.Deserialize(snapshotJson); }
+            catch (FixPlanApprovalException exception)
+            { throw new FixExecutionException(FixFailureCategory.InvalidPlan, "approved-plan-invalid", exception); }
+            var results = FixItemOutcomeCapture.Failed(job.Id, claim.AttemptNumber, approved, safeFailure);
+            var created = DateTimeOffset.UtcNow;
+            db.FixItemResults.AddRange(results.Select(value => new FixItemResult
+            {
+                Id = value.Id,
+                FixExecutionJobId = job.Id,
+                FixPlanId = job.FixPlanId.Value,
+                FixPlanItemId = value.FixPlanItemId,
+                SourceDocumentVersionId = job.SourceDocumentVersionId,
+                AttemptNumber = claim.AttemptNumber,
+                ClaimToken = claim.Token,
+                OperationOrdinal = value.OperationOrdinal,
+                Outcome = value.Outcome,
+                ValidationKey = value.ValidationKey,
+                FixKey = value.FixKey,
+                FixerVersion = value.FixerVersion,
+                PropertyIdentifier = value.PropertyIdentifier,
+                StructuralAnchorJson = value.StructuralAnchorJson,
+                BeforePayloadJson = value.BeforePayloadJson,
+                AfterPayloadJson = value.AfterPayloadJson,
+                SafeFailureCode = value.SafeFailureCode,
+                CreatedAt = created
+            }));
+            // Flush outcomes while the fenced claim and Applying plan state are still active.
+            await db.SaveChangesAsync(cancellationToken);
+        }
+        job.FailureCategory = failure.Category;
+        job.SafeFailureCode = safeFailure;
         job.ClaimToken = null;
         job.LeaseExpiresAt = null;
         if (FixRetryPolicy.ShouldRetry(failure.Category, job.AttemptCount, job.MaxAttempts))
@@ -126,9 +185,15 @@ public sealed class QueuedFixExecutionWorker(
         else
         {
             job.State = FixExecutionState.Failed;
-            job.FailedOperationCount = Math.Min(1, job.PlannedOperationCount);
+            job.FailedOperationCount = job.PlannedOperationCount;
             job.CompletedAt = DateTimeOffset.UtcNow;
             job.NextAttemptAt = null;
+            if (job.FixPlanId is not null)
+            {
+                var plan = await db.FixPlans.SingleAsync(value => value.Id == job.FixPlanId, cancellationToken);
+                if (plan.State == FixPlanLifecycleState.Applying) plan.Fail(DateTimeOffset.UtcNow);
+                else throw new FixExecutionException(FixFailureCategory.Conflict, "fix-execution-conflict");
+            }
         }
         await db.SaveChangesAsync(cancellationToken);
         await transaction.CommitAsync(cancellationToken);

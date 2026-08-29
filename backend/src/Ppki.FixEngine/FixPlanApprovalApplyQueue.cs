@@ -66,7 +66,7 @@ public sealed class FixPlanApprovalApplyQueue(
             approved.SourceDocumentVersionId, approved.ApprovedByUserId, plan.Id, persisted.PlanHash,
             PlannerVersion, JsonSerializer.Serialize(selected.Select(value => value.ToString("D")).ToArray()),
             ApprovedFixExecutionPlanSerializer.Serialize(source, preview, FixExecutionSelectionScope.Manual),
-            operations.Length, timeProvider.GetUtcNow());
+            operations.Length, timeProvider.GetUtcNow(), plan.Id);
         return executions.EnqueueAsync(candidate, cancellationToken);
     }
 

@@ -148,7 +148,8 @@ public sealed class RemediationHardeningArchitectureTests
         var processor = Source("backend", "services", "Ppki.Worker", "FixExecutionProcessor.cs");
         Assert.Contains("for update skip locked", worker, StringComparison.OrdinalIgnoreCase);
         Assert.Contains("attempt_count < max_attempts", worker, StringComparison.OrdinalIgnoreCase);
-        Assert.Contains("value.AttemptCount >= value.MaxAttempts", worker, StringComparison.Ordinal);
+        Assert.Contains("attempt_count >= max_attempts", worker, StringComparison.OrdinalIgnoreCase);
+        Assert.Contains("job.ClaimToken = token", worker, StringComparison.Ordinal);
         Assert.Contains("value.ClaimToken == claim.Token", worker, StringComparison.Ordinal);
         Assert.Contains("job.ClaimToken != claim.Token", processor, StringComparison.Ordinal);
         Assert.Contains("document.CurrentVersionNo != source.SourceVersionNo", processor, StringComparison.Ordinal);

@@ -446,6 +446,8 @@ public sealed class FixPlanApprovalSnapshotRecord : Entity
 
 public sealed class FixExecutionJob : Entity
 {
+    public Guid? FixPlanId { get; set; }
+    public FixPlanRecord? FixPlan { get; set; }
     public Guid AuditJobId { get; set; }
     public AuditJob? AuditJob { get; set; }
     public Guid SourceDocumentVersionId { get; set; }
@@ -474,6 +476,32 @@ public sealed class FixExecutionJob : Entity
     public DateTimeOffset? StartedAt { get; set; }
     public DateTimeOffset? LeaseExpiresAt { get; set; }
     public DateTimeOffset? CompletedAt { get; set; }
+}
+
+public sealed class FixItemResult : Entity
+{
+    public Guid FixExecutionJobId { get; set; }
+    public FixExecutionJob? FixExecutionJob { get; set; }
+    public Guid FixPlanId { get; set; }
+    public FixPlanRecord? FixPlan { get; set; }
+    public Guid FixPlanItemId { get; set; }
+    public FixPlanItemRecord? FixPlanItem { get; set; }
+    public Guid SourceDocumentVersionId { get; set; }
+    public DocumentVersion? SourceDocumentVersion { get; set; }
+    public Guid? ResultDocumentVersionId { get; set; }
+    public DocumentVersion? ResultDocumentVersion { get; set; }
+    public int AttemptNumber { get; set; }
+    public Guid ClaimToken { get; set; }
+    public int OperationOrdinal { get; set; }
+    public FixItemOutcome Outcome { get; set; }
+    public required string ValidationKey { get; set; }
+    public required string FixKey { get; set; }
+    public required string FixerVersion { get; set; }
+    public required string PropertyIdentifier { get; set; }
+    public required string StructuralAnchorJson { get; set; }
+    public string? BeforePayloadJson { get; set; }
+    public string? AfterPayloadJson { get; set; }
+    public string? SafeFailureCode { get; set; }
 }
 
 public sealed class AutomaticRemediationOrchestration : Entity
