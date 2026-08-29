@@ -76,6 +76,7 @@ builder.Services.AddSingleton<IFixPlanApprovalQueueRecoveryRepository, FixPlanAp
 builder.Services.AddSingleton<ApprovedFixPlanQueueRecoveryProcessor>();
 builder.Services.AddSingleton<IReauditService, ReauditService>();
 builder.Services.AddSingleton<IFindingResolutionService, FindingResolutionService>();
+builder.Services.AddSingleton<AutomaticReauditRecoveryProcessor>();
 builder.Services.AddSingleton<FixExecutionProcessor>();
 builder.Services.AddSingleton<ExactTextReplacementProvider>();
 builder.Services.AddSingleton<TextCorrectionExecutionResolver>();
@@ -87,6 +88,7 @@ builder.Services.AddSingleton<IRemediationFaultInjector, NoopRemediationFaultInj
 builder.Services.AddHostedService<QueuedAuditWorker>();
 builder.Services.AddHostedService<QueuedFixExecutionWorker>();
 builder.Services.AddHostedService<ApprovedFixPlanQueueRecoveryWorker>();
+builder.Services.AddHostedService<AutomaticReauditRecoveryWorker>();
 builder.Services.AddHostedService<AutomaticRemediationWorker>();
 builder.Services.AddHostedService<QueuedDocumentRenderWorker>();
 builder.Services.AddHostedService<TextCorrectionWorker>();

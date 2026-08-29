@@ -48,6 +48,7 @@ builder.Services.AddScoped<IFixExecutionService, FixExecutionService>();
 builder.Services.AddScoped<IReauditService, ReauditService>();
 builder.Services.AddScoped<IAuditComparisonService, AuditComparisonService>();
 builder.Services.AddScoped<IFindingResolutionService, FindingResolutionService>();
+builder.Services.AddScoped<IFixExecutionStatusChainService, FixExecutionStatusChainService>();
 builder.Services.AddScoped<IInternalAdminAuthorizationService, InternalAdminAuthorizationService>();
 builder.Services.AddScoped<ITextCorrectionService, TextCorrectionService>();
 builder.Services.AddScoped<ITextCorrectionContextMaterializationService, TextCorrectionContextMaterializationService>();
@@ -372,6 +373,22 @@ api.MapGet("/audits/{id:guid}/fix-executions/{executionId:guid}", async (Guid id
 }).WithName("GetAuditFixExecution")
   .WithSummary("Read the safe lifecycle status of an owned fix execution.")
   .Produces<FixExecutionStatus>(StatusCodes.Status200OK)
+  .Produces(StatusCodes.Status404NotFound);
+
+api.MapGet("/fix-executions/{executionId:guid}/status-chain", async (Guid executionId,
+    ClaimsPrincipal user, IFixExecutionStatusChainService statusChains, CancellationToken ct) => {
+    try {
+        var result=await statusChains.GetAsync(executionId,UserId(user),ct);
+        return result is null?Results.NotFound():Results.Ok(result);
+    } catch(ReauditException exception) {
+        return Results.Problem(statusCode:StatusCodes.Status409Conflict,
+            title:"Fix execution status chain conflicts with immutable remediation evidence.",
+            extensions:new Dictionary<string,object?>{{"code",exception.DiagnosticCode}});
+    }
+}).WithName("GetFixExecutionStatusChain")
+  .WithSummary("Read the owned fix, automatic re-audit, and authoritative finding reconciliation chain.")
+  .Produces<FixExecutionStatusChain>(StatusCodes.Status200OK)
+  .ProducesProblem(StatusCodes.Status409Conflict)
   .Produces(StatusCodes.Status404NotFound);
 
 api.MapPost("/fix-executions/{executionId}/re-audit", async (string executionId,

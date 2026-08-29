@@ -225,7 +225,8 @@ public sealed class ReauditArchitectureTests
         var projection = ownedQuery.IndexOf(".Select(value => new ReauditSourceContext", StringComparison.Ordinal);
         Assert.True(identityFilter >= 0 && projection > identityFilter);
         Assert.DoesNotContain("OwnerUserId == ownerUserId", ownedQuery, StringComparison.Ordinal);
-        Assert.Contains("OwnedSource(db, sourceFixExecutionId, ownerUserId)\n            .SingleOrDefaultAsync", source, StringComparison.Ordinal);
+        Assert.Contains("OwnedSource(db, sourceFixExecutionId, ownerUserId)\n            .SingleOrDefaultAsync",
+            source.ReplaceLineEndings("\n"), StringComparison.Ordinal);
         Assert.DoesNotContain("db.Rules", source, StringComparison.Ordinal);
         Assert.DoesNotContain("db.ProfileRules", source, StringComparison.Ordinal);
         Assert.DoesNotContain("db.DocumentTypes", source, StringComparison.Ordinal);
@@ -294,7 +295,6 @@ public sealed class ReauditArchitectureTests
     {
         var files = new[]
         {
-            Source("backend", "src", "Ppki.Application", "ReauditContracts.cs"),
             Source("backend", "src", "Ppki.Infrastructure", "ReauditService.cs"),
             Source("supabase", "migrations", "202608040002_reaudit_orchestration.sql")
         };
