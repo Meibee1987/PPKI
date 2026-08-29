@@ -1,0 +1,10 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="../../src/Ppki.Application/Ppki.Application.csproj" />
+    <ProjectReference Include="../../src/Ppki.FixEngine/Ppki.FixEngine.csproj" />
+    <ProjectReference Include="../../src/Ppki.RuleEngine/Ppki.RuleEngine.csproj" />
+  </ItemGroup>
+</Project>

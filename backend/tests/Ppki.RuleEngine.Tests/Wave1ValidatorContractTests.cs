@@ -1,4 +1,5 @@
 using System.Text.Json;
+using Ppki.Application;
 using Ppki.DocxEngine;
 using Ppki.Domain;
 using Ppki.RuleEngine.Tests.Fixtures;
@@ -107,17 +108,20 @@ public sealed class Wave1ValidatorContractTests
         Assert.Equal(19, rules.Count(value => value.GetProperty("domain").GetString() == "ABS"));
         Assert.Equal(25, rules.Count(value => value.GetProperty("domain").GetString() == "STR"));
 
-        var importer = File.ReadAllText(Path.Combine(root, "backend", "src", "Ppki.Infrastructure", "RuleCatalogImporter.cs"));
+        var manifest = RuleCoverageManifest.Entries;
         foreach (var supported in new[]
         {
             "PPKI-HDG-001", "PPKI-HDG-002", "PPKI-HDG-003", "PPKI-HDG-004", "PPKI-HDG-005",
             "PPKI-HDG-006", "PPKI-HDG-007", "PPKI-HDG-009", "PPKI-HDG-011", "PPKI-HDG-013",
             "PPKI-ABS-001", "PPKI-ABS-003", "PPKI-ABS-004", "PPKI-ABS-011", "PPKI-ABS-013", "PPKI-ABS-019"
         })
-            Assert.Contains($"[\"{supported}\"]", importer, StringComparison.Ordinal);
-        Assert.DoesNotContain("[\"PPKI-STR-", importer, StringComparison.Ordinal);
-        Assert.DoesNotContain("[\"PPKI-HDG-008\"]", importer, StringComparison.Ordinal);
-        Assert.DoesNotContain("[\"PPKI-ABS-002\"]", importer, StringComparison.Ordinal);
+            Assert.Contains(manifest, value => value.RuleCode == supported
+                && value.Status == RuleImplementationStatus.Implemented);
+        Assert.DoesNotContain(manifest, value => value.RuleCode.StartsWith("PPKI-STR-", StringComparison.Ordinal)
+            && value.Status == RuleImplementationStatus.Implemented);
+        Assert.Contains(manifest, value => value.RuleCode == "PPKI-HDG-008"
+            && value.Status == RuleImplementationStatus.Manual);
+        Assert.DoesNotContain(manifest, value => value.RuleCode == "PPKI-ABS-002");
     }
 
     [Fact]

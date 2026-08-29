@@ -41,7 +41,8 @@ public sealed class LayoutValidatorArchitectureTests
         Assert.Equal("4.0", OpenXmlDocxParser.SchemaVersion);
 
         var worker = File.ReadAllText(Path.Combine(root, "backend", "services", "Ppki.Worker", "Program.cs"));
-        Assert.Equal(25, Count(worker, "AddSingleton<IDocumentRuleValidator"));
+        Assert.Contains("ProductionDocumentValidators.Create()", worker, StringComparison.Ordinal);
+        Assert.Equal(25, ProductionDocumentValidators.Create().Count);
         Assert.Contains("AddSingleton<DocumentRuleValidatorRegistry>()", worker, StringComparison.Ordinal);
         Assert.Contains("AddSingleton<DocumentLayoutValidationEngine>()", worker, StringComparison.Ordinal);
     }
@@ -61,11 +62,4 @@ public sealed class LayoutValidatorArchitectureTests
         throw new DirectoryNotFoundException("Repository root was not found.");
     }
 
-    private static int Count(string source, string value)
-    {
-        var count = 0;
-        for (var index = 0; (index = source.IndexOf(value, index, StringComparison.Ordinal)) >= 0; index += value.Length)
-            count++;
-        return count;
-    }
 }
