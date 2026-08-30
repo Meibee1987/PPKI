@@ -145,13 +145,21 @@ insert into public.audit_findings (id, audit_job_id, rule_id, severity, rule_cod
   ('${fixture.findingBId}', '${fixture.auditBId}', '${fixture.ruleId}', 'Info', 'TEST-RLS-001', 'Manual', 'Synthetic finding B', '{}', '{}', '{}');`;
 }
 
-const cleanupSql = `
+const cleanupSql = `begin;
+set local session_replication_role=replica;
 delete from public.audit_trail_events where resource_id in ('${fixture.documentAId}', '${fixture.versionAId}', '${fixture.auditAId}', '${fixture.documentBId}', '${fixture.versionBId}', '${fixture.auditBId}');
 delete from public.audit_findings where id in ('${fixture.findingAId}', '${fixture.findingBId}');
 delete from public.audit_jobs where id in ('${fixture.auditAId}', '${fixture.auditBId}');
+delete from public.document_page_map_entries where render_artifact_id in (
+  select id from public.document_render_artifacts where document_version_id in ('${fixture.versionAId}', '${fixture.versionBId}')
+    or render_job_id in (select id from public.document_render_jobs where document_version_id in ('${fixture.versionAId}', '${fixture.versionBId}')));
+delete from public.document_render_artifacts where document_version_id in ('${fixture.versionAId}', '${fixture.versionBId}')
+  or render_job_id in (select id from public.document_render_jobs where document_version_id in ('${fixture.versionAId}', '${fixture.versionBId}'));
+delete from public.document_render_jobs where document_version_id in ('${fixture.versionAId}', '${fixture.versionBId}');
 delete from public.document_versions where id in ('${fixture.versionAId}', '${fixture.versionBId}');
 delete from public.documents where id in ('${fixture.documentAId}', '${fixture.documentBId}');
-delete from public.rules where id = '${fixture.ruleId}';`;
+delete from public.rules where id = '${fixture.ruleId}';
+commit;`;
 
 async function executeSql(container, statement) {
   await run("docker", ["exec", container, "psql", "-q", "-U", "postgres", "-d", "postgres", "-v", "ON_ERROR_STOP=1", "-c", statement]);

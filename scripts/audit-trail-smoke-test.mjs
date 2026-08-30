@@ -139,6 +139,12 @@ const cleanupSql = `begin;
 set local session_replication_role=replica;
 delete from public.audit_trail_events where resource_id in ('${ids.document}', '${ids.version}', '${ids.audit}') or id in ('${ids.userEvent}', '${ids.serviceEvent}');
 delete from public.audit_jobs where id = '${ids.audit}';
+delete from public.document_page_map_entries where render_artifact_id in (
+  select id from public.document_render_artifacts where document_version_id = '${ids.version}'
+    or render_job_id in (select id from public.document_render_jobs where document_version_id = '${ids.version}'));
+delete from public.document_render_artifacts where document_version_id = '${ids.version}'
+  or render_job_id in (select id from public.document_render_jobs where document_version_id = '${ids.version}');
+delete from public.document_render_jobs where document_version_id = '${ids.version}';
 delete from public.document_versions where id = '${ids.version}';
 delete from public.documents where id = '${ids.document}';
 commit;

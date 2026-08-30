@@ -159,6 +159,12 @@ delete from public.audit_rule_snapshots where id = '${ids.snapshot}';
 delete from public.audit_jobs where id in ('${ids.audit}', '${ids.invalidAudit}');
 delete from public.profile_rules where id = '${ids.profileRule}';
 delete from public.rules where id = '${ids.rule}';
+delete from public.document_page_map_entries where render_artifact_id in (
+  select id from public.document_render_artifacts where document_version_id = '${ids.version}'
+    or render_job_id in (select id from public.document_render_jobs where document_version_id = '${ids.version}'));
+delete from public.document_render_artifacts where document_version_id = '${ids.version}'
+  or render_job_id in (select id from public.document_render_jobs where document_version_id = '${ids.version}');
+delete from public.document_render_jobs where document_version_id = '${ids.version}';
 delete from public.document_versions where id = '${ids.version}';
 delete from public.documents where id = '${ids.document}';
 commit;

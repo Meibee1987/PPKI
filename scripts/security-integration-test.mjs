@@ -201,33 +201,137 @@ async function readStorageObject(environment, bucket, objectPath) {
 }
 
 async function cleanupOwners(environment, container, ownerIds) {
-  if (ownerIds.length === 0) return;
+  if (ownerIds.length === 0) return false;
   const quoted = ownerIds.map((id) => `'${id}'::uuid`).join(",");
   const objects = await sql(container, `select bucket_id || chr(9) || name from storage.objects where name ~ '^(${ownerIds.join("|")})/'`);
   for (const line of objects.split(/\r?\n/).filter(Boolean)) {
     const separator = line.indexOf("\t");
     if (separator > 0) await deleteStorageObject(environment, line.slice(0, separator), line.slice(separator + 1));
   }
-  await sql(container, `begin;
+  const renderCleanupVerified = await sql(container, `begin;
 set local session_replication_role=replica;
-delete from public.fix_plan_approval_snapshots where fix_plan_id in (select id from public.fix_plans where owner_user_id in (${quoted}));
-delete from public.fix_plan_items where fix_plan_id in (select id from public.fix_plans where owner_user_id in (${quoted}));
-delete from public.fix_execution_jobs where requested_by_user_id in (${quoted});
-delete from public.fix_plans where owner_user_id in (${quoted});
+create temporary table cleanup_document_versions on commit drop as
+  select version.id
+  from public.document_versions version
+  join public.documents document on document.id=version.document_id
+  where document.owner_user_id in (${quoted});
+create temporary table cleanup_document_render_jobs on commit drop as
+  select job.id
+  from public.document_render_jobs job
+  join cleanup_document_versions version on version.id=job.document_version_id;
+create temporary table cleanup_document_render_artifacts on commit drop as
+  select artifact.id
+  from public.document_render_artifacts artifact
+  where artifact.document_version_id in (select id from cleanup_document_versions)
+    or artifact.render_job_id in (select id from cleanup_document_render_jobs);
+create temporary table cleanup_unrelated_render_jobs on commit drop as
+  select job.id, md5(to_jsonb(job)::text) row_hash
+  from public.document_render_jobs job
+  where not exists (select 1 from cleanup_document_render_jobs target where target.id=job.id);
+create temporary table cleanup_preexisting_render_orphans on commit drop as
+  select job.id
+  from public.document_render_jobs job
+  where not exists (
+    select 1 from public.document_versions version where version.id=job.document_version_id);
+delete from public.document_page_map_entries where render_artifact_id in (select id from cleanup_document_render_artifacts);
+delete from public.document_render_artifacts where id in (select id from cleanup_document_render_artifacts);
+delete from public.document_render_jobs where id in (select id from cleanup_document_render_jobs);
+delete from public.text_correction_batch_items where batch_id in (
+  select id from public.text_correction_batches where source_document_version_id in (select id from cleanup_document_versions)
+    or result_document_version_id in (select id from cleanup_document_versions))
+  or decision_event_id in (
+    select id from public.text_correction_decision_events where source_document_version_id in (select id from cleanup_document_versions)
+      or proposal_id in (select id from public.text_correction_proposals where document_version_id in (select id from cleanup_document_versions)));
+delete from public.text_correction_batches where source_document_version_id in (select id from cleanup_document_versions)
+  or result_document_version_id in (select id from cleanup_document_versions);
+delete from public.text_correction_decision_events where source_document_version_id in (select id from cleanup_document_versions)
+  or proposal_id in (select id from public.text_correction_proposals where document_version_id in (select id from cleanup_document_versions));
+delete from public.text_correction_proposals where document_version_id in (select id from cleanup_document_versions);
+delete from public.text_correction_analyses where document_version_id in (select id from cleanup_document_versions);
+delete from public.automatic_remediation_orchestrations where result_document_version_id in (select id from cleanup_document_versions)
+  or source_audit_job_id in (select id from public.audit_jobs where document_version_id in (select id from cleanup_document_versions));
+delete from public.finding_review_events where review_case_id in (
+  select id from public.finding_review_cases where source_document_version_id in (select id from cleanup_document_versions));
+delete from public.finding_review_cases where source_document_version_id in (select id from cleanup_document_versions);
+delete from public.finding_resolution_events where result_document_version_id in (select id from cleanup_document_versions)
+  or resolution_case_id in (
+    select id from public.finding_resolution_cases where source_document_version_id in (select id from cleanup_document_versions));
+delete from public.finding_resolution_cases where source_document_version_id in (select id from cleanup_document_versions);
+delete from public.fix_item_results where source_document_version_id in (select id from cleanup_document_versions)
+  or result_document_version_id in (select id from cleanup_document_versions);
+delete from public.fix_plan_approval_snapshots where fix_plan_id in (
+  select id from public.fix_plans where owner_user_id in (${quoted})
+    or source_document_version_id in (select id from cleanup_document_versions));
+delete from public.fix_plan_items where fix_plan_id in (
+  select id from public.fix_plans where owner_user_id in (${quoted})
+    or source_document_version_id in (select id from cleanup_document_versions));
+delete from public.fix_execution_jobs where requested_by_user_id in (${quoted})
+  or source_document_version_id in (select id from cleanup_document_versions)
+  or result_document_version_id in (select id from cleanup_document_versions);
+delete from public.fix_plans where owner_user_id in (${quoted})
+  or source_document_version_id in (select id from cleanup_document_versions);
 delete from public.audit_trail_events where owner_user_id in (${quoted}) or actor_user_id in (${quoted});
 delete from public.audit_findings where audit_job_id in (select audit.id from public.audit_jobs audit join public.document_versions version on version.id=audit.document_version_id join public.documents document on document.id=version.document_id where document.owner_user_id in (${quoted}));
 delete from public.audit_rule_snapshots where audit_job_id in (select audit.id from public.audit_jobs audit join public.document_versions version on version.id=audit.document_version_id join public.documents document on document.id=version.document_id where document.owner_user_id in (${quoted}));
 delete from public.audit_jobs where document_version_id in (select version.id from public.document_versions version join public.documents document on document.id=version.document_id where document.owner_user_id in (${quoted}));
-delete from public.document_versions where document_id in (select id from public.documents where owner_user_id in (${quoted}));
+delete from public.document_versions where id in (select id from cleanup_document_versions);
 delete from public.documents where owner_user_id in (${quoted});
 delete from public.user_profiles where id in (${quoted});
+do $cleanup$
+begin
+  if exists (select 1 from public.document_render_jobs job join cleanup_document_render_jobs target on target.id=job.id)
+    or exists (select 1 from public.document_versions version join cleanup_document_versions target on target.id=version.id)
+    or exists (select 1 from public.document_versions version where version.parent_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.audit_jobs where document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.automatic_remediation_orchestrations where result_document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.document_render_artifacts where document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.finding_resolution_cases where source_document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.finding_resolution_events where result_document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.finding_review_cases where source_document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.fix_execution_jobs where source_document_version_id in (select id from cleanup_document_versions)
+      or result_document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.fix_item_results where source_document_version_id in (select id from cleanup_document_versions)
+      or result_document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.fix_plans where source_document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.text_correction_analyses where document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.text_correction_batches where source_document_version_id in (select id from cleanup_document_versions)
+      or result_document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.text_correction_decision_events where source_document_version_id in (select id from cleanup_document_versions))
+    or exists (select 1 from public.text_correction_proposals where document_version_id in (select id from cleanup_document_versions))
+    or exists (
+    select 1
+    from cleanup_unrelated_render_jobs snapshot
+    full join (
+      select job.id, md5(to_jsonb(job)::text) row_hash
+      from public.document_render_jobs job
+      where not exists (select 1 from cleanup_document_render_jobs target where target.id=job.id)
+    ) current using (id, row_hash)
+    where snapshot.id is null or current.id is null)
+    or exists (
+    select 1
+    from cleanup_preexisting_render_orphans snapshot
+    full join (
+      select job.id
+      from public.document_render_jobs job
+      where not exists (
+        select 1 from public.document_versions version where version.id=job.document_version_id)
+    ) current using (id)
+    where snapshot.id is null or current.id is null) then
+    raise exception using errcode='23514', message='Synthetic document render cleanup regression failed';
+  end if;
+end
+$cleanup$;
+select true;
 commit;`);
+  if (renderCleanupVerified !== "t") throw new Error("synthetic render cleanup regression failed");
+  return true;
 }
 
 async function cleanupSynthetic(environment, container) {
   const existing = (await authUsers(environment)).filter((candidate) => identities.some((identity) => identity.email === candidate.email));
-  await cleanupOwners(environment, container, existing.map((candidate) => candidate.id).filter(uuid));
+  const renderCleanupVerified = await cleanupOwners(environment, container, existing.map((candidate) => candidate.id).filter(uuid));
   for (const candidate of existing) await deleteAuthUser(environment, candidate.id);
+  return renderCleanupVerified;
 }
 
 async function freePort() {
@@ -242,7 +346,7 @@ async function freePort() {
   });
 }
 
-function backendEnvironment(environment, port) {
+function backendEnvironment(environment, port, temporaryRoot) {
   return {
     ...process.env,
     ASPNETCORE_ENVIRONMENT: "SecurityIntegrationTest",
@@ -260,6 +364,9 @@ function backendEnvironment(environment, port) {
     Worker__PollSeconds: "1",
     RuleCatalog__Path: path.join(process.cwd(), "rules", "ppki-ipb-2019", "rules.json"),
     Logging__LogLevel__Default: "Information",
+    TEMP: temporaryRoot,
+    TMP: temporaryRoot,
+    TMPDIR: temporaryRoot,
   };
 }
 
@@ -442,18 +549,20 @@ async function safeDiagnosticCodes() {
   return [...new Set(codes)];
 }
 
-async function temporaryDocxNames() {
-  return new Set((await readdir(os.tmpdir())).filter((name) => /^ppki-[0-9a-f]+\.docx$/i.test(name) || /^ppki-upload-[0-9a-f]+\.tmp$/i.test(name)));
-}
-
-async function waitForTemporaryDocxCleanup(baseline, timeoutMs = 5000) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const current = await temporaryDocxNames();
-    if ([...current].every((name) => baseline.has(name))) return current;
-    await delay(100);
+async function cleanupOwnedTemporaryDirectory(directory) {
+  if (!directory) return false;
+  const resolved = path.resolve(directory);
+  const expected = path.resolve(os.tmpdir(), `ppki-security-integration-${runNamespace}`);
+  if (resolved !== expected || path.dirname(resolved) !== path.resolve(os.tmpdir()))
+    throw new Error("synthetic temporary directory identity invalid");
+  await rm(resolved, { recursive: true, force: true });
+  try {
+    await readdir(resolved);
+    return false;
+  } catch (error) {
+    if (error?.code === "ENOENT") return true;
+    throw error;
   }
-  return temporaryDocxNames();
 }
 
 async function componentSmoke(script) {
@@ -496,7 +605,6 @@ async function main() {
   const fixtureInvalid = path.join(process.cwd(), "backend", "tests", "fixtures", "docx", "generated", "minimal-invalid-layout.docx");
   const fixtureCompliant = path.join(process.cwd(), "backend", "tests", "fixtures", "docx", "generated", "minimal-compliant-layout.docx");
   const fixtureHash = createHash("sha256").update(await readFile(fixtureInvalid)).digest("hex");
-  const tempBefore = await temporaryDocxNames();
   let environment;
   let container;
   let api;
@@ -509,6 +617,8 @@ async function main() {
   let auditA;
   let signedUrl;
   let cleanupPassed = true;
+  let renderCleanupVerified = false;
+  let workerTempDirectory;
 
   try {
     environment = await localEnvironment();
@@ -521,9 +631,11 @@ async function main() {
     const build = await run("dotnet", ["build", "backend/PpkiSmartFormatter.slnx", "--no-restore", "--nologo"], { allowFailure: true, timeoutMs: 180000 });
     requireResult("process", "backend-integration-binaries-built", build.code === 0 && !build.timedOut);
     logDirectory = await mkdtemp(path.join(os.tmpdir(), "ppki-security-integration-"));
+    workerTempDirectory = path.join(os.tmpdir(), `ppki-security-integration-${runNamespace}`);
+    await mkdir(workerTempDirectory);
     const port = await freePort();
     apiBaseUrl = `http://127.0.0.1:${port}`;
-    backendEnv = backendEnvironment(environment, port);
+    backendEnv = backendEnvironment(environment, port, workerTempDirectory);
     const apiDll = path.join(process.cwd(), "backend", "services", "Ppki.Api", "bin", "Debug", "net10.0", "Ppki.Api.dll");
     const workerDll = path.join(process.cwd(), "backend", "services", "Ppki.Worker", "bin", "Debug", "net10.0", "Ppki.Worker.dll");
     api = startBackend("api", apiDll, backendEnv);
@@ -854,7 +966,7 @@ commit;`);
       try { await stopBackend(entry); } catch { cleanupPassed = false; }
     }
     if (environment && container) {
-      try { await cleanupSynthetic(environment, container); } catch { cleanupPassed = false; }
+      try { renderCleanupVerified = await cleanupSynthetic(environment, container); } catch { cleanupPassed = false; }
       try {
         const leftovers = (await authUsers(environment)).filter((candidate) => identities.some((identity) => identity.email === candidate.email));
         const quoted = userIds.map((id) => `'${id}'::uuid`).join(",");
@@ -865,9 +977,11 @@ commit;`);
         if (leftovers.length !== 0 || rowLeftovers !== "0") cleanupPassed = false;
       } catch { cleanupPassed = false; }
     }
-    const tempAfter = await waitForTemporaryDocxCleanup(tempBefore);
-    const newTempFiles = [...tempAfter].filter((name) => !tempBefore.has(name));
-    assertResult("cleanup", "temporary-docx-files-cleaned", newTempFiles.length === 0);
+    assertResult("cleanup", "synthetic-render-lineage-cleaned-without-new-orphans-or-unrelated-job-mutation", renderCleanupVerified);
+    let ownedTemporaryDirectoryCleaned = false;
+    try { ownedTemporaryDirectoryCleaned = await cleanupOwnedTemporaryDirectory(workerTempDirectory); }
+    catch { cleanupPassed = false; }
+    assertResult("cleanup", "temporary-docx-files-cleaned", ownedTemporaryDirectoryCleaned);
     if (environment && logDirectory) {
       try {
         const hygiene = await scanLogsAndResponses(environment, password, signedUrl);
