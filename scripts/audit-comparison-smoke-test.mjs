@@ -233,6 +233,123 @@ do $fixture$ begin
 end $fixture$;`;
 }
 
+const fixtureOwnershipSql = `select
+  not exists(select 1 from public.documents where id='${ids.document}' and (title<>'Synthetic comparison smoke' or document_type_id<>'${ids.documentType}'))
+  and not exists(select 1 from public.document_versions where id='${ids.sourceVersion}' and (document_id<>'${ids.document}' or version_no<>1 or storage_bucket<>'documents-original' or storage_key<>'comparison/source.docx' or sha256<>'${"a".repeat(64)}' or parent_version_id is not null))
+  and not exists(select 1 from public.document_versions where id='${ids.resultVersion}' and (document_id<>'${ids.document}' or version_no<>2 or storage_bucket<>'documents-versions' or storage_key<>'comparison/result.docx' or sha256<>'${"b".repeat(64)}' or parent_version_id<>'${ids.sourceVersion}'))
+  and not exists(select 1 from public.document_versions where document_id='${ids.document}' and id not in ('${ids.sourceVersion}','${ids.resultVersion}'))
+  and not exists(select 1 from public.audit_jobs where id='${ids.sourceAudit}' and (document_version_id<>'${ids.sourceVersion}' or status<>'Completed' or resolved_rule_set_hash<>'${resolvedHash}' or applicable_rule_count<>1))
+  and not exists(select 1 from public.audit_jobs where id='${ids.resultAudit}' and (document_version_id<>'${ids.resultVersion}' or status<>'Completed' or source_audit_job_id<>'${ids.sourceAudit}' or source_fix_execution_id<>'${ids.execution}' or resolved_rule_set_hash<>'${resolvedHash}' or applicable_rule_count<>1))
+  and not exists(select 1 from public.audit_jobs where (document_version_id in ('${ids.sourceVersion}','${ids.resultVersion}') or source_fix_execution_id='${ids.execution}') and id not in ('${ids.sourceAudit}','${ids.resultAudit}'))
+  and (select count(*) from public.audit_rule_snapshots where audit_job_id='${ids.sourceAudit}') in (0,1)
+  and (select count(*) from public.audit_rule_snapshots where audit_job_id='${ids.resultAudit}') in (0,1)
+  and not exists(select 1 from public.audit_rule_snapshots where audit_job_id='${ids.sourceAudit}' and id<>'${ids.sourceSnapshot}')
+  and not exists(select 1 from public.audit_rule_snapshots where audit_job_id='${ids.resultAudit}' and id<>'${ids.resultSnapshot}')
+  and (select count(*) from public.audit_findings where audit_job_id='${ids.sourceAudit}') in (0,5)
+  and (select count(*) from public.audit_findings where audit_job_id='${ids.resultAudit}') in (0,4)
+  and not exists(select 1 from public.audit_findings where audit_job_id='${ids.sourceAudit}' and id not in ('97000000-0000-0000-0001-000000000001','97000000-0000-0000-0001-000000000002','97000000-0000-0000-0001-000000000003','97000000-0000-0000-0001-000000000004','97000000-0000-0000-0001-000000000005'))
+  and not exists(select 1 from public.audit_findings where audit_job_id='${ids.resultAudit}' and id not in ('97000000-0000-0000-0001-000000000006','97000000-0000-0000-0001-000000000007','97000000-0000-0000-0001-000000000008','97000000-0000-0000-0001-000000000009'))
+  and not exists(select 1 from public.fix_execution_jobs where id='${ids.execution}' and (audit_job_id<>'${ids.sourceAudit}' or source_document_version_id<>'${ids.sourceVersion}' or result_document_version_id is distinct from '${ids.resultVersion}'::uuid or state<>'Completed' or selected_finding_ids<>'["97000000-0000-0000-0001-000000000005"]' or approved_plan_snapshot<>'{"schemaVersion":1}'::jsonb))
+  and not exists(select 1 from public.fix_execution_jobs where (audit_job_id in ('${ids.sourceAudit}','${ids.resultAudit}') or source_document_version_id in ('${ids.sourceVersion}','${ids.resultVersion}') or result_document_version_id in ('${ids.sourceVersion}','${ids.resultVersion}')) and id<>'${ids.execution}')
+  and not exists(select 1 from public.documents document left join public.document_versions source on source.id='${ids.sourceVersion}' left join public.document_versions result on result.id='${ids.resultVersion}' left join public.audit_jobs source_audit on source_audit.id='${ids.sourceAudit}' left join public.audit_jobs result_audit on result_audit.id='${ids.resultAudit}' left join public.fix_execution_jobs execution on execution.id='${ids.execution}' where document.id='${ids.document}' and (source.created_by_user_id is distinct from document.owner_user_id or result.created_by_user_id is distinct from document.owner_user_id or source_audit.requested_by_user_id is distinct from document.owner_user_id or result_audit.requested_by_user_id is distinct from document.owner_user_id or execution.requested_by_user_id is distinct from document.owner_user_id));`;
+
+const cleanupSql = `begin;
+set local session_replication_role=replica;
+create temporary table cleanup_targets(table_name text not null,id uuid not null,primary key(table_name,id)) on commit drop;
+insert into cleanup_targets select 'documents',id from public.documents where id='${ids.document}';
+insert into cleanup_targets select 'document_versions',id from public.document_versions where id in ('${ids.sourceVersion}','${ids.resultVersion}') or document_id='${ids.document}';
+insert into cleanup_targets select 'audit_jobs',id from public.audit_jobs where id in ('${ids.sourceAudit}','${ids.resultAudit}') or document_version_id in (select id from cleanup_targets where table_name='document_versions') or source_fix_execution_id='${ids.execution}';
+insert into cleanup_targets select 'fix_execution_jobs',id from public.fix_execution_jobs where id='${ids.execution}' or audit_job_id in (select id from cleanup_targets where table_name='audit_jobs') or source_document_version_id in (select id from cleanup_targets where table_name='document_versions') or result_document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'audit_jobs',id from public.audit_jobs where source_fix_execution_id in (select id from cleanup_targets where table_name='fix_execution_jobs') on conflict do nothing;
+insert into cleanup_targets select 'audit_findings',id from public.audit_findings where audit_job_id in (select id from cleanup_targets where table_name='audit_jobs');
+insert into cleanup_targets select 'audit_rule_snapshots',id from public.audit_rule_snapshots where audit_job_id in (select id from cleanup_targets where table_name='audit_jobs');
+insert into cleanup_targets select 'document_render_jobs',id from public.document_render_jobs where document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'document_render_artifacts',id from public.document_render_artifacts where document_version_id in (select id from cleanup_targets where table_name='document_versions') or render_job_id in (select id from cleanup_targets where table_name='document_render_jobs');
+insert into cleanup_targets select 'document_page_map_entries',id from public.document_page_map_entries where render_artifact_id in (select id from cleanup_targets where table_name='document_render_artifacts');
+insert into cleanup_targets select 'automatic_remediation_orchestrations',id from public.automatic_remediation_orchestrations where source_audit_job_id in (select id from cleanup_targets where table_name='audit_jobs') or reaudit_job_id in (select id from cleanup_targets where table_name='audit_jobs') or fix_execution_id in (select id from cleanup_targets where table_name='fix_execution_jobs') or result_document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'finding_resolution_cases',id from public.finding_resolution_cases where source_audit_job_id in (select id from cleanup_targets where table_name='audit_jobs') or source_document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'finding_resolution_events',id from public.finding_resolution_events where resolution_case_id in (select id from cleanup_targets where table_name='finding_resolution_cases') or source_fix_execution_id in (select id from cleanup_targets where table_name='fix_execution_jobs') or source_reaudit_job_id in (select id from cleanup_targets where table_name='audit_jobs') or result_document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'finding_review_cases',id from public.finding_review_cases where audit_job_id in (select id from cleanup_targets where table_name='audit_jobs') or source_document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'finding_review_events',id from public.finding_review_events where review_case_id in (select id from cleanup_targets where table_name='finding_review_cases');
+insert into cleanup_targets select 'fix_plans',id from public.fix_plans where source_audit_job_id in (select id from cleanup_targets where table_name='audit_jobs') or source_document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'fix_plan_items',id from public.fix_plan_items where fix_plan_id in (select id from cleanup_targets where table_name='fix_plans');
+insert into cleanup_targets select 'fix_plan_approval_snapshots',id from public.fix_plan_approval_snapshots where fix_plan_id in (select id from cleanup_targets where table_name='fix_plans');
+insert into cleanup_targets select 'fix_item_results',id from public.fix_item_results where fix_execution_job_id in (select id from cleanup_targets where table_name='fix_execution_jobs') or fix_plan_id in (select id from cleanup_targets where table_name='fix_plans') or source_document_version_id in (select id from cleanup_targets where table_name='document_versions') or result_document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'text_correction_analyses',id from public.text_correction_analyses where audit_job_id in (select id from cleanup_targets where table_name='audit_jobs') or document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'text_correction_proposals',id from public.text_correction_proposals where analysis_id in (select id from cleanup_targets where table_name='text_correction_analyses') or audit_job_id in (select id from cleanup_targets where table_name='audit_jobs') or document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'text_correction_decision_events',id from public.text_correction_decision_events where proposal_id in (select id from cleanup_targets where table_name='text_correction_proposals') or source_document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'text_correction_batches',id from public.text_correction_batches where source_audit_job_id in (select id from cleanup_targets where table_name='audit_jobs') or reaudit_job_id in (select id from cleanup_targets where table_name='audit_jobs') or fix_execution_id in (select id from cleanup_targets where table_name='fix_execution_jobs') or source_document_version_id in (select id from cleanup_targets where table_name='document_versions') or result_document_version_id in (select id from cleanup_targets where table_name='document_versions');
+insert into cleanup_targets select 'text_correction_batch_items',id from public.text_correction_batch_items where batch_id in (select id from cleanup_targets where table_name='text_correction_batches') or decision_event_id in (select id from cleanup_targets where table_name='text_correction_decision_events');
+insert into cleanup_targets select 'audit_trail_events',id from public.audit_trail_events where resource_id in (select id from cleanup_targets);
+create temporary table cleanup_unrelated_guard(table_name text primary key,row_count bigint not null,row_hash text not null) on commit drop;
+do $guard$
+declare target_table text;
+begin
+  foreach target_table in array array['documents','document_versions','audit_jobs','fix_execution_jobs','audit_findings','audit_rule_snapshots','document_render_jobs','document_render_artifacts','document_page_map_entries','automatic_remediation_orchestrations','finding_resolution_cases','finding_resolution_events','finding_review_cases','finding_review_events','fix_plans','fix_plan_items','fix_plan_approval_snapshots','fix_item_results','text_correction_analyses','text_correction_proposals','text_correction_decision_events','text_correction_batches','text_correction_batch_items','audit_trail_events'] loop
+    execute format('insert into cleanup_unrelated_guard select %L,count(*),coalesce(md5(string_agg(md5(to_jsonb(value)::text),'''' order by value.id::text)),''none'') from public.%I value where not exists(select 1 from cleanup_targets target where target.table_name=%L and target.id=value.id)',target_table,target_table,target_table);
+  end loop;
+end
+$guard$;
+delete from public.document_page_map_entries where id in (select id from cleanup_targets where table_name='document_page_map_entries');
+delete from public.document_render_artifacts where id in (select id from cleanup_targets where table_name='document_render_artifacts');
+delete from public.document_render_jobs where id in (select id from cleanup_targets where table_name='document_render_jobs');
+delete from public.text_correction_batch_items where id in (select id from cleanup_targets where table_name='text_correction_batch_items');
+delete from public.text_correction_batches where id in (select id from cleanup_targets where table_name='text_correction_batches');
+delete from public.text_correction_decision_events where id in (select id from cleanup_targets where table_name='text_correction_decision_events');
+delete from public.text_correction_proposals where id in (select id from cleanup_targets where table_name='text_correction_proposals');
+delete from public.text_correction_analyses where id in (select id from cleanup_targets where table_name='text_correction_analyses');
+delete from public.automatic_remediation_orchestrations where id in (select id from cleanup_targets where table_name='automatic_remediation_orchestrations');
+delete from public.finding_review_events where id in (select id from cleanup_targets where table_name='finding_review_events');
+delete from public.finding_review_cases where id in (select id from cleanup_targets where table_name='finding_review_cases');
+delete from public.finding_resolution_events where id in (select id from cleanup_targets where table_name='finding_resolution_events');
+delete from public.finding_resolution_cases where id in (select id from cleanup_targets where table_name='finding_resolution_cases');
+delete from public.fix_item_results where id in (select id from cleanup_targets where table_name='fix_item_results');
+delete from public.fix_plan_approval_snapshots where id in (select id from cleanup_targets where table_name='fix_plan_approval_snapshots');
+delete from public.fix_plan_items where id in (select id from cleanup_targets where table_name='fix_plan_items');
+delete from public.fix_execution_jobs where id in (select id from cleanup_targets where table_name='fix_execution_jobs');
+delete from public.fix_plans where id in (select id from cleanup_targets where table_name='fix_plans');
+delete from public.audit_trail_events where id in (select id from cleanup_targets where table_name='audit_trail_events');
+delete from public.audit_findings where id in (select id from cleanup_targets where table_name='audit_findings');
+delete from public.audit_rule_snapshots where id in (select id from cleanup_targets where table_name='audit_rule_snapshots');
+delete from public.audit_jobs where id in (select id from cleanup_targets where table_name='audit_jobs');
+delete from public.document_versions where id in (select id from cleanup_targets where table_name='document_versions');
+delete from public.documents where id in (select id from cleanup_targets where table_name='documents');
+do $verify$
+declare target_table text; current_count bigint; current_hash text; expected cleanup_unrelated_guard%rowtype; target_remains boolean;
+begin
+  foreach target_table in array array['documents','document_versions','audit_jobs','fix_execution_jobs','audit_findings','audit_rule_snapshots','document_render_jobs','document_render_artifacts','document_page_map_entries','automatic_remediation_orchestrations','finding_resolution_cases','finding_resolution_events','finding_review_cases','finding_review_events','fix_plans','fix_plan_items','fix_plan_approval_snapshots','fix_item_results','text_correction_analyses','text_correction_proposals','text_correction_decision_events','text_correction_batches','text_correction_batch_items','audit_trail_events'] loop
+    execute format('select exists(select 1 from public.%I value join cleanup_targets target on target.table_name=%L and target.id=value.id)',target_table,target_table) into target_remains;
+    if target_remains then raise exception using errcode='23514',message='Exact audit comparison fixture cleanup left dependent rows'; end if;
+    select * into expected from cleanup_unrelated_guard where table_name=target_table;
+    execute format('select count(*),coalesce(md5(string_agg(md5(to_jsonb(value)::text),'''' order by value.id::text)),''none'') from public.%I value where not exists(select 1 from cleanup_targets target where target.table_name=%L and target.id=value.id)',target_table,target_table) into current_count,current_hash;
+    if expected.row_count<>current_count or expected.row_hash<>current_hash then raise exception using errcode='23514',message='Audit comparison cleanup changed unrelated rows'; end if;
+  end loop;
+end
+$verify$;
+select concat_ws(chr(9),
+  not exists(select 1 from public.documents where id='${ids.document}'),
+  not exists(select 1 from public.document_versions where id in ('${ids.sourceVersion}','${ids.resultVersion}') or document_id='${ids.document}'),
+  not exists(select 1 from public.audit_jobs where id in ('${ids.sourceAudit}','${ids.resultAudit}') or source_fix_execution_id='${ids.execution}'),
+  not exists(select 1 from public.fix_execution_jobs where id='${ids.execution}'),
+  true,
+  not exists(select 1 from public.audit_jobs audit where audit.id='${ids.resultAudit}' and audit.source_fix_execution_id='${ids.execution}' and not exists(select 1 from public.finding_resolution_events event where event.source_reaudit_job_id=audit.id and event.event_type in ('VerificationResolvedObserved','VerificationStillDetectedObserved'))),
+  true);
+commit;`;
+
+async function deleteFixtureStorage(environment) {
+  for (const [bucket, objectPath] of [["documents-original", "comparison/source.docx"], ["documents-versions", "comparison/result.docx"]])
+    await localFetch(`${environment.API_URL}/storage/v1/object/${bucket}/${objectPath}`, { method: "DELETE", headers: { apikey: environment.SERVICE_ROLE_KEY } });
+}
+
+async function cleanupFixture(environment, container) {
+  if (await sql(container, fixtureOwnershipSql) !== "t") throw new Error("exact audit comparison fixture ownership mismatch");
+  const evidence = (await sql(container, cleanupSql)).split("\t");
+  await deleteFixtureStorage(environment);
+  const storageAbsent = await sql(container, `select not exists(select 1 from storage.objects where (bucket_id='documents-original' and name='comparison/source.docx') or (bucket_id='documents-versions' and name='comparison/result.docx'));`);
+  if (storageAbsent !== "t") throw new Error("exact audit comparison fixture storage cleanup failed");
+  return evidence;
+}
+
 async function startApi(environment) {
   const settings = localSettings({ API_PORT: String(await freePort()) });
   const catalog = await resolveRuleCatalog(process.cwd());
@@ -308,10 +425,15 @@ commit;`);
 async function main() {
   console.log("SUITE audit-comparison-local");
   let completed = false;
+  let cleanupComplete = false;
+  let environment;
+  let container;
   try {
-    const environment = await getSupabaseEnvironment(process.cwd());
-    const container = await databaseContainer();
+    environment = await getSupabaseEnvironment(process.cwd());
+    container = await databaseContainer();
     report("local-only-infrastructure-ready", true);
+    const staleCleanup = await cleanupFixture(environment, container);
+    report("preexisting-exact-fixture-cleaned", staleCleanup.length === 7 && staleCleanup.every((value) => value === "t"));
     const owner = await authenticate(environment, "owner");
     const foreign = await authenticate(environment, "foreign");
     await sql(container, `update public.user_profiles set role=case id when '${owner.id}' then 'PPKIAdmin' when '${foreign.id}' then 'Student' else role end where id in ('${owner.id}','${foreign.id}');`);
@@ -373,6 +495,15 @@ async function main() {
       and not has_table_privilege('authenticated', 'public.audit_jobs', 'UPDATE')
       and not has_table_privilege('authenticated', 'public.fix_execution_jobs', 'UPDATE');`);
     report("browser-has-no-direct-write-capability", browserWrite.split(/\r?\n/).at(-1) === "t");
+    const cleanupEvidence = await cleanupFixture(environment, container);
+    report("cleanup-exact-document-absent", cleanupEvidence[0] === "t");
+    report("cleanup-exact-versions-absent", cleanupEvidence[1] === "t");
+    report("cleanup-exact-audits-absent", cleanupEvidence[2] === "t");
+    report("cleanup-exact-execution-absent", cleanupEvidence[3] === "t");
+    report("cleanup-dependent-rows-absent", cleanupEvidence[4] === "t");
+    report("cleanup-recovery-candidate-absent", cleanupEvidence[5] === "t");
+    report("cleanup-unrelated-rows-preserved", cleanupEvidence[6] === "t");
+    cleanupComplete = true;
     completed = true;
   } catch (error) {
     console.log(`BLOCKER: ${error instanceof Error ? error.message : "local runtime unavailable"}`);
@@ -380,8 +511,19 @@ async function main() {
     process.exitCode = 1;
   } finally {
     await stopApi();
+    if (!cleanupComplete && environment && container) {
+      try {
+        const cleanupEvidence = await cleanupFixture(environment, container);
+        cleanupComplete = cleanupEvidence.length === 7 && cleanupEvidence.every((value) => value === "t");
+        console.log(`exact-audit-comparison-fixture-final-cleanup: ${cleanupComplete ? "PASS" : "FAIL"}`);
+        if (!cleanupComplete) process.exitCode = 1;
+      } catch {
+        console.log("exact-audit-comparison-fixture-final-cleanup: FAIL");
+        process.exitCode = 1;
+      }
+    }
   }
-  if (completed && assertions.length > 0 && assertions.every(Boolean))
+  if (completed && cleanupComplete && assertions.length > 0 && assertions.every(Boolean))
     console.log("audit-comparison-runtime-smoke-completed: PASS");
 }
 
