@@ -1,5 +1,6 @@
 using System.Reflection;
 using Microsoft.EntityFrameworkCore;
+using Npgsql;
 using Ppki.Application;
 using Ppki.Domain;
 using Ppki.Infrastructure;
@@ -67,6 +68,99 @@ public sealed class AutomaticReauditReconciliationTests
         Assert.Contains("audit_jobs", reconcileSql, StringComparison.Ordinal);
         Assert.Contains("finding_resolution_events", reconcileSql, StringComparison.Ordinal);
         Assert.Contains("owner_user_id", reconcileSql, StringComparison.Ordinal);
+
+        var processorSource = Source("backend", "services", "Ppki.Worker",
+            "AutomaticReauditRecoveryWorker.cs");
+        Assert.DoesNotContain("AsEnumerable(", processorSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("ToList(", processorSource, StringComparison.Ordinal);
+        Assert.DoesNotContain("ToListAsync(", processorSource, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public void Missing_reaudit_orders_entities_before_projection_and_translates_the_bounded_candidate_query()
+    {
+        using var db = OfflineContext();
+        var query = AutomaticReauditRecoveryProcessor.MissingReaudit(db)
+            .Select(value => new AutomaticReauditRecoveryCandidate(value.FixExecutionId, value.OwnerUserId))
+            .Take(1);
+
+        var sql = query.ToQueryString().ToLowerInvariant();
+        Assert.Contains("order by f.completed_at, f.id", sql, StringComparison.Ordinal);
+        Assert.Contains("limit", sql, StringComparison.Ordinal);
+    }
+
+    [Fact]
+    public async Task Relational_recovery_query_executes_deterministically_and_processor_preserves_service_routing()
+    {
+        var connectionString = Environment.GetEnvironmentVariable("PPKI_RECOVERY_TEST_DATABASE");
+        if (string.IsNullOrWhiteSpace(connectionString)) return;
+
+        await using var connection = new NpgsqlConnection(connectionString);
+        await connection.OpenAsync(CancellationToken.None);
+        await using var transaction = await connection.BeginTransactionAsync(CancellationToken.None);
+        try
+        {
+            await CreateRecoveryTempTablesAsync(connection, transaction);
+            var factory = new SharedConnectionDbFactory(connection, transaction);
+
+            await using (var db = factory.CreateDbContext())
+            {
+                var selected = await AutomaticReauditRecoveryProcessor.MissingReaudit(db)
+                    .Select(value => new AutomaticReauditRecoveryCandidate(
+                        value.FixExecutionId, value.OwnerUserId))
+                    .FirstAsync(CancellationToken.None);
+                Assert.Equal(OldestLowFixExecutionId, selected.FixExecutionId);
+                Assert.Equal(OwnerUserId, selected.OwnerUserId);
+            }
+
+            var reaudits = new RecordingReauditService(CreateAccepted(OldestLowFixExecutionId));
+            var resolutions = new RecordingFindingResolutionService();
+            var processor = new AutomaticReauditRecoveryProcessor(factory, reaudits, resolutions);
+            Assert.True(await processor.ProcessNextAsync(CancellationToken.None));
+            Assert.Equal([OldestLowFixExecutionId], reaudits.FixExecutionIds);
+            Assert.Equal([OldestLowFixExecutionId], resolutions.FixExecutionIds);
+
+            await InsertReauditsAsync(connection, transaction);
+            await using (var db = factory.CreateDbContext())
+            {
+                var selected = await AutomaticReauditRecoveryProcessor.MissingReconciliation(db)
+                    .Select(value => new AutomaticReauditRecoveryCandidate(
+                        value.FixExecutionId, value.OwnerUserId))
+                    .FirstAsync(CancellationToken.None);
+                Assert.Equal(OldestLowFixExecutionId, selected.FixExecutionId);
+                Assert.Equal(OwnerUserId, selected.OwnerUserId);
+            }
+
+            reaudits.FixExecutionIds.Clear();
+            resolutions.FixExecutionIds.Clear();
+            Assert.True(await processor.ProcessNextAsync(CancellationToken.None));
+            Assert.Empty(reaudits.FixExecutionIds);
+            Assert.Equal([OldestLowFixExecutionId], resolutions.FixExecutionIds);
+
+            await DeleteOldestReauditAsync(connection, transaction);
+            var rejectingProcessor = new AutomaticReauditRecoveryProcessor(factory,
+                new RecordingReauditService(null), resolutions);
+            var exception = await Assert.ThrowsAsync<ReauditException>(() =>
+                rejectingProcessor.ProcessNextAsync(CancellationToken.None));
+            Assert.Equal("automatic-reaudit-owner-mismatch", exception.DiagnosticCode);
+        }
+        finally
+        {
+            await transaction.RollbackAsync(CancellationToken.None);
+        }
+    }
+
+    [Fact]
+    public void Missing_reconciliation_orders_entities_before_projection_and_translates_the_bounded_candidate_query()
+    {
+        using var db = OfflineContext();
+        var query = AutomaticReauditRecoveryProcessor.MissingReconciliation(db)
+            .Select(value => new AutomaticReauditRecoveryCandidate(value.FixExecutionId, value.OwnerUserId))
+            .Take(1);
+
+        var sql = query.ToQueryString().ToLowerInvariant();
+        Assert.Contains("order by a.created_at, a.source_fix_execution_id", sql, StringComparison.Ordinal);
+        Assert.Contains("limit", sql, StringComparison.Ordinal);
     }
 
     [Fact]
@@ -108,6 +202,115 @@ public sealed class AutomaticReauditReconciliationTests
 
     private static PpkiDbContext OfflineContext() => new(new DbContextOptionsBuilder<PpkiDbContext>()
         .UseNpgsql("Host=localhost;Database=automatic_reaudit_offline_test").Options);
+
+    private static readonly Guid OwnerUserId = Guid.Parse("a7100000-0000-0000-0000-000000000001");
+    private static readonly Guid OldestLowFixExecutionId = Guid.Parse("a7100000-0000-0000-0000-000000000010");
+
+    private static async Task CreateRecoveryTempTablesAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction)
+    {
+        const string sql = """
+            create temp table documents (id uuid primary key, owner_user_id uuid not null);
+            create temp table document_versions (id uuid primary key, document_id uuid not null);
+            create temp table fix_execution_jobs (
+                id uuid primary key,
+                source_document_version_id uuid not null,
+                result_document_version_id uuid,
+                state text not null,
+                completed_at timestamptz);
+            create temp table audit_jobs (
+                id uuid primary key,
+                document_version_id uuid not null,
+                source_fix_execution_id uuid,
+                status text not null,
+                created_at timestamptz not null);
+            create temp table finding_resolution_events (
+                source_reaudit_job_id uuid,
+                event_type text not null);
+            insert into documents values
+                ('a7100000-0000-0000-0000-000000000002', 'a7100000-0000-0000-0000-000000000001');
+            insert into document_versions values
+                ('a7100000-0000-0000-0000-000000000003', 'a7100000-0000-0000-0000-000000000002');
+            insert into fix_execution_jobs values
+                ('a7100000-0000-0000-0000-000000000012', 'a7100000-0000-0000-0000-000000000003',
+                    'a7100000-0000-0000-0000-000000000022', 'Completed', '2026-01-02T00:00:00Z'),
+                ('a7100000-0000-0000-0000-000000000011', 'a7100000-0000-0000-0000-000000000003',
+                    'a7100000-0000-0000-0000-000000000021', 'Completed', '2026-01-01T00:00:00Z'),
+                ('a7100000-0000-0000-0000-000000000010', 'a7100000-0000-0000-0000-000000000003',
+                    'a7100000-0000-0000-0000-000000000020', 'Completed', '2026-01-01T00:00:00Z');
+            """;
+        await ExecuteAsync(connection, transaction, sql);
+    }
+
+    private static Task InsertReauditsAsync(NpgsqlConnection connection, NpgsqlTransaction transaction) =>
+        ExecuteAsync(connection, transaction, """
+            insert into audit_jobs values
+                ('a7100000-0000-0000-0000-000000000032', 'a7100000-0000-0000-0000-000000000003',
+                    'a7100000-0000-0000-0000-000000000012', 'Queued', '2026-01-02T00:00:00Z'),
+                ('a7100000-0000-0000-0000-000000000031', 'a7100000-0000-0000-0000-000000000003',
+                    'a7100000-0000-0000-0000-000000000011', 'Queued', '2026-01-01T00:00:00Z'),
+                ('a7100000-0000-0000-0000-000000000030', 'a7100000-0000-0000-0000-000000000003',
+                    'a7100000-0000-0000-0000-000000000010', 'Queued', '2026-01-01T00:00:00Z');
+            """);
+
+    private static Task DeleteOldestReauditAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction) =>
+        ExecuteAsync(connection, transaction,
+            $"delete from audit_jobs where source_fix_execution_id = '{OldestLowFixExecutionId}'");
+
+    private static async Task ExecuteAsync(
+        NpgsqlConnection connection, NpgsqlTransaction transaction, string sql)
+    {
+        await using var command = new NpgsqlCommand(sql, connection, transaction);
+        await command.ExecuteNonQueryAsync(CancellationToken.None);
+    }
+
+    private static ReauditAccepted CreateAccepted(Guid fixExecutionId) => new(
+        Guid.Parse("a7100000-0000-0000-0000-000000000040"), "Queued",
+        Guid.Parse("a7100000-0000-0000-0000-000000000041"), fixExecutionId,
+        Guid.Parse("a7100000-0000-0000-0000-000000000042"),
+        Guid.Parse("a7100000-0000-0000-0000-000000000043"), new string('a', 64),
+        DocumentKind.Skripsi, DateTimeOffset.Parse("2026-01-01T00:00:00Z"), false);
+
+    private sealed class SharedConnectionDbFactory(
+        NpgsqlConnection connection, NpgsqlTransaction transaction) : IDbContextFactory<PpkiDbContext>
+    {
+        public PpkiDbContext CreateDbContext()
+        {
+            var db = new PpkiDbContext(new DbContextOptionsBuilder<PpkiDbContext>()
+                .UseNpgsql(connection).Options);
+            db.Database.UseTransaction(transaction);
+            return db;
+        }
+    }
+
+    private sealed class RecordingReauditService(ReauditAccepted? response) : IReauditService
+    {
+        public List<Guid> FixExecutionIds { get; } = [];
+
+        public Task<ReauditAccepted?> CreateAsync(
+            Guid sourceFixExecutionId, Guid ownerUserId, CancellationToken cancellationToken)
+        {
+            FixExecutionIds.Add(sourceFixExecutionId);
+            return Task.FromResult(response);
+        }
+    }
+
+    private sealed class RecordingFindingResolutionService : IFindingResolutionService
+    {
+        public List<Guid> FixExecutionIds { get; } = [];
+
+        public Task<FindingResolutionDto?> GetAsync(
+            Guid auditId, Guid findingId, Guid ownerUserId, CancellationToken cancellationToken) =>
+            Task.FromResult<FindingResolutionDto?>(null);
+
+        public Task<FindingResolutionReconciliationResult?> ReconcileAsync(
+            Guid fixExecutionId, Guid ownerUserId, CancellationToken cancellationToken)
+        {
+            FixExecutionIds.Add(fixExecutionId);
+            return Task.FromResult<FindingResolutionReconciliationResult?>(null);
+        }
+    }
 
     private static string Source(params string[] segments) =>
         File.ReadAllText(Path.Combine([RepositoryRoot(), .. segments]));

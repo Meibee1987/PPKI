@@ -16,7 +16,6 @@ public sealed class AutomaticReauditRecoveryProcessor(
     {
         await using var db = await dbFactory.CreateDbContextAsync(cancellationToken);
         var publication = await MissingReaudit(db)
-            .OrderBy(value => value.CompletedAt).ThenBy(value => value.FixExecutionId)
             .Select(value => new AutomaticReauditRecoveryCandidate(value.FixExecutionId, value.OwnerUserId))
             .FirstOrDefaultAsync(cancellationToken);
         if (publication is not null)
@@ -30,7 +29,6 @@ public sealed class AutomaticReauditRecoveryProcessor(
         }
 
         var reconciliation = await MissingReconciliation(db)
-            .OrderBy(value => value.ReauditCreatedAt).ThenBy(value => value.FixExecutionId)
             .Select(value => new AutomaticReauditRecoveryCandidate(value.FixExecutionId, value.OwnerUserId))
             .FirstOrDefaultAsync(cancellationToken);
         if (reconciliation is null) return false;
@@ -44,6 +42,7 @@ public sealed class AutomaticReauditRecoveryProcessor(
             .Where(value => value.State == FixExecutionState.Completed
                 && value.ResultDocumentVersionId != null
                 && !db.AuditJobs.Any(audit => audit.SourceFixExecutionId == value.Id))
+            .OrderBy(value => value.CompletedAt).ThenBy(value => value.Id)
             .Select(value => new MissingReauditRow(value.Id,
                 value.SourceDocumentVersion!.Document!.OwnerUserId,
                 value.CompletedAt!.Value));
@@ -59,6 +58,7 @@ public sealed class AutomaticReauditRecoveryProcessor(
                             || value.EventType == FindingResolutionEventType.VerificationStillDetectedObserved))
                     : !db.FindingResolutionEvents.Any(value => value.SourceReauditJobId == audit.Id
                         && value.EventType == FindingResolutionEventType.ReauditPendingObserved)))
+            .OrderBy(audit => audit.CreatedAt).ThenBy(audit => audit.SourceFixExecutionId)
             .Select(audit => new MissingReconciliationRow(audit.SourceFixExecutionId!.Value,
                 audit.DocumentVersion!.Document!.OwnerUserId, audit.CreatedAt));
 }
